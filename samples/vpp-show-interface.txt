@@ -1,0 +1,2 @@
+host-vpp-site-a.100 up
+host-vpp-site-b.100 up

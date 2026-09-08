@@ -1,0 +1,91 @@
+tunnels:
+  - id: tun-vlan-a-b
+    local_node: site-a
+    remote_node: site-b
+    local_endpoint: 203.0.113.10
+    remote_endpoint: 203.0.113.9
+    local_id: site-a
+    remote_id: site-b
+    psk: "change-me"
+    local_ts: 10.10.1.0/24
+    remote_ts: 10.10.2.0/24
+
+vpp_edges:
+  - node_id: site-a
+    vpp_interface: host-vpp-site-a
+    next_hop: 172.16.101.2
+    allowed_vlans:
+      - 100
+      - 200
+  - node_id: site-b
+    vpp_interface: host-vpp-site-b
+    next_hop: 172.16.102.2
+    allowed_vlans:
+      - 100
+      - 200
+
+paths:
+  - id: path-vlan-100
+    source: site-a
+    destination: site-b
+    egress_tunnel_id: tun-vlan-a-b
+    priority: 10
+    routes:
+      - id: vlan-100-forward
+        node_id: site-a
+        destination_prefix: 10.10.2.0/24
+        next_hop: 172.16.101.2
+        table: 100
+      - id: vlan-100-return
+        node_id: site-b
+        destination_prefix: 10.10.1.0/24
+        next_hop: 172.16.102.2
+        table: 100
+    segments:
+      - id: seg-vlan-100
+        from: site-a
+        to: site-b
+        tunnel_id: tun-vlan-a-b
+
+  - id: path-vlan-200
+    source: site-a
+    destination: site-b
+    egress_tunnel_id: tun-vlan-a-b
+    priority: 20
+    routes:
+      - id: vlan-200-forward
+        node_id: site-a
+        destination_prefix: 10.10.2.0/24
+        next_hop: 172.16.101.2
+        table: 200
+      - id: vlan-200-return
+        node_id: site-b
+        destination_prefix: 10.10.1.0/24
+        next_hop: 172.16.102.2
+        table: 200
+    segments:
+      - id: seg-vlan-200
+        from: site-a
+        to: site-b
+        tunnel_id: tun-vlan-a-b
+
+intents:
+  - id: intent-vlan-100
+    traffic:
+      source: site-a
+      destination: site-b
+      vlan_id: 100
+    deny_unmatched_vlan: true
+    path_selection:
+      mode: explicit
+      path_id: path-vlan-100
+
+  - id: intent-vlan-200
+    traffic:
+      source: site-a
+      destination: site-b
+      vlan_id: 200
+    deny_unmatched_vlan: true
+    path_selection:
+      mode: explicit
+      path_id: path-vlan-200

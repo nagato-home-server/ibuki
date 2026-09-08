@@ -1,0 +1,72 @@
+tunnels:
+  - id: tun-vlan-a-b
+    local_node: site-a
+    remote_node: site-b
+    local_endpoint: 203.0.113.10
+    remote_endpoint: 203.0.113.9
+    local_id: site-a
+    remote_id: site-b
+    psk: "change-me"
+    local_ts: 10.10.1.0/24
+    remote_ts: 10.10.2.0/24
+
+vpp_edges:
+  - node_id: site-a
+    host_interface: vpp-site-a
+    vpp_interface: host-vpp-site-a
+    allowed_vlans:
+      - 1
+      - 100
+      - 4094
+    namespace_interface: vpp-client
+    namespace_address: 172.16.101.2/30
+    vpp_address: 172.16.101.1/30
+    next_hop: 172.16.101.2
+
+  - node_id: site-b
+    host_interface: vpp-site-b
+    vpp_interface: host-vpp-site-b
+    allowed_vlans:
+      - 1
+      - 100
+      - 4094
+    namespace_interface: vpp-client
+    namespace_address: 172.16.102.2/30
+    vpp_address: 172.16.102.1/30
+    next_hop: 172.16.102.2
+
+paths:
+  - id: path-vpp-vlan
+    source: site-a
+    destination: site-b
+    egress_tunnel_id: tun-vlan-a-b
+    priority: 10
+    routes:
+      - id: site-a-to-site-b-vlan
+        node_id: site-a
+        destination_prefix: 10.10.2.0/24
+        next_hop: 172.16.101.2
+        table: 0
+      - id: site-b-to-site-a-vlan
+        node_id: site-b
+        destination_prefix: 10.10.1.0/24
+        next_hop: 172.16.102.2
+        table: 0
+    segments:
+      - id: seg-vlan-a-b
+        from: site-a
+        to: site-b
+        tunnel_id: tun-vlan-a-b
+
+intents:
+  - id: intent-vpp-vlan
+    traffic:
+      source: site-a
+      destination: site-b
+      vlan_id: 100
+    deny_unmatched_vlan: true
+    path_selection:
+      mode: explicit
+      path_id: path-vpp-vlan
+    transition:
+      strategy: immediate

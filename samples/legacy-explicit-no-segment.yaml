@@ -1,0 +1,21 @@
+paths:
+  - id: path-explicit-no-segment
+    source: site-a
+    destination: site-b
+    route_destination_prefix: 10.10.2.0/24
+    route_next_hop: 192.0.2.2
+    routes:
+      - id: explicit-legacy-forward
+        node_id: site-a
+        destination_prefix: 10.10.2.0/24
+        next_hop: 192.0.2.2
+    priority: 10
+
+intents:
+  - id: intent-explicit-no-segment
+    traffic:
+      source: site-a
+      destination: site-b
+    path_selection:
+      mode: explicit
+      path_id: path-explicit-no-segment

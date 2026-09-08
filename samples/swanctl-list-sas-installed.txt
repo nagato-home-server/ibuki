@@ -1,0 +1,7 @@
+list-sas:
+  ike-site-a-site-b:
+    version: 2
+    children:
+      tun-a-b:
+        state: INSTALLED
+        mode: TUNNEL

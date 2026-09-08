@@ -12,6 +12,9 @@ typedef struct {
     size_t command_count;
     char rollback_commands[EN_MAX_PLAN_COMMANDS][EN_MAX_COMMAND_LEN];
     size_t rollback_command_count;
+    char command_rollbacks[EN_MAX_PLAN_COMMANDS][EN_MAX_COMMAND_LEN];
+    bool command_has_rollback[EN_MAX_PLAN_COMMANDS];
+    bool has_command_rollbacks;
     char swanctl_conf[EN_MAX_CONFIG_TEXT];
 } en_apply_plan_t;
 

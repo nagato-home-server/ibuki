@@ -1,0 +1,614 @@
+\documentclass[11pt,a4paper,twoside]{ltjsarticle}
+
+\usepackage[margin=25mm]{geometry}
+\usepackage{luatexja}
+\usepackage{luatexja-fontspec}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage{longtable}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{graphicx}
+
+\hypersetup{hidelinks}
+
+\setmainjfont{Yu Mincho}
+\setmainfont{Times New Roman}
+\setsansjfont{Yu Gothic}
+\setsansfont{Yu Gothic}
+\setmonojfont{Yu Gothic}
+\setmonofont{Times New Roman}
+
+\begin{document}
+\begin{titlepage}
+\begin{center}
+
+\thispagestyle{empty}
+{\Large 2026年}
+\vspace{10truept}
+{\Large 自由研究}
+
+\vspace*{180truept}
+{\Huge 標準Tunnelの抽象化と\\状態遷移制御に基づく\\イベント駆動型ネットワーク制御基盤「Ibuki」の設計と初期評価.} 
+
+\vspace{160truept}
+\vspace{70truept}
+{\Large 桐朋中学}
+
+\vspace{10truept}
+{\Large 中学3年5組}
+
+\vspace{10truept}
+{\Large 6番 岩佐知虎}	
+\end{center}	
+\end{titlepage}
+\cleardoublepage
+
+\begin{abstract}
+\setcounter{page}{1}
+企業ネットワークや拠点間ネットワークでは，IPsec Tunnel，ルーティング，パケット転送，品質監視など複数の機能を組み合わせて通信経路を構成する．strongSwan，FD.io VPP，FRRouting（FRR）などの既存OSSを用いれば，VPN確立，パケット転送，動的ルーティングといった個別機能は構築できる．しかし，複数のTunnelから構成される通信経路について，どの経路を利用するかを選択し，現在の経路からTarget Pathへ通信影響を抑えながら移行する処理は，各OSS単体の責務を超える．
+
+本稿では，IPsecを中心とする標準VPN技術と各拠点のSoftware Gatewayを基盤とし，通信Pathを第一級の制御対象として扱うネットワーク制御基盤「Ibuki」を提案する．Ibukiは，セキュリティ，管理ポリシー，可用性，通信品質に基づいてPathを選択し，Path間の変更を状態遷移として管理する．最終的にはGUIを主要な運用インターフェースとし，OSSとして公開されたAdapter/Plugin機構を通じてCloud VPN等の異なる実装へ拡張可能な，オープンなSD-WAN的制御基盤を目指す．ただし，本稿の研究範囲はその全体構想のうち，Path中心の制御モデルと，Path変更を明示的な状態遷移として扱う仕組みに限定する．
+
+C言語による試作実装では，YAMLからNode，Tunnel，経路，Intent（要求記述）を読み込み，Path Selection，障害時Fallback判断，Explain JSONL出力，strongSwan/VPP向けruntime plan生成を実装した．Linux VM上のnetwork namespace環境では，Direct PathおよびDirect障害時のHub Fallbackについて，IPsec runtime起動，ESP counter確認，VPP forwarding設定，LAN疎通確認までの統合基本疎通試験を確認した．一方，Graceful，Flow Preserve，runtime rollback機構，Observed State復元，複数管理Domain間連携は今後の実装対象である．
+\end{abstract}
+
+\noindent\textbf{キーワード:} IPsec，strongSwan，FD.io VPP，Tunnel抽象化，Path Transition，イベント駆動型ネットワーク制御
+\clearpage
+\tableofcontents
+\clearpage
+
+\section{はじめに}
+近年，ネットワーク機能のソフトウェア化により，従来は専用機器が担っていたVPN，Forwarding，ルーティング，監視を汎用計算機とOSSで構成できるようになっている．例えば，strongSwanはIKEv2/IPsecに基づく暗号化Tunnelを提供し，FD.io VPPは高性能なソフトウェアパケット転送基盤を提供し，FRRはBGPやOSPF等のルーティングプロトコルを提供する．このため，OSSを用いて拠点間VPNを構築すること自体は新しい課題ではない．
+
+一方，実運用ではTunnelを確立するだけでは不十分である．拠点Aと拠点Bの間にDirect Path，Hub経由経路，Relay経由経路が存在する場合，運用者は品質，優先度，ポリシー，障害状況に基づいて利用経路を選択する必要がある．さらに，現在利用中の経路から別経路へ切り替える際には，通信断，packet loss，packet reordering，TCPセッションへの影響，失敗時の復旧を考慮しなければならない．
+
+本稿でいう標準Tunnelとは，独自プロトコルではなく，IPsec/IKEv2や既存のルーティング・Forwarding機構により形成される，相互運用可能な拠点間通信路を指す．本研究では，この標準Tunnelを共通制御リソースとして抽象化し，複数Tunnelから構成される経路の選択と状態遷移を扱う制御基盤Ibukiを提案する．
+
+ここで，Tunnelと経路の違いを明確にしておく．Tunnelは二つの拠点やGateway間に作られる一本の論理的な通信路である．例えば，site-aとsite-bの間に張られたIPsec Tunnelは一つのTunnelである．一方，経路は利用者通信が実際に通るEnd-to-Endの経路であり，一つまたは複数のTunnelから構成される．site-aからsite-bへ直接通信する場合は，一本のTunnelからなるDirect Pathである．site-aからhubを経由してsite-bへ通信する場合は，site-a--hubとhub--site-bという二本のTunnelからなるHub Pathである．本研究が扱う中心課題は，「Tunnelを作ること」だけではなく，「複数のTunnelをどの経路として使い，どのように経路を切り替えるか」である．
+
+本稿の貢献は次の二点である．
+\begin{enumerate}[leftmargin=*]
+\item Tunnelを共通制御リソースとして抽象化し，Backend固有処理をAdapterへ局所化し，利用可能な機能差をCapability（能力情報）として上位層へ公開するモデルを示す．
+\item Path変更を最終設定の更新ではなく，Prepare，Validate，Commit，Post Validation，Rollbackを持つTransitionとして扱い，Immediate，Graceful，Flow Preserve等のStrategyを同一状態モデル上で比較可能にする．
+\end{enumerate}
+
+現時点の試作実装は，YAMLに基づくPath定義，Intent（要求記述）に対するPath Selection，障害イベントに基づくFallback判断，Explain出力，strongSwan/VPP向けruntime plan生成，Linux VM上でのDirect/Hub統合基本疎通試験を対象とする．daemon化，Observed Stateに基づくReconciliation，Graceful/Flow Preserve 遷移，runtime rollback機構，複数Domain Controller間協調は今後の実装対象である．
+
+本稿は，ネットワーク分野を専門とする研究者だけでなく，ネットワーク制御を学び始めた学生，隣接分野の研究者，実務でネットワークを扱う技術者が読むことも想定する．そのため，専門用語を必要以上に省略せず，初出時には意味や役割を文章で説明する．一方，IPsec，IKEv2，strongSwan，VPP，FRRなど，規格名・製品名・ソフトウェア名として定着している固有名詞は原表記を用いる．また，Intent，Capabilityなど実装上の概念名については，初出時に日本語による説明を付し，以後は文脈に応じて原語を併記する．本稿でいう「経路」は利用者通信が端点間で実際に通過する一連の通信路を，「Path Transition」は現在利用中の経路から別の経路へ移行する一連の手続きを意味する．
+
+
+\section{背景と関連技術}
+
+\subsection{本稿で用いる基本概念}
+本研究を理解するうえでは，「Tunnel」「経路」「Control Plane」「Data Plane」を区別することが重要である．Tunnelとは，二つの通信端点の間に論理的に形成される通信路であり，本研究では主としてIPsecによって暗号化された拠点間通信路を指す．これに対して経路とは，利用者の通信が送信元から宛先へ到達するまでに実際に利用する一連の通信路である．一つの経路が一つのTunnelだけで構成される場合もあれば，中継拠点を介して複数のTunnelを順番に利用する場合もある．
+
+また，Data Planeとは，利用者のパケットを実際に転送する部分を指す．本研究ではIPsecによる暗号化通信やVPPによるパケット転送がこれに相当する．一方，Control Planeとは，どのTunnelをPrepareし，どの経路を利用し，いつ別の経路へ切り替えるかを判断・指示する部分を指す．Ibukiが新たに研究・実装する中心は後者であり，IPsecそのものの暗号方式やパケット形式を変更するものではない．
+
+この区別は，本研究の新規性を理解するうえでも重要である．strongSwanがTunnelを確立できること，VPPが高速にパケットをForwardingできること，FRRが経路情報を交換できることは既存技術である．Ibukiが扱うのは，これらの既存技術を共通の状態モデルの下で観測し，「どの通信路を使うべきか」「変更するならどの順序で操作すべきか」「失敗した場合にどこまで戻すべきか」を統一的に扱う部分である．
+
+
+\subsection{IPsec，strongSwan，VPP，FRR}
+Ibukiは，新しいVPN方式を提案するものではなく，既存のIPsecおよびIKEv2を利用する．IPsecはIPパケットに対する認証，完全性，機密性を提供する標準技術であり，IKEv2は通信相手の認証およびSecurity Association（SA）の確立・維持を担う\cite{rfc4301,rfc7296}．
+
+strongSwanはIKE/IPsecの代表的なOSS実装である．strongSwanのVICI pluginは，外部アプリケーションがIKE daemonであるcharonを設定，制御，監視するためのIPC interfaceを提供する\cite{strongswan-vici}．Ibukiでは，strongSwan自体を変更せず，Adapterを通じてTunnelの設定，確立，状態取得，削除を行う．
+
+FD.io VPPは，Linux userspaceで動作する高速なLayer 2--4 packet processing stackであり，pluginによる拡張やpacket tracing，counter等を備える\cite{vpp-doc}．Ibukiでは，Tunnelの存在と実際のForwardingを分離して扱うため，VPPをForwarding Planeの候補として利用する．FRRは複数のrouting daemonとzebraによりRouting Stateを構成するOSSルーティングスイートであり\cite{frr-doc}，Ibukiでは将来的なRouting State観測対象または制御対象として位置付ける．
+
+\subsection{既存制御基盤との差分}
+ONOSはIntent Frameworkを提供し，利用者が具体的なFlow Ruleではなくポリシーやconnectivity要求をIntent（要求記述）として記述できる\cite{onos-intent}．KubernetesはController loopによりDesired Stateと現在状態の差分を収束させる\cite{k8s-controller}．flexiWANはVPP，FRR，Agent，中央管理を組み合わせたOSS SD-WAN基盤であり，実運用可能なSD-WAN システムを提供する\cite{flexiwan-arch,flexiwan-about}．
+
+Ibukiは，Intent（要求記述），Controller，Agent，VPP，Rollback等の個別概念を新規に発明するものではない．本研究の差分は，制御対象を機器全体ではなくTunnel／経路へ限定し，Path変更の中間状態を実装横断的なTransition Modelとして明示する点にある．表\ref{tab:comparison}に比較を示す．
+
+\begin{table}[h]
+\centering
+\caption{既存技術との比較}
+\label{tab:comparison}
+\begin{tabular}{>{\raggedright\arraybackslash}p{0.18\linewidth}>{\raggedright\arraybackslash}p{0.20\linewidth}>{\raggedright\arraybackslash}p{0.18\linewidth}>{\raggedright\arraybackslash}p{0.18\linewidth}>{\raggedright\arraybackslash}p{0.18\linewidth}}
+\toprule
+比較軸 & Ibuki & ONOS & Kubernetes & flexiWAN \\
+\midrule
+主対象 & Tunnel／Path Transition & Network Intent（要求記述）/SDN & Workload desired state & SD-WAN運用 \\
+既存IPsec/VPP再利用 & 中核方針 & 直接の主対象ではない & 主対象ではない & 製品構成に依存 \\
+Path変更の中間状態 & 明示的に扱う & 抽象度が異なる & Pod等の状態管理中心 & 実装依存 \\
+Explainログ & 実装済み & intent可視化 & イベント／ログ中心 & 運用画面中心 \\
+研究基盤性 & Backend差替え評価を重視 & SDN基盤 & 汎用制御基盤 & SD-WAN製品寄り \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{課題設定}
+VPNソフトウェアはTunnelを確立できるが，Tunnelが存在することと，そのTunnelを現在の通信経路として利用することは同一ではない．直接Tunnelが確立済みでも，packet lossが大きい場合やポリシーに違反する場合には利用すべきではない．逆に，Hub Path利用中にDirect Pathが復旧した場合はDirectへ移行した方が望ましい場合がある．したがって，Tunnel状態と経路利用状態を分離する必要がある．
+
+また，Path変更には中間状態が存在する．新PathのTunnel確立，Forwarding Stateの準備，End-to-End検証，Commit，切替後確認，失敗時復旧は異なる段階であり，どの段階で失敗したかによって取るべき処理が変わる．単純に最終Desired Stateのみを再適用する方式では，通信断や片側切替等の不整合を十分に扱えない．
+
+具体例として，site-aとsite-bが通常はHub Pathで通信しており，Direct Pathが復旧したためDirectへ戻したい状況を考える．このとき，古いHub Pathのrouteを先に削除してから直接Tunnelを張ると，直接Tunnelの確立に失敗した瞬間に利用可能な経路がなくなる．逆に，直接Tunnelが確立した直後に全通信をDirectへ移すと，Hub Pathを通っていたパケットとDirect Pathを通るパケットの到着順序が入れ替わる可能性がある．また，切替後の疎通確認を行わない場合，ControllerはDirectへ切り替えたつもりでも，実際には片側のForwardingだけが変更されて通信できない状態を見逃す可能性がある．したがって，Path変更は「routeを一行書き換える」処理ではなく，Prepare，検証，切替，確認，復旧を持つ一連の手続きとして扱う必要がある．
+
+さらに，strongSwan，VPP，FRRはそれぞれ異なる設定方法，API，状態モデルを持つ．個別scriptで統合することも可能であるが，構成が増えるほど状態管理と障害復旧処理が複雑化する．Ibukiでは，制御対象をTunnelと経路に限定し，機器固有差分をAdapterへ局所化することで，上位のPath SelectionおよびPath Transition論理を再利用可能にする．
+
+以上を踏まえ，本研究では次のResearch Question（RQ）を設定する．RQ1は，Tunnelの共通抽象化によって，異なるTunnel Backend間でPath SelectionおよびPath Transitionの上位論理を再利用できるかである．RQ2は，Path変更をReady，Commit Executing，Commit Applied，Post Validation，Stable等を持つ明示的なTransition Modelとして扱うことで，単純な経路更新と比較して安全なPath変更を実現できるかである．補助的な課題として，RQ3では複数Domain Controller間の協調，RQ4ではDecision Logによる判断過程の説明可能性を扱う．
+
+\section{提案手法}
+\subsection{全体アーキテクチャ}
+Ibukiは，Intent（要求記述） API，Policy Engine，Path Selection Engine，Transition Engine，状態管理部，Agent，Tunnel Adapter，Forwarding Adapter，Health監視部，Explain/Event Store，Domain間連携インターフェースから構成される．利用者は，strongSwanやVPPの具体的なコマンドではなく，接続したい拠点，利用可能なCandidate Path，品質条件，Transition StrategyをIntent（要求記述）として指定する．ControllerはIntent（要求記述）とObserved StateをもとにTarget Pathを選択し，Transition EngineがPath変更の状態遷移を管理する．実際のOSS操作は，各拠点に配置されるAgentがAdapterを通じて担う．
+
+この構成の狙いは，運用者が下位OSSのコマンド列を直接意識しなくても，ネットワークとして達成したい状態を記述できるようにすることである．例えば運用者は，「site-aとsite-bを接続したい」「Directを優先するが，Directが不健全ならHubへFallbackする」「切替後に疎通確認を行う」といった要求をIntent（要求記述）として指定する．Ibuki Controllerは，この要求をstrongSwanのswanctl設定，VPPのroute設定，検証用のprobe，Explainログへ分解する．すなわちIbukiは，下位OSSを隠蔽して置き換えるのではなく，下位OSSを安全に組み合わせるための制御層である．
+
+今回の設計で特に重視するのは，Ibukiを単なる経路遷移実験用toolとして閉じないことである．最終像としてのIbukiは，IPsec/IKEv2を中心とする標準VPN技術とSoftware Gatewayを利用し，GUIからTopology，Path，Policy，Health，Transition履歴を管理できる，オープンなSD-WAN的制御基盤である．ただし，本稿で実装済みまたは評価対象とする範囲は，この最終像全体ではない．本稿の中心は，Pathを第一級の制御対象として定義し，Path SelectionとPath Transitionを下位実装から分離して扱うことである．GUI，Cloud VPN連携，複数Controller Federation，Service Chaining等は，この基盤の上に置かれる将来拡張として位置付ける．
+
+また，初期実装の対象はIPsec/IKEv2とstrongSwanを中心に置く．WireGuard，GRE，VXLAN，Cloud VPN等を現時点で同等に実装済みであるとは主張しない．これらは，Adapter/Plugin機構を通じて将来的に追加されるBackend候補である．したがって提案手法の要点は，「すべてのTunnel実装を既に扱える」ことではなく，「下位実装差をAdapterとCapability（能力情報）へ押し出し，上位のPath ModelとTransition Modelを再利用可能にする構造を定める」ことにある．
+
+\begin{table}[h]
+\centering
+\caption{Ibukiの主要構成要素}
+\label{tab:architecture}
+\begin{tabular}{>{\raggedright\arraybackslash}p{0.26\linewidth}>{\raggedright\arraybackslash}p{0.64\linewidth}}
+\toprule
+構成要素 & 役割 \\
+\midrule
+運用者 / YAML / Intent（要求記述） & 利用者要求，Candidate Path，品質制約，Transition Strategyを入力する． \\
+Ibuki Controller & ポリシー解釈，Path Selection，Transition計画，Explain出力を担う． \\
+Adapter層 & strongSwan，VPP，FRR等の実装差を共通操作とCapability（能力情報）へ変換する． \\
+下位OSS & IPsec確立，Forwarding，Routing State等の実処理を行う． \\
+状態保存部 & Desired，Planned，Applied，Observed，Health，Transition Stateを保持する． \\
+Domain間連携インターフェース & 複数Domain Controller間でTransition Proposalを交換する． \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Adapter APIとCapability Model}
+Ibukiが単なるstrongSwan wrapperに留まらないためには，Controllerの上位論理と下位実装を分離するAdapter APIが重要である．今回の方針では，Tunnel操作とForwarding操作を明確に分離する．Tunnel AdapterはTunnelの作成，準備，確立，観測，検証，非活性化，削除を担い，Forwarding Adapterはrouteやpolicy-based forwarding等のForwarding Stateを扱う．これにより，IPsec SAの状態管理とVPP routeの更新を同じ抽象化へ無理に押し込まず，失敗点を分離して扱える．
+
+Tunnel Adapterの基本操作は，\texttt{create}，\texttt{prepare}，\texttt{establish}，\texttt{observe}，\texttt{validate}，\texttt{deactivate}，\texttt{destroy}として整理する．\texttt{create}は設定素材の生成，\texttt{prepare}は通信へ影響を与えない事前準備，\texttt{establish}はSAやTunnelの確立，\texttt{observe}は実状態の取得，\texttt{validate}は疎通やcounter等による検証，\texttt{deactivate}は待機または利用停止，\texttt{destroy}は設定削除を表す．Forwarding Adapterは，\texttt{prepare\_route}，\texttt{commit\_route}，\texttt{observe\_route}，\texttt{rollback\_route}等に分け，Tunnel確立と転送切替を別々の失敗点として扱う．この分離により，Commit前の失敗ではActive Pathを維持し，Commit後の失敗ではRollbackやFallbackを選ぶという判断が可能になる．
+
+Capability Modelは，各Adapterが何を実現できるかをControllerへ伝えるための能力情報である．候補として，\texttt{can\_observe\_state}，\texttt{can\_pre\_establish}，\texttt{can\_keep\_standby}，\texttt{can\_rekey}，\texttt{can\_measure\_health}，\texttt{can\_flow\_preserve}，\texttt{can\_atomic\_forwarding\_update}等を想定する．例えば，あるBackendがFlow Preserveを実現できない場合，Controllerはそれを隠蔽せず，利用可能なStrategyから除外する．このときCapabilityは単なる実装メモではなく，Transition Strategyの選択可能性を決める入力になる．
+
+重要なのは，Capabilityが「違いを消す」ためではなく，「違いを安全に扱う」ための情報である点である．Local strongSwan AdapterはローカルプロセスとVICIを操作するが，Cloud VPN Adapterはクラウド事業者のAPIを操作する可能性がある．両者の遅延，観測可能な状態，事前確立の可否，Rollback可能性は異なる．Ibukiはこれらを同じであると仮定せず，共通操作とCapability差として上位層へ公開する．これにより，同じPath Modelを維持しながら，Backendごとの制約に応じたTransition計画を生成できる．
+
+\subsection{Intent（要求記述）と入力例}
+Intent（要求記述）は，利用者や上位システムがIbukiへ与える「達成したいネットワーク状態」である．Intent（要求記述）には，通信元，通信先，利用可能なCandidate Path，必須または禁止するWaypoint，Path Priority，許容RTT，許容packet loss，Transition Strategy，Fallback Path，Timeout，Post Validation Conditionなどを含める．重要なのは，Intent（要求記述）がstrongSwanやVPPの具体的なコマンドではない点である．運用者は「どのTunnelを何行目の設定として投入するか」ではなく，「どの拠点間を，どの条件で接続したいか」を記述する．
+
+例えば，次のような入力では，site-aからsite-bへの通信について，Direct Pathを優先し，Directが利用できない場合はHub PathへFallbackする，という意図を表す．実際の試作実装では，このような情報をYAMLから読み込み，Path Selectionとruntime plan生成へ渡す．
+
+\begin{verbatim}
+intents:
+  - id: site-a-to-site-b
+    from: site-a
+    to: site-b
+    candidate_paths:
+      - direct-a-b
+      - hub-a-b
+    selection: priority
+    transition_strategy: immediate
+    verification:
+      type: ping
+      destination: 10.20.0.2
+\end{verbatim}
+
+この例は，実装の詳細をすべて示すスキーマではなく，読者がIntent（要求記述）の役割を把握するための最小例である．詳細なスキーマは実装の進展に合わせて拡張する．
+
+\subsection{リソースモデル}
+Ibukiは，Node，Tunnel，Segment，経路，Candidate Pathを基本Resourceとする．NodeはTunnelの終端または経路上のWaypointである．Tunnelは二つのNode間に形成される論理接続であり，初期研究ではIPsec Tunnelを主対象とする．Segmentは経路を構成する一区間であり，原則として一つのTunnelを参照する．経路は一つ以上のSegmentからなるEnd-to-End通信経路である．Direct PathはWaypointを持たない経路，Hub/Relay PathはWaypointを持つ経路として表現する．Candidate Pathは管理者または上位システムが許可したPath集合であり，Controllerが任意のNode組合せから自由に経路を生成することは初期段階では想定しない．
+
+このモデルでは，Direct，Hub，Relayを別々の特別な機能として実装しない．DirectはSegmentが一つの経路，HubはSegmentが二つ以上でWaypointにhubを含む経路，RelayはWaypointにrelayを含む経路として表せる．この表現により，Path Selection EngineやTransition Engineは，Direct専用，Hub専用，Relay専用の処理を持たずに，同じResource Model上で候補を比較できる．言い換えれば，Ibukiは「経路の種類ごとに別のプログラムを書く」のではなく，「経路を部品の並びとして表し，同じruleで扱う」ことを目指している．
+
+Resource Modelでは，Segment列の順序が経路上の通過順序を表す．経路内のloopは，明示的に許可された検証用scenarioを除き無効とする．Segmentのfrom/to NodeとTunnelのlocal/remote Nodeが矛盾する場合，また通信 selector，route destination prefix，Waypoint ポリシーが矛盾する場合，そのCandidate Pathは選択対象から除外する．経路が利用可能と判断される最小条件は，全SegmentのTunnelがPrepare可能であり，Forwarding反映先が存在し，Intent（要求記述）制約および管理Domain ポリシーに違反しないことである．
+
+\subsection{状態モデルとReconciliation}
+IbukiはDesired State，Planned State，Applied State，Observed State，Health状態，Transition Stateを区別する．Desired StateはIntent（要求記述）やポリシーから導かれるDesired State，Planned StateはControllerが生成したruntime plan，Applied StateはControllerが適用済みと記録している状態，Observed StateはstrongSwan/VPP/FRR等から取得した実状態である．Applied StateとObserved Stateの差分をDriftとして扱う．例えば，swanctl上でSAが消えている，VPP routeが外部操作で削除された，Controller再起動によりApplied Stateを失った，片側管理DomainだけがCommit済みである，といった状態がDriftである．
+
+これらの状態を分ける理由は，Controllerが「そうしたつもり」の状態と，実際のネットワーク状態がずれることがあるためである．Desired Stateは設計図，Planned Stateは作業手順書，Applied Stateは作業済み台帳，Observed Stateは現場確認結果に相当する．台帳ではDirect Pathが有効と記録されていても，現場確認でSAが消えていれば通信は成立しない．このずれを検出し，状況に応じて再適用やRollbackを判断する処理がReconciliationである．
+
+Reconciliationは，単にDesired Stateを再適用するのではなく，Transition Stateを参照して実行する必要がある．Commit前の失敗であればActive Pathを維持すればよいが，Commit後のPost Validation失敗ではRollbackが必要になる．この点が，一般的な宣言的状態管理をネットワーク 経路制御へ適用する際の重要な差分である．
+
+\subsection{Path Selection}
+Path Selectionでは，Intent（要求記述）により許可されたCandidate Path集合から，利用不能な経路やConstraint違反経路を除外し，残った経路を比較してTarget Pathを決定する．初期試作実装ではExplicit，Priority，Evaluatedの三方式を扱う．Explicitは管理者が経路を直接指定する方式，Priorityはあらかじめ定義された優先順位に基づく方式，EvaluatedはRTTやpacket loss等の観測値を比較する方式である．観測値の微小変動による頻繁な切替を防ぐため，将来的にはhysteresis，confirmation count，minimum active time，hold-down等を導入する．
+
+Path Selectionは，単に最短経路を探す処理ではない．例えば，Direct PathのRTTが最も小さくても，packet lossが高い場合には除外されるべきである．また，Hub Pathの方が遅くても，監査やセキュリティポリシー上，特定通信はHubを通す必要があるかもしれない．Ibukiでは，まず利用してよい経路をCandidate Pathとして制限し，その中でSecurity Constraint，Explicit Administrative Policy，Availability/Health Constraint，Performance Preferenceの順に評価する．同一優先度の強制条件同士が矛盾した場合には，Controllerが勝手に片方を選ぶのではなく，Intent ConflictとしてRejectする．このConflictはExplainおよび将来のGUIへ表示する．これにより，意図しないTransit利用やLoopを避けつつ，運用者が説明可能な形でTarget Pathを選択する．
+
+\subsection{Health評価}
+Path Selectionで利用するHealthは，単一のping結果だけで決めるのではなく，Segment Observation，Path Prediction，End-to-End Verificationの三段階で扱う．Segment Observationでは，各拠点Agentが協調して，利用可能なSegmentについて両端からReachability，RTT，packet loss，jitter等を定期的に測定する．Path Predictionでは，Segmentごとの観測値から，複数Segmentで構成されるCandidate Path全体の状態を推定する．End-to-End Verificationでは，実際にTarget Pathとして利用する前後にProbeを実施し，推定した品質と実測値を比較する．
+
+帯域測定はnetwork自体へ負荷を与えるため，常時実施するのではなく，低頻度または必要時に実施する．また，HealthはPerformance Preferenceより強い制約として扱う．すなわち，RTTが小さいPathであってもReachabilityが不安定な場合やpacket lossが閾値を超える場合には，Target Pathから除外される．
+
+この三段階に分ける理由は，経路全体の状態を一回のEnd-to-End Probeだけで判断すると，どのSegmentが問題なのか分からないためである．例えば，site-aからsite-bへのDirect Pathが失敗した場合，原因はsite-a側のTunnel，site-b側のTunnel，途中のInternet経路，またはForwarding設定のいずれにもあり得る．Segment Observationにより区間ごとの状態を記録しておけば，Controllerは「Direct全体が失敗した」という結果だけでなく，「どのSegmentがDegradedまたはFailedであるため除外したか」をExplainへ記録できる．
+
+Health状態は少なくともHealthy，Degraded，Failed，Unknownに分類する．Healthyは制約を満たす状態，Degradedは通信は可能だが閾値に近いまたは性能条件を満たさない状態，FailedはReachabilityや必須Probeが失敗した状態，Unknownは観測が不足して判断できない状態である．UnknownをHealthyとして扱うと危険な経路を選ぶ可能性があるため，Security ConstraintやAvailability Constraintが強いIntentではUnknownを選択対象から除外する．一方，運用者が明示的に許可した検証用Intentでは，Unknown PathをProbe対象として扱うこともできる．
+
+HealthはPath SelectionだけでなくTransitionにも利用する．PreparingまたはValidating中にTarget PathのHealthがFailedになった場合，Commitへ進まずActive Pathを維持する．Commit Applied後にPost Validationが失敗した場合は，最後のStable PathへRollbackする．さらにStable Path自体がFailedである場合には，\texttt{fallback=true}を持つCandidate PathへのEmergency Fallbackを検討する．このようにHealthは，経路選択の材料であると同時に，状態遷移を進めるか止めるかを決める条件でもある．
+
+\subsection{Path Transition}
+Path Transitionは，Target Path決定後に実行される状態遷移である．本稿では，状態機械そのものを新規性として強く主張するのではなく，通信Pathを第一級の制御対象とし，Path間の変更を実装横断的なTransitionとして扱う点に主眼を置く．
+
+Transitionは，Proposed，Preparing，Validating，Ready，Commit Executing，Commit Applied，Post Validation，Stable，Rolling Back，Fallbacking，Failedを持つ．ProposedはTarget Path候補が決まったが，まだ下位操作を開始していない状態である．Preparingは新Pathに必要なTunnelやForwarding設定を通信へ影響しない範囲で準備する状態である．ValidatingはSA，counter，Probe等により，新PathがCommit候補として妥当かを確認する状態である．Readyは，新PathのTunnelやForwarding設定がCommit可能な状態に揃ったことを表す．Commit ExecutingはForwarding変更を実行している状態，Commit Appliedは設定変更が下位OSSへ適用された状態である．Post Validationは，設定変更後にEnd-to-End Probe等で通信成立を確認する段階である．Stableは，新PathへのForwarding変更後，E2E検証を含む所定の成功条件を満たし，安定した通信Pathとして確定された状態である．このように，「設定変更が成功した」ことと「実際の通信が安定している」ことを区別する．
+
+Rollbackは，最後に通信が安定していたStable Pathへ復帰する操作である．一方，Fallbackは，Stable Path自体が利用不能である場合に，安全側の既定Pathへ退避する操作である．初期設計では，Emergency Fallback先としてHub Pathを想定するが，Hubを特別扱いするのではなく，Candidate Path内に\texttt{fallback=true}等の属性を持つPathとして指定する方が，Path中心設計と整合する．したがって，Rollbackは「直前の安定Pathへ戻す」，Fallbackは「戻れない場合に安全側のPathへ退避する」と整理できる．
+
+複数AgentをまたぐCommitでは，完全な同時切替を保証することは現実的ではない．拠点ごとに処理遅延やControl Channelの揺らぎがあり，片側だけForwarding変更に成功する可能性があるためである．そのためIbukiでは，Atomic Commitを強く仮定するのではなく，世代ID，冪等な操作，Timeout，Post Validation，Rollbackにより，短時間の不一致を検出して安全な状態へ収束させる方針を取る．この点でも，StableをCommit Appliedから分離することが重要になる．
+
+\begin{table}[h]
+\centering
+\caption{Path Transitionの状態遷移}
+\label{tab:transition-state}
+\begin{tabular}{llll}
+\toprule
+現在状態 & イベント & 次状態 & 失敗時 \\
+\midrule
+Proposed & target accepted & Preparing & Failed \\
+Preparing & resources prepared & Validating & Failed/Rolling Back \\
+Validating & validation passed & Ready & Rolling Back \\
+Ready & commit requested & Commit Executing & Rolling Back \\
+Commit Executing & forwarding changed & Commit Applied & Rolling Back \\
+Commit Applied & post validation started & Post Validation & Rolling Back \\
+Post Validation & success condition met & Stable & Rolling Back/Fallbacking \\
+Rolling Back & stable path restored & Stable & Fallbacking/Failed \\
+Fallbacking & fallback path active & Stable & Failed \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Transition Strategyは，状態機械とは分離して扱う．Immediateは既存通信を含めて即時にTarget Pathへ切り替える方式である．Gracefulは一定条件またはTimeoutまで旧Pathを維持してから切り替える方式である．Flow Preserveは既存flowを旧Pathへ残し，新規flowからTarget Pathを利用する方式である．GracefulやFlow Preserveでは，\texttt{max\_drain\_time}，\texttt{flow\_timeout}，\texttt{force\_switch\_after\_timeout}等のparameterを持たせる設計とする．これにより，「セッション終了まで待つ」方式と，「最大30秒までは待つが，それを超えたら通信影響を許容して切り替える」方式の両方を表現できる．
+
+\begin{table}[h]
+\centering
+\caption{Transition Strategyの比較}
+\label{tab:strategy}
+\begin{tabular}{>{\raggedright\arraybackslash}p{0.18\linewidth}>{\raggedright\arraybackslash}p{0.20\linewidth}>{\raggedright\arraybackslash}p{0.20\linewidth}>{\raggedright\arraybackslash}p{0.16\linewidth}>{\raggedright\arraybackslash}p{0.16\linewidth}}
+\toprule
+Strategy & 旧Path & 新Path & flow単位制御 & 実装状況 \\
+\midrule
+Immediate & 既存通信を含めて即時切替 & 直ちに利用 & しない & 初期実装相当 \\
+Graceful & 条件またはTimeoutまで維持 & 検証後に利用 & しない & 未実装 \\
+Flow Preserve & 既存flowを維持 & 新規flowから利用 & する & 未実装 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{説明可能性}
+Ibukiは，Path SelectionおよびPath Transitionの判断をDecision Logとして保存する．例えば，Direct Pathがpacket loss制約に違反したため除外され，Relay PathとHub Pathが候補として残り，RTT比較によりRelay Pathが選択された，という過程を記録する．試作実装ではExplain JSONLとして，選択経路，除外理由，期待結果，実行結果を出力する．Explainは自然言語生成ではなく，Controllerが実際に行った判断を追跡可能にする機能である．
+
+ここでいうExplainは，GUI上の表示部品そのものではなく，GUIが参照する判断記録基盤である．GUI frontendは今後の実装対象であるが，Path SelectionやFallback判断の根拠を構造化ログとして出力するExplain JSONLは，試作実装において一連の判断過程を扱う機能として実装済みである．したがって本稿では，Explainを「一部実装」ではなく，GUIへ接続可能な実装済みのDecision Log機構として扱う．
+
+\subsection{セキュリティモデル}
+IbukiはIPsec Tunnel，制御API，生成Script，Decision Logを扱うため，信頼境界を明確にする必要がある．VICI protocol自体は認証や暗号化を提供しないため，UNIX socketの権限管理等で保護する必要がある\cite{strongswan-vici}．したがって，IbukiのstrongSwan AdapterはVICI socketへアクセスできる主体をControllerまたはAgentに限定し，PSKやcredentialをDecision Logへ出力しない．生成されたapply scriptやvppctl/swanctl実行にはroot権限または同等の権限が必要になるため，YAML入力は信頼された管理者または上位システムから受け取る前提とする．外部API化では，schema validation，command injection対策，権限分離，secret管理，複数管理Domain Control Channelの相互認証が必要である．
+
+\subsection{管理Domain間協調}
+Ibukiは，ネットワーク全体を一台の中央Controllerが管理することを必須としない．組織，拠点，クラウド，セキュリティ境界ごとに異なる管理Domainが存在する場合，それぞれの管理DomainにControllerを配置し，自管理Domain内のAgentやTunnelのみを直接操作する構成を想定する．異なる管理Domainをまたぐ経路を構築する場合，一方のControllerが他方のAgentへ直接設定を投入するのではなく，Controller間でTransition Proposalを交換する．
+
+例えば，管理Domain AのControllerが「site-aから管理Domain Bのsite-bへDirect Pathを構築したい」と判断した場合，管理Domain BのControllerへProposalを送る．管理Domain Bは，自管理Domainのポリシー，Capability（能力情報），利用可能なTunnel終端を確認し，要求をAcceptまたはRejectする．双方がAcceptした場合，各Controllerは自管理Domain内でPrepareを行い，Readyになったことを相手へ通知する．その後，Commitのタイミングを調整し，切替後にはそれぞれの管理DomainでPost Validationを実行する．
+
+この方式は，分散databaseのような完全なatomic commitを保証するものではない．Control Channelの遅延，片側Controllerの再起動，ポリシー拒否，片側だけのPrepare失敗などが起こり得るためである．そのため，Ibukiでは世代ID，Timeout，冪等操作，Rollback可能期間，Active Path保持によって，失敗時にも安全な状態へ収束させる設計を目指す．現試作実装では複数管理Domain間連携は未実装であり，本節は今後の設計方針として位置付ける．
+
+\subsection{Agentの役割とControl Plane障害時の動作}
+各拠点にはAgentが常駐し，Controllerからの指示を受けてAdapter/APIを通じてstrongSwanやVPPを操作する．基本責務は，TunnelやForwarding Stateの適用，Observed Stateの収集，Segment Observation，Probe実行，Decision Logに必要な実行結果の報告である．Controllerがすべての拠点で直接コマンドを実行する構成ではなく，Controller → Agent → Adapter/API → strongSwan/VPPという責務分離を基本とする．
+
+Controllerが停止した場合，Agentは勝手な最適化を行わず，原則として現在のActive Pathを維持する．ただし，そのActive Path自体が通信不能となった場合には，事前に許可されたEmergency FallbackのみAgent単独で実行可能とする．初期設計では，Emergency Fallback先はCandidate Path内の\texttt{fallback=true}属性で指定されたHub Path等である．これにより，中央制御と障害時自律性の境界を明確にする．
+
+
+\section{設計上の詳細と研究上の位置付け}
+
+\subsection{Ibukiが扱う制御境界}
+
+Ibukiの設計では，ネットワーク機器全体を一つの抽象Resourceとして包み込むことを目的としない．実際のルータやセキュリティ機器には，インターフェース，VLAN，NAT，ファイアウォール ポリシー，QoS，Routing Protocol，Hardware Offload，監視等，多数の機能が存在する．これらすべてを共通化しようとすると，機器ごとの差異を吸収するための巨大な機器抽象化が必要になり，結果として共通インターフェースそのものが特定製品の最大公約数になりやすい．
+
+そこでIbukiでは，研究対象を拠点間通信に必要なTunnelと，それらを組み合わせて形成される経路へ限定する．この限定は，機能不足を意味するものではなく，研究上の境界を明確にするための設計判断である．例えば，既存のルータがBGPやOSPFによって下位網の経路を学習している場合，Ibukiがそのルーティングプロトコル自体を置き換える必要はない．同様に，既存ファイアウォールがセキュリティポリシーを適用している場合，Ibukiがファイアウォール規則全体を管理する必要もない．Ibukiは，それらの既存機能の上に成立するTunnelを観測・制御し，End-to-End経路をどのTunnel列で構成するかを扱う．
+
+この境界を採用することで，既存設備を完全にIbukiへ置き換えるのではなく，必要な地点にSoftware Gatewayを配置して段階的に導入する構成も可能になる．一方で，外部からTunnelやForwardingを制御できない既存機器については，Ibukiがその機器内部へ新しいPath Selection機能を追加できるわけではない．その場合は，制御可能なstrongSwan/VPP/Linux ゲートウェイを通信経路上へ追加し，そのゲートウェイをIbukiのNodeとして扱う必要がある．したがって，Ibukiの機器非依存性は「どの機器でも直接制御できる」という意味ではなく，「制御可能なTunnel終端を共通Resource Modelへ接続できる」という範囲で成立する．
+
+\subsection{TunnelとForwardingの分離}
+
+Ibukiでは，Tunnelが確立している状態と，そのTunnelが利用者通信のActive Pathとして使われている状態を明確に分離する．この分離はPath Transitionを実現するうえで重要である．
+
+例えばHub PathからDirect Pathへ移行する場合，新しい直接Tunnelを確立した瞬間に既存通信をDirectへ移す必要はない．直接Tunnelを待機状態でPrepareし，SA確立，reachability，必要なHealth conditionを確認した後にForwardingのみを切り替えることができる．逆に，Direct PathからHub PathへFallbackする場合も，ハブ経由用Tunnelを常時待機として保持しておけば，Tunnel確立時間を切替時間から分離できる．
+
+この設計により，Tunnelのライフサイクルと経路利用のライフサイクルを別々に扱える．TunnelはDown，Prepare中，Established，Degraded，失敗等の状態を持ち得る一方，経路はCandidate，待機，Active，Draining等の利用状態を持ち得る．さらに遷移は，Active PathからTarget Pathへ移る手続きそのものの状態を保持する．Ibukiでは，これらを一つのboolean値へ潰さず，異なる意味を持つ状態として管理する．
+
+\subsection{Hub，Direct，Relayを統一的に扱う理由}
+
+実際の拠点間ネットワークでは，通信経路はDirectとHubの二択とは限らない．特定のsecurity ゲートウェイ，inspection point，クラウド ゲートウェイ，regional relay等を経由する構成も存在する．そのためIbukiでは，HubやRelayを特別な経路 typeとしてhard-codeするのではなく，経路を順序付きSegment列として表現する．
+
+この方式では，site-aからsite-bへ直接到達する経路は一つのSegmentからなり，site-aからhubを経由してsite-bへ到達する経路は二つのSegmentからなる．同様に，複数のWaypointを通る経路もSegment列を増やすことで表現できる．これにより，Path Selection Engineは「Directならこの処理，Hubなら別処理」という分岐ではなく，同一のPath Resourceに対してポリシーとHealthを評価できる．
+
+ただし，任意のNodeを自由に組み合わせて経路を自動生成すると，候補数が急増し，意図しないTransit利用やセキュリティ境界違反が生じる可能性がある．そこで初期設計では，管理者または上位システムがCandidate Pathをあらかじめ許可し，Controllerはその集合の中から選択する．自動経路生成は，将来的にconstraint solver等を導入する場合の拡張課題とする．
+
+\subsection{Path SelectionとPath Transitionの責務分離}
+
+Path SelectionとPath Transitionは密接に関係するが，Ibukiでは別の責務として扱う．Path Selectionの問いは「現在のIntent（要求記述）とObserved Stateに対して，どの経路をTargetとすべきか」である．これに対してPath Transitionの問いは「Active PathからそのTarget Pathへ，どの手順で移行するか」である．
+
+この二つを分離することで，同じPath Selection結果に対して異なるTransition Strategyを適用できる．例えばDirect Pathが最適と判断された場合でも，障害復旧を最優先する通信にはImmediateを適用し，長時間継続するセッションを持つ通信にはFlow Preserveを適用する，という設計が可能になる．逆に，同じGraceful StrategyをDirectへの昇格，HubへのFallback，Relayへの切替に再利用できる．
+
+この分離は研究評価にも重要である．Path Selection algorithmを変更したときに遷移実装まで書き換える必要がある構造では，どの要因がpacket lossや切替時間へ影響したのかを切り分けにくい．IbukiではSelectionと遷移を独立componentとして扱うことで，algorithmと切替方式を組み合わせて比較できる研究基盤を目指す．
+
+\subsection{切替時のpacket lossとpacket reordering}
+
+経路切替時に完全な無損失を保証することは，本研究の目的ではない．IPsecの規格内で動作し，Tunnelをまたぐ独自sequence numberやpacket duplication/reordering protocolを追加しない以上，異なる遅延を持つ経路間で通信を切り替えれば，一時的なpacket lossやpacket reorderingが発生する可能性がある．
+
+例えばHub Pathを通過中のパケットがネットワーク内に残っている状態で後続パケットをDirect Pathへ送信すると，Direct Pathの方が低遅延であれば後続パケットが先に到着する可能性がある．旧Pathと新Pathへ同じパケットを複製すればlossを減らせる場合があるが，duplicate パケットの除去やsequence管理が必要になり，本来の「既存の標準Tunnelを制御する」という研究境界から外れる．
+
+そのためIbukiでは，完全無損失を一律に約束するのではなく，利用者が要求に応じてTransition Strategyを選択できることを重視する．Immediateでは短い切替時間を優先し，一瞬のlossやreorderingを許容する．Gracefulでは旧Pathを一定時間保持し，新Pathの検証とdrain時間を設けることで影響低減を狙う．Flow Preserveでは既存flowを旧Pathへ残し，新規flowから新Pathへ移すことでセッション単位の継続性を優先する．
+
+この設計により，「無停止」という曖昧な表現ではなく，最大通信断時間，packet loss数，packet reordering，TCP retransmission，session continuity等の測定値として遷移品質を評価できる．
+
+\subsection{Intent（要求記述）反映時間と安全性}
+
+Intent（要求記述）を高速に反映できることと，安全に経路を切り替えられることは同一ではない．Controllerが新しいIntent（要求記述）を受理してから数msでroute変更を発行できても，Target Tunnelの確立やEnd-to-End検証が完了していなければ，通信断を引き起こす可能性がある．
+
+そこでIbukiでは，Intent（要求記述）受付からTarget Path決定までの制御判断時間と，実際に通信がTarget Pathへ移るまでの遷移時間を区別する．さらに遷移時間をPreparation，Validation，Commit，Post Validationへ分解する．これにより，単純に「Intent（要求記述）が何msで反映されたか」だけを競うのではなく，どの安全確認にどれだけ時間を費やしたかを測定できる．
+
+安全性を高めるほど遷移時間が長くなる可能性があるため，これはtrade-offとして評価する必要がある．例えばImmediateではValidationを最小化して高速に切り替え，Gracefulでは追加検証や旧Path保持時間を設ける，という比較が可能である．
+
+\subsection{Explainを研究基盤へ組み込む理由}
+
+Explain機能は，単にGUI上で分かりやすい文章を表示するための機能ではない．Path Selectionや遷移を研究対象とする場合，ControllerがどのObserved Stateとポリシーを根拠に判断したかを記録できなければ，同じ実験結果を再現・分析することが難しい．
+
+Ibukiでは，Candidate Pathごとの採用・除外理由，使用した評価指標，選択されたTarget Path，Transition Strategy，各遷移 Phaseの開始・終了，失敗理由，Rollback結果等をDecision Logとして保存する．これにより，例えば「Directが選択されなかった」という結果だけでなく，「Directのpacket lossがthresholdを超えたため候補から除外され，残ったHubとRelayのうち優先度によりRelayが選択された」といった判断過程を追跡できる．
+
+したがってExplainは，運用者や研究者への可視化だけでなく，実験結果の解釈可能性と再現性を支えるinstrumentationとして位置付ける．自然言語生成そのものは研究対象とせず，内部Decision Logを人間およびGUIが追跡可能な形式で出力することを重視する．
+
+Explainの評価では，「ログが出力された」だけでは不十分である．実際のController判断，Explainに記録された判断，同一入力から再構成した期待判断が一致するかを検証する必要がある．そのためDecision Logには，Intent，Candidate Path，観測値，Constraint判定，除外理由，Priority比較，Target Path，Transition Strategy，Transition結果を記録する．これにより，第三者が同じ入力と観測値からController判断を再構成できるかを評価できる．
+
+\subsection{複数Controllerと管理Domain}
+
+Ibukiでは，一つのネットワーク全体に唯一のControllerを置くことを前提としない．企業間接続，組織間共同研究，クラウドとオンプレミスの接続等では，管理権限やセキュリティポリシーが異なる複数管理Domainが存在する．一方の組織が他方のルータやAgentを直接操作できる設計は，現実的ではない場合が多い．
+
+そのため，各管理Domainは自身のControllerを持ち，Controllerは原則として自管理Domain内のResourceのみを直接操作する．管理DomainをまたぐPath Transitionでは，Controller間で高レベルなProposal，Capability（能力情報），Ready状態，Commit要求，Post Validation結果等を交換する．Data Planeの拠点間通信はIPsecで保護し，Controller間のControl Channelはそれとは独立したmTLS付きHTTPSまたはgRPC等を利用する構成を想定する．
+
+Control Channelを切替対象のData Tunnelへ依存させない理由は，Data Tunnel障害時にController間通信まで失われる循環依存を避けるためである．ただし，Controller Federationは現試作実装では未実装であり，本研究の中心的な新規性ではなく，将来的にTransition Modelを複数管理主体へ拡張するための検討項目として扱う．
+
+各Controllerは，Controller ID，Domain ID，Certificate，Authorized Peers，Allowed Operationsを保持する．Controller間通信にはmTLSを用いることを想定するが，認証と認可は分離する．すなわち，証明書が正しいことは相手Controllerの身元確認であり，相手Domain内の任意Resourceを操作できることを意味しない．また，Remote ControllerからRemote Agentへの直接操作は禁止し，必ずController AからController BへProposalを送り，Controller BがAgent Bを操作する構成とする．三つ以上のDomainが関与する場合に誰がCoordinatorになるかは，今後の研究課題である．
+
+\subsection{既存技術に対する主張の範囲}
+
+Ibukiの研究価値を明確にするためには，既存技術が既に実現していることを新規性として主張しないことが重要である．ONOSにはIntent Frameworkが存在し，Kubernetesにはdesired/現在状態とreconciliationの考え方が存在する．flexiWANはOSS SD-WANとしてController，Agent，VPP，FRR等を統合し，実運用を意識した管理機能を提供している．また，商用SD-WAN製品は，品質に基づくpath selectionやfailover等を既に実現している．
+
+したがってIbukiは，「Intent（要求記述）を初めてネットワークへ導入した」「宣言的制御を初めてネットワークへ適用した」「OSSだけで初めてSD-WANを作った」「初めて自動failoverを実現した」といった主張を行わない．
+
+本研究が検証するのは，より限定された問いである．すなわち，標準Tunnelを実装横断的な共通Resourceとして切り出すことで，経路制御論理を実装からどこまで分離できるか，そしてPath変更の途中状態を第一級のTransition Modelとして扱うことで，異なる切替Strategyや失敗復旧を共通の枠組みで記述・比較できるか，という二点である．
+
+この限定によって，Ibukiは完成品として商用SD-WANと機能数を競うのではなく，新しいPath Selection，Transition Strategy，Health evaluation，複数管理Domain coordination等を試すためのopenな研究・実証基盤として位置付けられる．
+
+\section{想定利用者と導入形態}
+
+\subsection{初期の想定利用者}
+
+Ibukiの初期ターゲットは，一般企業が完成品として購入し，既存の高機能VPNルータを直ちに置き換える用途ではない．既にFortiGate等の高価なSD-WAN対応製品を導入し，その機能で要件を満たしている企業に対して，単に「OSSで同じことができる」という理由だけで置き換えを促すことは現実的ではない．既存設備の導入費用，運用手順，保守契約，担当者の習熟等を考えれば，置換コストの方が大きくなる可能性がある．
+
+そこで初期利用者として，大学・研究機関，ネットワーク研究者，SIerや通信事業者の技術検証部門，ネットワーク制御の教育環境，自社独自のpath control algorithmを検証したい開発者等を想定する．これらの利用者にとって重要なのは，完成されたGUIの機能数よりも，Path Selectionや遷移の論理を変更し，実際のIPsec/VPP環境で挙動を測定できることである．
+
+\subsection{既存設備を持つ組織での利用}
+
+既存のVPNルータを持つ組織でも，全面置換だけが導入形態ではない．例えば研究対象となる一部拠点，クラウド接続点，新設拠点，検証ネットワーク等にSoftware Gatewayを追加し，既存ネットワークと並行してIbukiを利用することが考えられる．
+
+この場合，既存ルータの内部機能をIbukiが変更するのではなく，Ibukiが制御可能なゲートウェイを新しいTunnel終端として配置する．既存設備をunderlayやInternet接続に利用しながら，その上にIbuki管理のIPsec Tunnelを形成することで，段階的な導入が可能になる．
+
+基本的な導入構成は，LAN → Ibuki Gateway → 既存Router → Internetである．既存Routerを破棄する必要はなく，Ibuki Gateway上にAgentおよびstrongSwan等を配置し，Ibuki管理対象の通信のみをVPNへ振り分ける．これにより，既存設備と共存しながら，一部の拠点や通信種別から段階的に検証・導入できる．
+
+\subsection{将来的な利用}
+
+研究成果が成熟した場合には，中小規模拠点間VPN，Edge環境，Cloud VPN制御，Zero Trust/SASEでのservice waypoint選択，複数組織間の共同ネットワーク，教育・training環境等への展開が考えられる．
+
+ただし，将来的な応用範囲を広げる場合でも，Ibukiの中核を「すべてのネットワーク機能を統合するController」へ拡散させないことが重要である．TunnelとPath Transitionという明確な制御境界を維持し，必要な機能はAdapter，ポリシー，Health監視部，Federation等の拡張点として追加する方針とする．
+
+\subsection{GUIの位置付け}
+GUIは本研究の新規性そのものではないが，最終的なIbukiでは主要なユーザインターフェースになる．GUIでは，ネットワークトポロジ，利用可能なPath，現在のActive Path，Standby/Degraded/Failed状態，Segment単位の測定値，End-to-End実測値，Path選択理由，Path除外理由，Intent/Policy編集，Transition Strategy設定，Fallback設定，Transition履歴，Rollback履歴，障害状態を表示・操作できる構想とする．
+
+運用上の流れは，GUIでルールを変更し，その内容をIntentへ変換し，Controllerが評価し，必要ならPath Transitionを生成し，実行結果と理由をGUIへ返す，という形になる．このときGUIが表示する判断理由は，別途手作業で作る説明文ではなく，Controllerが出力するExplain JSONLをもとに構成する．したがって，現時点でGUI frontendは未実装であっても，GUI的な説明表示に必要なDecision Log基盤は実装済みである．これにより，Ibukiは研究者がCLIで実験するための基盤に留まらず，運用者がPath状態と判断理由を理解しながら制御できる基盤へ発展できる．
+
+
+\section{実装}
+試作実装はC言語で実装したController coreである．Cを用いる理由は，VPPやLinux networking等の低レイヤ処理との境界を明示しやすく，将来的にC APIやnative bindingへ接続しやすいためである．また，network daemonとして軽量に動作させることも意識している．一方，GUIや管理画面は本研究の中核ではなく，別言語での実装を許容する．
+
+実装済みの主な要素は，YAMLによるIntent（要求記述）/経路/Tunnel/VPP edgeの記述，Priority/Fallback/Evaluated Selection，Explain JSONL出力，swanctl設定生成，VPP route plan生成，Linux network namespace testbed，Direct/Hub IPsec 基本疎通試験，VPP host-interface forwarding 基本疎通試験，Controller生成planによるIPsec/VPP統合runtime 基本疎通試験である．これらの実装および評価結果は，GitHub repository \url{https://github.com/nagato-home-server/ibuki} に整理して公開している．図\ref{fig:github-qr}に，repositoryへアクセスするためのQR codeを示す．表\ref{tab:files}に主要ファイルを示す．
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=35mm]{ibuki-github-qr.png}
+\caption{Ibuki repositoryへのQR code}
+\label{fig:github-qr}
+\end{figure}
+
+実装の流れは次のように整理できる．第一に，YAML parserがNode，Tunnel，経路，Intent（要求記述）を読み込む．第二に，Path SelectionがIntent（要求記述）に合うCandidate Pathを選ぶ．第三に，Apply Planが選ばれた経路を実現するために必要なstrongSwanおよびVPP向け操作列を生成する．第四に，生成された操作列をLinux VM上のnetwork namespace環境へ適用し，IPsec SA，ESP counter，VPP route，LAN疎通を確認する．このように試作実装は，単なる設計図ではなく，抽象モデルから実際のOSS操作までをつなぐ最小の実行経路を持つ．
+
+\begin{table}[h]
+\centering
+\caption{主要な実装ファイルと責務}
+\label{tab:files}
+\begin{tabular}{>{\raggedright\arraybackslash}p{0.24\linewidth}>{\raggedright\arraybackslash}p{0.30\linewidth}>{\raggedright\arraybackslash}p{0.36\linewidth}}
+\toprule
+実装要素 & ファイル & 役割 \\
+\midrule
+YAML parser & \texttt{src/yaml\_config.c} & Intent（要求記述），経路，Tunnel，VPP edgeを読み込む． \\
+Path Selection & \texttt{src/path\_selection.c} & Priority，Fallback，evaluated selectionを実行する． \\
+遷移 & \texttt{src/transition.c} & 経路切替の状態遷移を扱う． \\
+Apply Plan & \texttt{src/apply\_plan.c} & swanctl/VPP向けplanを生成する． \\
+Command render & \texttt{src/render\_commands.c} & swanctl/vppctlコマンド文字列を生成する． \\
+Scenario & \texttt{examples/eventnet\_scenario.c} & 実験用イベント注入と選択結果確認を行う． \\
+netns plan & \texttt{examples/netns\_plan.c} & Linux VM用runtime scriptを生成する． \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{評価}
+\subsection{評価方針}
+評価では，Ibukiが単に動作することだけでなく，本研究の二つの中心的提案が有効かを確認する．第一に，Tunnel Resource抽象化により，Path Selectionや遷移の上位論理をBackend固有の設定から分離できるかを評価する．第二に，Explicit Path Transition Modelにより，単純な経路更新よりも安全にPath変更を扱えるかを評価する．ここでいう安全性とは，packet loss zeroを保証することではなく，Prepare前，Commit前，Commit後，Post Validation後のどの段階で失敗したかを区別し，Active Path維持，Rollback，Fallbackのいずれを選ぶべきかを説明可能にすることである．
+
+評価対象は，初期段階ではDirect Path，Hub Path，Relay Pathを持つ小規模testbedとする．これは大規模性能評価ではなく，制御モデルが実際のOSS操作へ接続できるかを確認するためである．評価では，以下の観点を重視する．
+
+\begin{itemize}[leftmargin=*]
+\item 同じPath Resource ModelでDirect，Hub，Relayを扱えるか．
+\item 障害イベントに応じてActive PathからFallback Pathを選択できるか．
+\item 選択結果をstrongSwanおよびVPP向けruntime planへ変換できるか．
+\item IPsec確立，Forwarding反映，End-to-End疎通確認まで実行できるか．
+\item 判断理由をExplain JSONLとして記録できるか．
+\item Explain上の判断と，Controllerが実際に行った判断が一致するか．
+\item 未実装項目を成功扱いせず，partialまたはskipとして明示できるか．
+\end{itemize}
+
+将来的な比較対象としては，手書きshell scriptでDirect/Hubを切り替える場合，strongSwanのみでIPsecを管理する場合，VPP routeだけを手動変更する場合，FRR/BGP metric変更で経路制御する場合を想定する．比較軸は，切替手順数，設定ファイル数，失敗時に旧Pathへ戻せるか，判断理由を説明できるか，Direct/Hub/Relayを同一モデルで扱えるかである．
+
+RQ2に対しては，少なくとも次のBaselineと比較する．Baseline AはBreak-before-Makeであり，旧Pathを解除してから新TunnelをPrepareし，新Pathを設定する方式である．Baseline BはNaive Make-before-Breakであり，新TunnelをPrepareした後，すぐにrouteを変更し，旧Pathを解除する方式である．これに対してIbuki ImmediateはPrepare/Validate後にImmediate Commitを行い，Ibuki GracefulはPrepare/Validate後にControlled Transition，Post Validation，Stable確定を行い，失敗時にはRollbackする．この比較により，単なるroute更新と，状態を持つPath Transitionの差を直接評価できる．
+
+また，評価値の解釈を明確に分ける．統合基本疎通試験の総実行時間は，環境準備，設定生成，プロセス起動，SA確立待機，VPP設定，counter確認，疎通確認を含むため，通信経路の切替時間そのものではない．最終評価では，Decision Time，Preparation Time，Validation Time，Commit Time，Communication Interruption，Post Validation Time，Total Transition Timeを分離して測定し，どの工程が遅延や通信影響の支配要因であるかを示す．
+
+
+\subsection{具体的な評価実験}
+
+最終評価では，少なくとも以下の実験を実施する．これらは単なる機能確認ではなく，RQ1およびRQ2に対応する測定を行うためのscenarioとして位置付ける．
+
+\subsubsection{基本Path Transition}
+
+Hub PathをActive Path，Direct PathをTarget Pathとして遷移を実行する．Prepare開始，Tunnel Ready，Validation完了，Commit，Forwarding変更，Post Validation完了，Transition完了の各時刻を記録する．これにより，Transition全体の時間だけでなく，各Phaseに要した時間を分離する．
+
+同時に連続ping，UDP 通信，TCP connection等を流し，切替中のpacket loss，最大連続通信断時間，RTT変化，packet reordering，TCP retransmissionを測定する．この実験を基本scenarioとし，後続のStrategy比較や障害注入実験と比較する．
+
+\subsubsection{ImmediateとGracefulの比較}
+
+同一のActive Path，Target Path，通信条件でImmediateとGracefulを複数回実行する．Immediateでは可能な限り早くForwardingをTarget Pathへ切り替え，GracefulではTarget PathのValidateと旧Path保持時間を設ける．
+
+比較する指標は，Transition完了時間，packet loss，最大通信断時間，packet reordering，TCP retransmission，Rollback可能時間である．この実験により，切替速度と通信影響のtrade-offを定量化する．
+
+\subsubsection{Flow Preserve}
+
+Flow Preserveを実装した場合，長時間継続するTCPセッションを複数確立した状態で遷移を実行する．遷移前から存在するflowが旧Pathを利用し続け，新規flowがTarget Pathへ割り当てられることを確認する．
+
+評価指標として，既存セッションの継続率，新規flowがTarget Pathへ移行するまでの時間，旧Pathを維持する必要がある時間，flow table entry数，メモリ使用量を測定する．Flow Preserveが初期実装に含まれない場合，本項目は拡張評価として明示する．
+
+\subsubsection{Prepare失敗}
+
+Target Tunnelのpeerを停止する，credentialを意図的に不一致にする等の方法で，候補Tunnelを確立できない状態を発生させる．このときActive Pathが変更されず，既存通信を維持したまま遷移を失敗またはRollbackへ移行できるかを確認する．
+
+ここでの目的はTunnel確立失敗そのものを防ぐことではなく，Target PathをPrepareできない状態でもActive Pathを不用意に破壊しないことを検証することである．
+
+\subsubsection{Post Validation失敗とRollback}
+
+Target PathへのCommit後にTarget側のlink downやForwarding rule削除を発生させ，Post Validationを失敗させる．Ibukiが失敗を検出し，旧PathへRollbackできるかを確認する．
+
+障害検出時間，Rollback開始時間，旧Path復旧時間，最大通信断時間，Rollback成功率を測定する．単純なroute更新方式との比較では，旧Pathの情報を保持していない場合や旧Tunnelを即時削除した場合との差を評価する．
+
+\subsubsection{Control Plane障害}
+
+Data Planeが正常に通信している状態でControllerプロセスまたはController--Agent間Control Channelを停止する．期待する挙動は，Control Planeが停止しても既に適用済みのActive Pathが維持されることである．
+
+その後Controllerを再起動し，strongSwan SA，VPP route等のObserved Stateを取得してCurrent Stateを再構築できるかを確認する．これにより，Controllerの記憶だけをネットワークの真実として扱わず，runtimeから状態を再取得するReconciliation設計を評価する．
+
+\subsubsection{Tunnel実装交換}
+
+RQ1を評価するため，同一のIntent（要求記述），Path Model，遷移シナリオを異なるTunnel Adapterで実行する．実装を追加した際に，Path Selection Engine，Transition Engine，Resource Modelへ必要となった変更行数，Adapter固有code量，共通test suite再利用率を記録する．
+
+本実験では，単に二種類の実装で接続できたかだけではなく，「実装差がどこに現れたか」を評価対象とする．共通化できなかった機能はCapability（能力情報）差として整理し，抽象化境界が適切であったかを考察する．
+
+\subsubsection{管理Domain間遷移}
+
+Federationを実装した段階では，site-aとsite-bを異なるDomain Controller配下へ配置する．一方のControllerが他管理DomainのAgentを直接操作せず，Proposal，Accept，Prepare，Ready，Commit，Post Validationを経て経路を変更できることを確認する．
+
+さらに，片側Prepare失敗，Commit前のControl Channel切断，Commit後のControl Channel切断，Controller再起動等を発生させ，世代ID，Timeout，冪等操作，Rollback可能期間がどのように作用するかを評価する．
+
+
+\subsection{評価環境}
+評価環境は，一台のLinux VM上に複数のnetwork namespaceを作成する構成とした．論理Nodeとしてsite-a，site-b，hub-1，relay-cを用意し，site-aとsite-bの間にDirect Path，Hub Path，Relay Pathを定義した．これらは実験上Direct，Hub，Relayと呼ぶが，Controller内部ではいずれもPath Resourceとして扱う．Data PlaneにはIPsecを利用し，Forwarding PlaneにはVPPまたはLinux forwardingを利用した．
+
+network namespaceを用いる理由は，一台のVM上で複数の拠点やGatewayを模擬できるためである．物理的に複数台のルータを用意しなくても，site-a，site-b，hub，relayを独立したネットワーク stackとして作成できる．これにより，研究初期段階でも，Direct Path，Hub Path，Relay Pathの選択やFallbackを再現可能な形で検証できる．ただし，この環境は実運用規模の性能評価ではなく，制御モデルとruntime反映が成立するかを確認するための小規模testbedである．
+
+\subsection{評価指標}
+現時点の試作実装では基本疎通試験が中心であるが，研究としては定量評価を追加する必要がある．評価指標は，制御処理の時間，通信への影響，実装再利用性，説明可能性に分けられる．
+
+\begin{itemize}[leftmargin=*]
+\item 制御処理: Decision Time，Preparation Time，Validation Time，Commit Time，Post Validation Time，Rollback Time，Total Transition Time．
+\item 通信影響: Communication Interruption，packet loss数，最大通信断時間，packet reordering，RTT変化，TCP retransmission，session continuity．
+\item 実装負荷: Backend交換時の上位Engine変更量，Adapter固有code量，共通test suite再利用率，遷移あたりのControl Plane message数．
+\item Resource使用量: Controller CPU使用率，Agent CPU使用率，メモリ使用量．
+\item 説明可能性: Intent，Candidate Path，観測値，制約判定，除外理由，優先度比較，Target Path，Transition Strategy，Transition結果が記録されるか．
+\end{itemize}
+
+特にintegrated-directおよびintegrated-fallbackの時間は，今後，YAML parse，Path Selection，runtime plan生成，IPsec config生成，charon起動，swanctl load，CHILD SA initiate，ESP counter確認，VPP host-interface setup，VPP route apply，ping verificationへ分解する．これにより，統合実行全体の時間だけでなく，どの工程が支配的かを確認できる．
+
+\subsection{確認項目と結果}
+評価script \texttt{scripts/vm-evaluate.sh} により，Scenario Harness，Fallback plan生成，Explain JSONL，backend reuse，統合基本疎通試験を確認した．2026年8月12日に，\texttt{sudo RUN\_RUNTIME=1 sh scripts/vm-evaluate.sh all samples/linux-vm-netns.yaml} を実行し，結果を\texttt{out/evaluation/20260812-124723/summary.md}および\texttt{summary.csv}へ保存した．表\ref{tab:evaluation}に結果を示す．なお，integrated-directの51,944 msおよびintegrated-fallbackの75,599 msは，環境準備，設定生成，プロセス起動，SA確立待機，VPP設定，counter確認，疎通確認等を含む「統合基本疎通試験の総実行時間」であり，通信経路の切替時間または通信断時間を示す値ではない．最終評価では，Decision Time，Preparation Time，Validation Time，Commit Time，Communication Interruption，Post Validation Time，Total Transition Timeを個別に測定する．
+
+\begin{table}[h]
+\centering
+\caption{自動評価scriptによる確認結果}
+\label{tab:evaluation}
+\begin{tabular}{llll}
+\toprule
+評価項目 & 結果 & 時間 & 意味 \\
+\midrule
+scenario & pass & 1,673 ms & direct/Fallback/evaluated/multi-step選択 \\
+fallback-time & pass & 3,297 ms & 5回反復，平均569 ms \\
+explain & pass & 527 ms & Explain JSONL記録 \\
+transition-ポリシー & partial & 75 ms & Immediate相当のみ確認 \\
+rollback & partial & 521 ms & rollback executor未実装 \\
+backend-reuse & partial & 910 ms & swanctl/VPP計画生成 \\
+control-plane & skip & 55 ms & daemon障害試験未実装 \\
+restart-recovery & skip & 49 ms & Observed State復元未実装 \\
+federation & skip & 60 ms & 複数管理Domain協調未実装 \\
+integrated-direct & pass & 51,944 ms & IPsec direct + VPP確認 \\
+integrated-fallback & pass & 75,599 ms & direct障害からhub fallback確認 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Scenario Harnessでは，Direct選択，Direct障害によるHub Fallback，評価値に基づくRelay選択，multi-step scenarioを確認した．Integrated Directでは，Controllerが選択したDirect Pathについて，IPsec runtime起動，ESP counter確認，VPP forwarding設定，LAN疎通確認までを完了した．Integrated Fallbackでは，Direct Path障害イベントを注入した場合にHub Pathを選択し，IPsecとVPP forwardingを組み合わせたruntimeでLAN通信の疎通を確認した．
+
+これらの結果が示すのは，Ibukiが単に「どの経路を選ぶか」を表示するだけではなく，選択結果を実際のruntime操作へ接続できるという点である．例えばintegrated-fallbackでは，Direct障害を検出した後，ControllerがHub Pathを選択し，その経路に必要なIPsecとForwarding設定を生成し，最終的にLAN通信が疎通することを確認した．したがって，試作実装は研究全体のうち，経路抽象化，Path Selection，Explain，strongSwan/VPPへのruntime反映までの一連の流れを実証している．
+
+\subsection{Research Questionに対する初期結果}
+RQ1について，試作実装は同一のYAMLおよびPath Selection coreから，strongSwan向けswanctl設定とVPP/netns向けplanを生成できることを確認した．これは，Tunnel／経路抽象化により一部の上位論理を実装から分離できる可能性を示す．ただし，正式なAdapter API，Capability Model，plugin interface，異なるTunnel Backend間の共通test suiteは未完成である．したがって，現時点の結論は「strongSwan/VPPを題材として抽象化の実装可能性を示した」という範囲に留める．
+
+RQ2について，試作実装はTransition Strategyの全てを実装していないが，Fallback判断，runtime plan生成，統合基本疎通試験を通じて，Path変更を複数段階の操作として扱う必要性を確認した．特に，IPsec確立，ESP counter確認，VPP route投入，LAN疎通確認は異なる失敗点を持つため，Prepare，Validate，Commit，Post Validation，Rollbackを分離する設計は妥当である．
+
+RQ3およびRQ4について，RQ3の複数管理Domain federationは未実装である．RQ4についてはExplain JSONLにより，Path Selectionの判断理由と除外理由を記録できることを確認した．Explainログ基盤自体は，GUI的な説明表示へ接続できる実装済み要素として位置付ける．今後は，実際のController判断，Explainに記録された判断，同一入力から再構成した期待判断が一致するかを検証し，説明可能性を単なるログ出力ではなく再現可能性として評価する．
+
+なお，これらは最終的な有効性を証明する完全な評価ではなく，研究仮説を検証するための初期結果である．特にRQ1では，まだstrongSwan以外のTunnel実装を十分に比較していない．RQ2では，Immediate相当の切替は確認したが，GracefulやFlow Preserveによる通信影響の差は未測定である．そのため，本稿の結論は「Ibukiの設計が実装可能であり，初期testbed上で一連の制御が成立した」という範囲に留める．
+
+\section{考察}
+\subsection{Tunnel抽象化の有効性}
+初期実装では，Direct，Hub，Relayを個別の特殊処理としてではなく，経路とSegmentの組合せとして扱えた．Hub Pathでは，site-a--hubとhub--site-bという複数Tunnelを一つのEnd-to-End経路として扱う必要があるが，Controllerはこれを選択対象として扱えた．この結果は，Tunnel単体ではなく複数SegmentからなるPath Resourceとして抽象化する設計の妥当性を支持する．
+
+一方，Tunnel抽象化を過度に一般化すると，strongSwanのVICI event，XFRM インターフェース，VPPのFIB操作，FRRのBFD連携等，Backend固有の有用な機能を失う可能性がある．したがって，Ibukiでは全Backendを完全に同一インターフェースへ押し込めるのではなく，共通操作とCapability（能力情報）差を分ける設計が重要である．
+
+ここで重要なのは，「全部を同じに見せる」ことと「違いを整理して扱う」ことは異なる，という点である．Ibukiは前者を目指していない．例えば，あるBackendがFlow Preserveを実現でき，別のBackendができない場合，Ibukiはその差を隠して同じ動作を約束するのではなく，Capability（能力情報）として明示する．上位Engineは，利用可能なCapability（能力情報）の範囲でTransition計画を生成する．これにより，実装差を無視するのではなく，実装差に振り回されない構造を目指す．
+
+\subsection{Path Transitionを状態機械として扱う意義}
+Path変更を単なるroute更新やTunnel起動の列として扱うだけでは，失敗時の復旧判断が難しい．Direct Pathへの切替だけでも，swanctl load，CHILD SA initiate，ESP counter確認，VPP route投入，End-to-End疎通確認など複数段階が存在する．Tunnel確立前に失敗した場合はActive Pathを維持すればよいが，Forwarding切替後に失敗した場合はRollbackが必要になる．このため，Transition Stateを明示し，Explain出力と結び付けることは，実装上も運用上も有用である．
+
+状態機械として扱う利点は，障害発生時に「どこまで進んだか」を記録できることである．たとえばPrepare中で失敗したなら，新Pathはまだ使われていないため，Active Pathを維持すればよい．切替実行中後に失敗したなら，通信が一部新Pathへ向かった可能性があるため，旧PathへのRollbackや再検証が必要になる．このように，状態名は単なる説明用のラベルではなく，復旧動作を決めるための情報である．
+
+\subsection{限界と今後の課題}
+本稿の評価は基本疎通試験中心であり，統計的な定量評価は未完了である．今後は，切替中のpacket loss数，最大通信断時間，RTT変化，TCP session continuity，packet reordering，Fallback plan生成時間の平均・中央値・最大・標準偏差，integrated runtimeの工程別時間，CPU/メモリ使用量を測定する必要がある．特に，integrated-directおよびintegrated-fallbackの時間を，YAML parse，Path Selection，plan生成，IPsec config生成，charon起動，swanctl load，CHILD SA initiate，ESP counter確認，VPP setup，route apply，ping verificationへ分解することが重要である．
+
+また，Graceful，runtime rollback機構，Observed State復元，Control Plane障害時のActive Path維持，複数管理Domain間連携は未実装である．Flow Preserveはflow識別，flow table，timeout管理，Forwarding rule分岐を必要とするため，初期評価ではGracefulとRollbackを優先し，Flow Preserveは拡張評価として扱うのが現実的である．
+
+\section{制約と今後の展望}
+Ibukiは，Path変更時の完全なpacket loss zeroを保証するものではない．また，異なるTunnelをまたいだ完全なpacket orderingも保証しない．これは，独自のpacket duplication，独自sequence number，受信側reordering protocolを導入しないためである．本研究はVPNプロトコルそのものを改良するのではなく，既存Tunnelをどの順序でPrepareし，検証し，切り替え，失敗時に戻すかを扱う制御基盤である．したがって，通信影響をゼロにすることではなく，通信影響を測定可能かつ説明可能にし，要求に応じたTransition Strategyを選べるようにすることを目標とする．
+
+また，Ibukiはすべてのネットワーク機器を直接制御できることを前提としない．外部APIや設定インターフェースを持たない機器では，strongSwanやVPPを動作させるSoftware Gatewayを別途配置する必要がある．IbukiはInternet全体のルーティングプロトコルを置き換えるものでもない．FRRやBGP/OSPF等のルーティングプロトコルは，必要に応じてObserved Stateやポリシー入力として利用する対象であり，Ibukiの中核はTunnelとPath Transitionの制御に置く．
+
+今後の実装では，まずGracefulの簡易版とruntime rollback機構を優先する．Graceful簡易版では，新Pathを先に確立し，新Pathで検証pingを行い，旧Pathを一定時間保持した後にVPP routeを切り替え，Post Validationに失敗した場合は旧Pathへ戻す．Rollback executorでは，VPP route投入に失敗した場合，IPsec SA確立に失敗した場合，片側のみCommitに成功した場合に，どの状態へ戻すかをTransition Stateに基づいて判断する．この段階で，Rollbackは最後のStable Pathへ戻る操作，FallbackはStable Pathへ戻れない場合に\texttt{fallback=true}を持つ安全側Pathへ退避する操作として実装上も分離する．
+
+次に，eventnetd 常駐プロセス，state store，observed state collector，reconciliation loopを実装し，Control Plane障害時にもActive Pathが維持されるかを確認する．例えば，Direct Path適用後にeventnetdを停止し，通信が維持されるかを確認した後，eventnetd再起動時にObserved StateからActive Pathを復元できるかを評価する．Controller停止中，Agentは勝手な最適化を行わずActive Pathを維持し，Active Path自体がFailedになった場合に限って，事前承認されたEmergency Fallbackを実行する．この挙動を明確に実装することで，中央制御と拠点自律性の境界を定める．
+
+Adapter/Capabilityに関しては，Local strongSwan Adapterを基準に，Cloud VPN Adapter等の第二Backendを追加することが有効な検証になる．Cloud VPNではローカルprocessを操作するのではなく，クラウドAPIを通じてTunnelや状態を扱うため，遅延，観測粒度，Rollback可能性がstrongSwanと大きく異なる．それでも同じ上位Path ModelとTransition Modelから扱えるなら，Ibukiが単なるstrongSwan wrapperではないことをより強く示せる．WireGuard，GRE，VXLAN等も候補であるが，本研究では「現在実装済み」と「将来拡張可能」を明確に分ける．
+
+最終的なIbukiでは，GUIを主要な運用インターフェースとする．GUIは研究上の新規性そのものではないが，運用者がPath状態を理解し，Policyを変更し，障害原因を把握するために重要である．GUIでは，Topology，Candidate Path，Active Path，Standby/Degraded/Failed状態，Segment metrics，End-to-End metrics，Path選択理由，Path除外理由，Intent/Policy編集，Transition Strategy設定，Fallback設定，Transition/Rollback履歴，障害状態を表示する．操作の流れは，GUIでRuleを変更し，それをIntentへ変換し，Controllerが評価し，必要ならTransitionを生成し，実行結果とExplainをGUIへ返す形になる．
+
+複数管理Domainへ拡張する場合，各ControllerにはController ID，Domain ID，Certificate，Authorized Peers，Allowed Operationsを持たせる．Controller間通信はmTLSで保護するが，認証と認可は分離する．すなわち，証明書が正しいことは相手Controllerが誰であるかを示すだけであり，自DomainのAgentを自由に操作する権限を意味しない．Remote ControllerがRemote Agentを直接操作することは禁止し，必ずController AからController BへProposalを送り，Controller Bが自DomainのAgent Bを操作する構成とする．三つ以上のDomainで誰がCoordinatorになるか，複数Domain Commitをどの順序で収束させるかは今後の研究課題である．
+
+\section{結論}
+本稿では，標準Tunnelを共通制御リソースとして扱い，複数Tunnelから構成される経路の選択と状態遷移をイベント駆動で制御する基盤Ibukiを提案した．Ibukiは，新しいVPNプロトコルや独自Data Planeを導入せず，IPsec，strongSwan，VPP，FRR，Linux networking等の既存技術を活用する．本研究の中心的な提案は二点に限定される．第一は，Tunnel実装差をAdapterとCapability（能力情報）へ局所化し，機器やVPN実装への依存を上位制御論理から切り離すTunnel Resource抽象化である．第二は，Path変更をPrepare，Validate，Commit，Post Validation，Rollbackを持つ独立したTransitionとして扱い，通信影響と失敗時復旧を明示的に管理するExplicit Path Transition Modelである．
+
+C言語試作実装では，YAMLに基づくPath Selection，Fallback判断，Explain出力，strongSwan/VPP向けruntime plan生成，Direct/Hub統合基本疎通試験までを確認した．これにより，標準TunnelをPath Resourceとして扱い，上位のPath Selection論理からstrongSwan/VPP操作へ接続できることを初期的に示した．今後は，Graceful，runtime rollback機構，Observed State復元，Control Plane障害試験，異なるTunnel Backend，複数管理Domain協調を実装・評価し，Ibukiの有効性を定量的に検証する．
+
+\begin{thebibliography}{99}
+\bibitem{rfc4301} S. Kent and K. Seo, ``Security Architecture for the Internet Protocol,'' RFC 4301, Internet Engineering Task Force, Dec. 2005. \url{https://www.rfc-editor.org/rfc/rfc4301}
+\bibitem{rfc7296} C. Kaufman, P. Hoffman, Y. Nir, P. Eronen, and T. Kivinen, ``Internet Key Exchange Protocol Version 2 (IKEv2),'' RFC 7296, Internet Engineering Task Force, Oct. 2014. \url{https://www.rfc-editor.org/rfc/rfc7296}
+\bibitem{strongswan-vici} strongSwan Project, ``vici Plugin --- Versatile IKE Control Interface,'' strongSwan Documentation, online. Accessed: Aug. 18, 2026. \url{https://docs.strongswan.org/docs/latest/plugins/vici.html}
+\bibitem{vpp-doc} FD.io Project, ``What is the Vector Packet Processor (VPP),'' FD.io VPP Documentation, online. Accessed: Aug. 18, 2026. \url{https://docs.fd.io/vpp/25.10/index.html}
+\bibitem{frr-doc} FRRouting Project, ``FRRouting User Guide,'' FRRouting Project, online. Accessed: Aug. 18, 2026. \url{https://docs.frrouting.org/}
+\bibitem{onos-intent} ONOS Project, ``Intent Framework,'' ONOS Documentation, online. Accessed: Aug. 18, 2026. \url{https://wiki.onosproject.org/display/ONOS/Intent+Framework}
+\bibitem{k8s-controller} Kubernetes Authors, ``Controllers,'' Kubernetes Documentation, The Linux Foundation, online. Accessed: Aug. 18, 2026. \url{https://kubernetes.io/docs/concepts/architecture/controller/}
+\bibitem{flexiwan-arch} flexiWAN, ``Architecture,'' flexiWAN Documentation, online. Accessed: Aug. 18, 2026. \url{https://docs.flexiwan.com/5.1.1/overview/architecture.html}
+\bibitem{flexiwan-about} flexiWAN, ``About flexiWAN,'' flexiWAN Documentation, online. Accessed: Aug. 18, 2026. \url{https://docs.flexiwan.com/overview/about.html}
+\end{thebibliography}
+
+\end{document}

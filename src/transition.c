@@ -1,5 +1,10 @@
 #ifndef _WIN32
-#define _POSIX_C_SOURCE 199309L
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+#ifndef _POSIX_C_SOURCE
+#define _POSIX_C_SOURCE 200809L
+#endif
 #endif
 
 #include "internal.h"
@@ -11,13 +16,21 @@
 #endif
 
 #include <stdio.h>
+#include <limits.h>
 
 static void sleep_ms(int milliseconds);
 static en_error_code_t transition_prepare(en_controller_t *controller, en_path_t *path);
 static en_error_code_t transition_ready(en_controller_t *controller, en_path_t *path);
-static en_error_code_t transition_commit(en_controller_t *controller, const en_intent_t *intent, en_path_t *target_path, const char *traffic_key);
+static en_error_code_t transition_commit(en_controller_t *controller, const en_intent_t *intent, en_path_t *target_path, en_path_t *previous_path, const char *traffic_key);
 static en_error_code_t transition_confirm(en_controller_t *controller, en_path_t *target_path, const char *traffic_key);
-static en_error_code_t rollback(en_controller_t *controller, const char *traffic_key, const char *rollback_path_id);
+static en_error_code_t transition_cleanup_previous(en_controller_t *controller, const char *traffic_key, en_path_t *previous_path, en_path_t *target_path);
+static en_error_code_t transition_prepare_retry(en_controller_t *controller, const en_intent_t *intent, en_path_t *path);
+static en_error_code_t transition_ready_retry(en_controller_t *controller, const en_intent_t *intent, en_path_t *path);
+static en_error_code_t transition_commit_retry(en_controller_t *controller, const en_intent_t *intent, en_path_t *target_path, en_path_t *previous_path, const char *traffic_key);
+static en_error_code_t transition_confirm_retry(en_controller_t *controller, const en_intent_t *intent, en_path_t *target_path, const char *traffic_key);
+static en_error_code_t rollback(en_controller_t *controller, const char *traffic_key, const char *rollback_path_id, en_path_t *target_path);
+static bool path_uses_tunnel(const en_path_t *path, const char *tunnel_id);
+static en_error_code_t remove_unshared_tunnels(en_controller_t *controller, const en_path_t *target_path, const en_path_t *rollback_path);
 
 en_error_code_t en_transition_path(en_controller_t *controller, const en_intent_t *intent, en_path_t *target_path)
 {
@@ -25,7 +38,7 @@ en_error_code_t en_transition_path(en_controller_t *controller, const en_intent_
         return EN_ERR_INVALID_ARGUMENT;
     }
 
-    char traffic_key[EN_MAX_ID_LEN * 2] = {0};
+    char traffic_key[EN_MAX_TRAFFIC_KEY_LEN] = {0};
     en_make_traffic_key(&intent->traffic, traffic_key, sizeof(traffic_key));
     const char *current_path = en_get_applied_path(controller, traffic_key);
     char rollback_path_id[EN_MAX_ID_LEN] = {0};
@@ -34,30 +47,38 @@ en_error_code_t en_transition_path(en_controller_t *controller, const en_intent_
     controller->state.transition_state = EN_TRANSITION_PREPARING;
     en_audit_append(controller, "TRANSITION_STARTED", "preparing target path", target_path->path_id);
 
-    en_error_code_t err = transition_prepare(controller, target_path);
+    en_error_code_t err = transition_prepare_retry(controller, intent, target_path);
     if (err != EN_ERR_NONE) {
         en_error_append(controller, err, "target path preparation failed");
-        rollback(controller, traffic_key, rollback_path_id);
+        rollback(controller, traffic_key, rollback_path_id, target_path);
         return err;
     }
 
-    err = transition_ready(controller, target_path);
+    err = transition_ready_retry(controller, intent, target_path);
     if (err != EN_ERR_NONE) {
         en_error_append(controller, err, "target path validation failed");
-        rollback(controller, traffic_key, rollback_path_id);
+        rollback(controller, traffic_key, rollback_path_id, target_path);
         return err;
     }
 
-    err = transition_commit(controller, intent, target_path, traffic_key);
+    en_path_t *previous_path = en_find_path(controller, rollback_path_id);
+    err = transition_commit_retry(controller, intent, target_path, previous_path, traffic_key);
     if (err != EN_ERR_NONE) {
         en_error_append(controller, EN_ERR_FORWARDING_UPDATE_FAILED, "forwarding update failed");
-        rollback(controller, traffic_key, rollback_path_id);
+        rollback(controller, traffic_key, rollback_path_id, target_path);
         return EN_ERR_FORWARDING_UPDATE_FAILED;
     }
 
-    err = transition_confirm(controller, target_path, traffic_key);
+    err = transition_confirm_retry(controller, intent, target_path, traffic_key);
     if (err != EN_ERR_NONE) {
-        rollback(controller, traffic_key, rollback_path_id);
+        rollback(controller, traffic_key, rollback_path_id, target_path);
+        return err;
+    }
+
+    err = transition_cleanup_previous(controller, traffic_key, previous_path, target_path);
+    if (err != EN_ERR_NONE) {
+        en_error_append(controller, err, "previous path cleanup failed");
+        rollback(controller, traffic_key, rollback_path_id, target_path);
         return err;
     }
 
@@ -65,6 +86,59 @@ en_error_code_t en_transition_path(en_controller_t *controller, const en_intent_
     en_audit_append(controller, "TRANSITION_COMPLETED", "target path is active", target_path->path_id);
     controller->state.transition_state = EN_TRANSITION_IDLE;
     return EN_ERR_NONE;
+}
+
+static void transition_retry_wait(en_controller_t *controller, const en_intent_t *intent, int attempt, const char *phase, const char *path_id)
+{
+    if (intent->transition.retry_backoff_ms <= 0) return;
+    long long delay = (long long)intent->transition.retry_backoff_ms * (attempt + 1LL);
+    if (delay > INT_MAX) delay = INT_MAX;
+    en_audit_append(controller, "TRANSITION_RETRY", phase, path_id);
+    sleep_ms((int)delay);
+}
+
+static en_error_code_t transition_prepare_retry(en_controller_t *controller, const en_intent_t *intent, en_path_t *path)
+{
+    en_error_code_t error = EN_ERR_NONE;
+    for (int attempt = 0; attempt <= intent->transition.retry_count; attempt++) {
+        error = transition_prepare(controller, path);
+        if (error == EN_ERR_NONE || attempt == intent->transition.retry_count) return error;
+        transition_retry_wait(controller, intent, attempt, "retry target preparation", path->path_id);
+    }
+    return error;
+}
+
+static en_error_code_t transition_ready_retry(en_controller_t *controller, const en_intent_t *intent, en_path_t *path)
+{
+    en_error_code_t error = EN_ERR_NONE;
+    for (int attempt = 0; attempt <= intent->transition.retry_count; attempt++) {
+        error = transition_ready(controller, path);
+        if (error == EN_ERR_NONE || attempt == intent->transition.retry_count) return error;
+        transition_retry_wait(controller, intent, attempt, "retry target validation", path->path_id);
+    }
+    return error;
+}
+
+static en_error_code_t transition_commit_retry(en_controller_t *controller, const en_intent_t *intent, en_path_t *target_path, en_path_t *previous_path, const char *traffic_key)
+{
+    en_error_code_t error = EN_ERR_NONE;
+    for (int attempt = 0; attempt <= intent->transition.retry_count; attempt++) {
+        error = transition_commit(controller, intent, target_path, previous_path, traffic_key);
+        if (error == EN_ERR_NONE || attempt == intent->transition.retry_count) return error;
+        transition_retry_wait(controller, intent, attempt, "retry forwarding commit", target_path->path_id);
+    }
+    return error;
+}
+
+static en_error_code_t transition_confirm_retry(en_controller_t *controller, const en_intent_t *intent, en_path_t *target_path, const char *traffic_key)
+{
+    en_error_code_t error = EN_ERR_NONE;
+    for (int attempt = 0; attempt <= intent->transition.retry_count; attempt++) {
+        error = transition_confirm(controller, target_path, traffic_key);
+        if (error == EN_ERR_NONE || attempt == intent->transition.retry_count) return error;
+        transition_retry_wait(controller, intent, attempt, "retry forwarding verification", target_path->path_id);
+    }
+    return error;
 }
 
 static en_error_code_t transition_prepare(en_controller_t *controller, en_path_t *path)
@@ -130,11 +204,15 @@ static en_error_code_t transition_ready(en_controller_t *controller, en_path_t *
     return EN_ERR_NONE;
 }
 
-static en_error_code_t transition_commit(en_controller_t *controller, const en_intent_t *intent, en_path_t *target_path, const char *traffic_key)
+static en_error_code_t transition_commit(en_controller_t *controller, const en_intent_t *intent, en_path_t *target_path, en_path_t *previous_path, const char *traffic_key)
 {
     en_audit_append(controller, "COMMIT", "commit forwarding switch", target_path->path_id);
     if (intent->transition.strategy == EN_TRANSITION_GRACEFUL) {
         controller->state.transition_state = EN_TRANSITION_PAUSING;
+        if (previous_path != NULL && previous_path != target_path) {
+            previous_path->operational_state = EN_PATH_DRAINING;
+            en_audit_append(controller, "DRAINING", "previous path is draining", previous_path->path_id);
+        }
         sleep_ms(intent->transition.max_pause_ms);
         controller->state.transition_state = EN_TRANSITION_DRAINING;
         target_path->operational_state = EN_PATH_DRAINING;
@@ -159,6 +237,22 @@ static en_error_code_t transition_commit(en_controller_t *controller, const en_i
     return EN_ERR_NONE;
 }
 
+static en_error_code_t transition_cleanup_previous(en_controller_t *controller, const char *traffic_key, en_path_t *previous_path, en_path_t *target_path)
+{
+    if (previous_path == NULL || previous_path == target_path) return EN_ERR_NONE;
+    if (controller->vpp.remove_path != NULL &&
+        controller->vpp.remove_path(controller->vpp.ctx, traffic_key, previous_path) != EN_ERR_NONE) {
+        return EN_ERR_FORWARDING_UPDATE_FAILED;
+    }
+    if (controller->strongswan.remove_tunnel != NULL &&
+        remove_unshared_tunnels(controller, previous_path, target_path) != EN_ERR_NONE) {
+        return EN_ERR_TUNNEL_ESTABLISH_TIMEOUT;
+    }
+    previous_path->operational_state = EN_PATH_STANDBY;
+    en_audit_append(controller, "PREVIOUS_PATH_REMOVED", "previous path cleanup completed", previous_path->path_id);
+    return EN_ERR_NONE;
+}
+
 static en_error_code_t transition_confirm(en_controller_t *controller, en_path_t *target_path, const char *traffic_key)
 {
     controller->state.transition_state = EN_TRANSITION_VERIFYING;
@@ -174,17 +268,64 @@ static en_error_code_t transition_confirm(en_controller_t *controller, en_path_t
     return EN_ERR_NONE;
 }
 
-static en_error_code_t rollback(en_controller_t *controller, const char *traffic_key, const char *rollback_path_id)
+static en_error_code_t rollback(en_controller_t *controller, const char *traffic_key, const char *rollback_path_id, en_path_t *target_path)
 {
     controller->state.transition_state = EN_TRANSITION_ROLLING_BACK;
+    en_path_t *rollback_path = en_find_path(controller, rollback_path_id);
+    if (target_path != NULL && controller->strongswan.remove_tunnel != NULL) {
+        en_error_code_t tunnel_error = remove_unshared_tunnels(controller, target_path, rollback_path);
+        if (tunnel_error != EN_ERR_NONE) {
+            en_error_append(controller, EN_ERR_ROLLBACK_FAILED, "new tunnel removal failed");
+            controller->state.transition_state = EN_TRANSITION_FAILED;
+            return EN_ERR_ROLLBACK_FAILED;
+        }
+    }
+    if (target_path != NULL && controller->vpp.remove_path != NULL) {
+        en_error_code_t remove_error = controller->vpp.remove_path(controller->vpp.ctx, traffic_key, target_path);
+        if (remove_error != EN_ERR_NONE) {
+            en_error_append(controller, EN_ERR_ROLLBACK_FAILED, "new path removal failed");
+            controller->state.transition_state = EN_TRANSITION_FAILED;
+            return EN_ERR_ROLLBACK_FAILED;
+        }
+    }
     if (rollback_path_id == NULL || rollback_path_id[0] == '\0') {
         en_audit_append(controller, "ROLLBACK_SKIPPED", "no previous path exists", "");
+        controller->state.transition_state = EN_TRANSITION_FAILED;
+        return EN_ERR_ROLLBACK_FAILED;
+    }
+    if (rollback_path == NULL || controller->vpp.install_path == NULL ||
+        transition_prepare(controller, rollback_path) != EN_ERR_NONE ||
+        controller->vpp.install_path(controller->vpp.ctx, traffic_key, rollback_path) != EN_ERR_NONE) {
+        en_error_append(controller, EN_ERR_ROLLBACK_FAILED, "previous path reinstall failed");
         controller->state.transition_state = EN_TRANSITION_FAILED;
         return EN_ERR_ROLLBACK_FAILED;
     }
     en_set_applied_path(controller, traffic_key, rollback_path_id);
     en_audit_append(controller, "ROLLBACK_COMPLETED", "previous path restored", rollback_path_id);
     controller->state.transition_state = EN_TRANSITION_IDLE;
+    return EN_ERR_NONE;
+}
+
+static bool path_uses_tunnel(const en_path_t *path, const char *tunnel_id)
+{
+    if (path == NULL || tunnel_id == NULL) return false;
+    for (size_t index = 0; index < path->segment_count; index++) {
+        if (en_streq(path->segments[index].tunnel_id, tunnel_id)) return true;
+    }
+    return false;
+}
+
+static en_error_code_t remove_unshared_tunnels(en_controller_t *controller, const en_path_t *target_path, const en_path_t *rollback_path)
+{
+    for (size_t index = 0; index < target_path->segment_count; index++) {
+        const char *tunnel_id = target_path->segments[index].tunnel_id;
+        if (path_uses_tunnel(rollback_path, tunnel_id)) continue;
+        en_tunnel_t *observed = en_find_tunnel(controller, tunnel_id);
+        if (observed == NULL) continue;
+        en_tunnel_t removed = {0};
+        en_error_code_t error = controller->strongswan.remove_tunnel(controller->strongswan.ctx, observed, &removed);
+        if (error != EN_ERR_NONE) return error;
+    }
     return EN_ERR_NONE;
 }
 

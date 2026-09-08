@@ -2,6 +2,14 @@ build/
 build-*/
 out/
 
+# TeX build artifacts may contain local absolute paths.
+*.aux
+*.log
+*.toc
+*.synctex.gz
+*.out
+*.pdf
+
 *.o
 *.obj
 *.exe

@@ -16,10 +16,14 @@
 - strongSwanをLinux network namespace内で起動し、IPsec ESP counter増加を確認する。
 - VPPをhost-interface経由でnamespaceへ接続し、controller生成routeを実適用する。
 - `MODE=direct` / `MODE=fallback` の統合smokeがVMで成功済み。
+- `eventnetd` がJSONL telemetryをfile/stdin/Unix socketから受け取り、state fileを利用して再評価する。
+- `--socket-parallel` により、有限数のAgent接続をpollで同時受信し、一つのController状態へ集約する。
+- `deploy/ibuki-eventnetd.service` にsystemd unit templateを用意し、実行ファイル・YAMLの事前検査とdry-run既定を設定する。
 
 まだできていないこと:
 
-- daemonとして常駐し、自動でイベントを監視してreconcileすること。
+- systemd環境への実インストール・権限・ログ監視の検証。unit templateは `deploy/ibuki-eventnetd.service` にあり、通常モードと有限parallel shared-batch modeは実装済み。
+- 長時間稼働するparallel socketの接続管理。現在の `--socket-parallel` は有限個のAgent接続を1回の共有batchとして処理し、timeout後に終了する評価用実装である。
 - VICIイベント購読によるstrongSwan状態同期。
 - VPP API/binary APIによる本格統合。
 - 同一packetがIPsec pipelineとVPP forwarding pipelineを連続通過するgateway構成。
@@ -48,7 +52,7 @@ docs/                 作業者向け補助資料
 主なtop-level key:
 
 - `tunnels`: IPsec tunnel定義。
-- `vpp_edges`: VPP host-interfaceとnamespace側next-hopの定義。
+- `vpp_edges`: VPP host-interfaceとnamespace側next-hopの定義。通常はNodeごとに1件、同一Nodeの複数portは各edgeへ一意な`port_id`を付ける。
 - `paths`: direct / hub / relayなどの候補経路。
 - `intents`: どのtrafficにどのpath selection policyを適用するか。
 
@@ -86,6 +90,8 @@ fallback:
   - indentationベースの簡易YAML parser本体。
 - `parse_vpp_edge_kv`
   - `vpp_edges:` の各fieldを `en_vpp_edge_t` に入れる。
+  - `port_id`／`port`を複数port識別子として読み込む。
+  - 固定長fieldの上限を超える値はloader段階で拒否し、切り詰めて登録しない。
 - `yaml_normalize`
   - 未指定の `route_next_hop` や `vpp_interface` / `next_hop` を補完する。
 
@@ -145,7 +151,7 @@ fallback:
 現在の注意:
 
 - priority selectionは「候補順に最初の利用可能path」を選ぶ。
-- evaluatedは基本形で、安定化制御やヒステリシスは未実装。
+- evaluatedは比較順序・制約条件に加え、active Path維持、hold-down、failure/recovery閾値、品質差分ヒステリシスを扱う。`vm-evaluate.sh telemetry-long`で有限回の周期評価は実装済みで、長時間負荷下の切替頻度・収束時間評価は未実装。
 
 ### Transition
 
@@ -184,6 +190,7 @@ fallback:
 
 - `en_render_swanctl_conf`
   - tunnel定義から `swanctl.conf` 断片を生成する。
+  - `auth_method: pubkey` のtunnelでは、`local_cert` と任意の `remote_cacerts` を証明書認証設定へ反映する。秘密鍵そのものはYAMLへ置かず、strongSwanの秘密情報管理へ配置する。
 - `en_render_swanctl_initiate`
   - `swanctl --initiate --child ...` を生成する。
 - `en_render_swanctl_terminate`
@@ -212,7 +219,7 @@ fallback:
 - `find_vpp_edge`
   - node idから `en_vpp_edge_t` を探す。
 - `runtime_kind`
-  - 現在のVM runtimeが対応する `direct` / `hub` / `unsupported` を判定する。
+  - 現在のVM runtimeが対応する `direct` / `hub` / `vpp` / `unsupported` を判定する。segmentなしlegacy routeは`vpp`として宛先route planを生成する。
 - `write_apply_script`
   - IPsecのみの選択path適用scriptを生成する。
 - `write_integrated_script`
@@ -246,7 +253,7 @@ sh scripts/vm-generate-netns-runtime.sh samples/linux-vm-netns.yaml --active-pat
 - `selected_path`
   - controllerが選んだpath id。
 - `runtime_kind`
-  - VM runtime上の分類。現在は `direct` / `hub` / `unsupported`。
+  - VM runtime上の分類。現在は `direct` / `hub` / `vpp` / `unsupported`。segmentなしの旧式一方向routeは`vpp`に分類し、segmentなしexplicit routeは実行先を一意に決められないためunsupportedとする。
 - `source` / `destination`
   - pathの始点/終点node。
 - `route_destination_prefix`
@@ -263,17 +270,17 @@ sh scripts/vm-generate-netns-runtime.sh samples/linux-vm-netns.yaml --active-pat
 選択pathのIPsec runtimeだけを起動してsmokeするscriptです。
 
 - directなら:
-  - `vm-netns-ipsec-direct-start.sh`
-  - `vm-netns-ipsec-direct-smoke.sh`
+  - `vm-netns-ipsec.sh direct start`
+  - `vm-netns-ipsec.sh direct smoke`
 - hubなら:
-  - `vm-netns-ipsec-hub-start.sh`
-  - `vm-netns-ipsec-hub-smoke.sh`
+  - `vm-netns-ipsec.sh hub start`
+  - `vm-netns-ipsec.sh hub smoke`
 
 ### `apply-integrated.sh`
 
 現在のデモ用の主役です。
 
-同じ生成plan内で次を連続実行します。
+同じ生成plan内で次を連続実行します。常駐`eventnetd`のcommand backendでは、`--swanctl-config FILE`を指定すると、指定したVICI URIへconnection設定をloadしてからTunnelを開始できます。
 
 1. dummy LAN作成。
 2. selected pathに応じたIPsec runtime起動。
@@ -339,28 +346,28 @@ Linux VMのVPP host-interface構成向けroute planです。
 
 ### strongSwan direct
 
-- `scripts/vm-netns-ipsec-direct-generate.sh`
+- `scripts/vm-netns-ipsec.sh direct generate`
   - direct用 `swanctl.conf` を生成する。
-- `scripts/vm-netns-ipsec-direct-start.sh`
+- `scripts/vm-netns-ipsec.sh direct start`
   - `site-a` / `site-b` でcharonを起動し、direct CHILD SAを確立する。
-- `scripts/vm-netns-ipsec-direct-smoke.sh`
+- `scripts/vm-netns-ipsec.sh direct smoke`
   - pingとESP counter増加を確認する。
-- `scripts/vm-netns-ipsec-direct-status.sh`
+- `scripts/vm-netns-ipsec.sh direct status`
   - interface / XFRM / SA状態を見る。
-- `scripts/vm-netns-ipsec-direct-stop.sh`
+- `scripts/vm-netns-ipsec.sh direct stop`
   - direct用charonとXFRM stateを止める。
 
 ### strongSwan hub
 
-- `scripts/vm-netns-ipsec-hub-generate.sh`
+- `scripts/vm-netns-ipsec.sh hub generate`
   - hub用 `swanctl.conf` を生成する。
-- `scripts/vm-netns-ipsec-hub-start.sh`
+- `scripts/vm-netns-ipsec.sh hub start`
   - `site-a` / `hub-1` / `site-b` でcharonを起動し、route-based IPsecを構成する。
-- `scripts/vm-netns-ipsec-hub-smoke.sh`
+- `scripts/vm-netns-ipsec.sh hub smoke`
   - hub経由pingと両segmentのESP counter増加を確認する。
-- `scripts/vm-netns-ipsec-hub-status.sh`
+- `scripts/vm-netns-ipsec.sh hub status`
   - hub pathの状態を見る。
-- `scripts/vm-netns-ipsec-hub-stop.sh`
+- `scripts/vm-netns-ipsec.sh hub stop`
   - hub用charonとXFRM stateを止める。
 
 ### VPP
@@ -495,8 +502,8 @@ VPPやstrongSwanが怪しい場合:
 ```sh
 sh scripts/vm-runtime-status.sh
 sh scripts/vm-vpp-preflight.sh
-sudo sh scripts/vm-netns-ipsec-direct-status.sh
-sudo sh scripts/vm-netns-ipsec-hub-status.sh
+sudo sh scripts/vm-netns-ipsec.sh direct status
+sudo sh scripts/vm-netns-ipsec.sh hub status
 ```
 
 ## 8. よくある詰まりどころ
@@ -524,8 +531,8 @@ curl -I https://packagecloud.io/
 
 ```sh
 sh scripts/vm-runtime-status.sh
-sh scripts/vm-netns-ipsec-direct-logs.sh
-sh scripts/vm-netns-ipsec-hub-logs.sh
+sh scripts/vm-netns-ipsec.sh direct logs
+sh scripts/vm-netns-ipsec.sh hub logs
 ```
 
 ### directとhubのcharonが衝突する
@@ -533,26 +540,40 @@ sh scripts/vm-netns-ipsec-hub-logs.sh
 direct/hubは別run dirを使いますが、起動前に片方を止めるのが安全です。
 
 ```sh
-sudo sh scripts/vm-netns-ipsec-direct-stop.sh
-sudo sh scripts/vm-netns-ipsec-hub-stop.sh
+sudo sh scripts/vm-netns-ipsec.sh direct stop
+sudo sh scripts/vm-netns-ipsec.sh hub stop
 ```
 
 ## 9. 次に触るなら
 
-優先度が高い順:
+論文発表までの優先順位:
 
-1. `eventnetd`風の簡易reconcile loopを作る。
-2. health/event fileを監視して、自動でdirectからhubへfallbackする。
-3. `selected-path.txt` だけでなくJSON explain outputを出す。
-4. hub/relay/VPP edge mappingをより一般化する。
-5. IPsecとVPPを同一packet pipelineに接続する設計を詰める。
+1. Linux VMで、Agent telemetryを定期投入する長時間評価を追加する。
+2. systemd unitを実環境へ導入し、dry-runで再起動・state復元・権限を検証する。
+3. VLAN/VRF/FIBとIPsec対象外通信遮断を実トラフィックで評価する。宣言とplan生成は `vm-evaluate.sh vlan-policy` でVLAN ID境界値まで検証できる。
+4. strongSwan VICIとVPP Binary APIの実transportを接続する。
+5. direct障害、hub fallback、recovery、relay選択を含む評価結果を再現可能な形で保存する。
+
+周期telemetryの最小評価は次で実行する。`LONG_COUNT`と`LONG_INTERVAL_MS`を変えることで、論文用の短時間再現と長時間安定性評価を切り替えられる。
+
+```sh
+LONG_COUNT=10 LONG_INTERVAL_MS=1000 sh scripts/vm-evaluate.sh telemetry-long samples/linux-vm-netns.yaml
+```
+
+後段の実装:
+
+- 長時間稼働parallel socket、Agent単位の認証、証明書・鍵更新。
+- 実VLAN ACL/VRF/FIB、IPsec対象外通信のdeny、クラウド能力profile。
+- FRRouting/BGP連携、複数Controller、GUI。
 
 おすすめの次ファイル:
 
+- `examples/eventnetd.c`
+  - telemetry入力、socket、runtime適用の入口。
 - `examples/netns_plan.c`
-  - 生成runtimeを増やすならここ。
+  - 生成runtimeとVLAN/VRF/FIB反映を増やすならここ。
 - `src/controller.c`
-  - event/reconcile loopへ進む前にcontroller APIを読む。
+  - reconcile、transition、explain結果の中心。
 - `src/path_selection.c`
   - fallbackやevaluated selectionを触るならここ。
 - `scripts/vm-controller-integrated-runtime-smoke.sh`
@@ -563,4 +584,7 @@ sudo sh scripts/vm-netns-ipsec-hub-stop.sh
 - `docs/scenario-vs-production.md`
   - `eventnet_scenario` と本番 `eventnetd` の差分、共通化する部分、本番化までに必要な実装を整理している。
 - `docs/future-implementation-map.md`
+- `docs/transport-adapter-guide.md`
   - 次に実装するファイル、関数、出力、後回しにする領域を具体的に整理している。
+- `docs/eventnetd-service.md`
+  - systemd導入時のdry-run、権限、state file、`--apply` の扱いを整理している。

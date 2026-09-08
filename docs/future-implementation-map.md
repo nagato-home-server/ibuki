@@ -4,24 +4,34 @@
 
 現時点の実装は、YAMLからIntent / Path / Tunnel / VPP edgeを読み、controllerがPathを選び、strongSwan / VPP向けruntime scriptを生成し、Linux VM上でdirect / hub fallback / VPP forwarding / integrated runtime smokeまで確認できています。
 
-次は、scenario harnessで手動実験しているイベント注入を、よりcontroller本体に近い `eventnetd --once` へ寄せます。
+Node一覧もYAMLで定義でき、role・endpoint・capability・administrative stateをPath選択へ反映します。Intentの`required_capabilities`はPathの全端点で照合され、disabled Nodeや未知Node参照はそれぞれ選択除外・YAML検証エラーになります。これはCloud VPN／FRR／VPPなどの能力差を、backend固有実装から分離して表現するための基礎です。`vpp_edges`は従来のNodeごとに1 edgeという後方互換形式に加え、`port_id`を持つ複数edgeを同一Nodeへ定義でき、明示routeのinterface指定でportを選べます。
+
+scenario harnessで手動実験していたイベント注入は、`eventnetd --once`、周期実行、標準入力、Linux Unix socket、observer CLI経由のJSONL入力まで実装済みです。複数接続の逐次処理、有限parallel shared batch、state file復元、file入力のconfig reload、UID認証、入力レート制限も実装済みです。次は、無期限parallelの共有受信、service hardening、VICI／VPPの本番運用復旧を段階的に進めます。
 
 ## 1. 最優先で実装する場所
 
-### 1.1 `eventnetd --once`
+### 1.1 `eventnetd`運用入力の拡張
 
-追加予定:
+実装済みの接合境界:
 
 - `examples/eventnetd.c`
-- `scripts/vm-eventnetd-once-smoke.sh`
+- `scripts/vm-eventnet-event-smoke.sh`
+- `examples/swanctl_observer.c`
+- `examples/vpp_observer.c`
 
-更新予定:
+残っている拡張:
 
-- `CMakeLists.txt`
-- `scripts/vm-build-cc.sh`
-- `scripts/demo-mitou.sh`
+- 無期限parallel接続の共有受信と、共通reconcile loopのライブラリ分離
+- systemd等のservice manager環境での権限・socket・ログ検証
+- グループ／証明書等による接続元認証、無期限parallel接続時の共有controller状態
 
-目的:
+入力レート制限は`--max-records-per-second`、Linux peer UID認証は`--socket-uid`として実装済み。有限parallel接続も`--socket-parallel`で実装済み。グループ／証明書認証と無期限parallel時の共有状態は未実装のまま残る。
+
+同一Pathに対するtelemetryはtimestampの単調性を確認し、遅れて到着した古いレコードをmock入力境界で破棄します。これは現在の単一eventnetdプロセス内での再送保護であり、複数プロセス・複数Agent間の時刻同期や永続的なsequence管理は別途必要です。
+
+state fileはLinuxで排他的・symlink追従なしの一時ファイルへ書き込み、renameで置換する。復元時は現在Intentのtraffic keyとPath所属を照合する。daemonの権限分離と保存先ディレクトリの所有者検証は運用時に追加する。
+
+現在の目的:
 
 - YAML configを読む。
 - event fileを読む。
@@ -29,6 +39,10 @@
 - Pathを再選択する。
 - 必要なら既存runtime generatorにつなぐ。
 - `out/eventnetd/status.jsonl` に判断結果を残す。
+
+observerのCLI出力をJSONLへ変換する処理と、eventnetdのreconcile処理は分離している。実VICI購読やVPP Binary APIはこの境界へ接続する。
+
+file入力の周期再読込は`--reload-config`として実装済み、再読込失敗時は直前の正常設定を維持して処理を継続します。Linuxでは`--reload-on-sighup`によりSIGHUP受信ごとの安全な再読込も実装済みで、`vm-eventnet-sighup-smoke.sh`で正常reloadと不正設定保持を再現できます。systemd unitテンプレートは追加済みで、実環境への権限・socket整合性確認は未実施です。
 
 最初のCLI案:
 
@@ -185,10 +199,12 @@ int en_runtime_plan_generate_netns(
 
 ### 6.1 strongSwan VICI adapter
 
-追加予定:
+実装済みの接合境界:
 
 - `include/eventnet/strongswan_vici_adapter.h`
 - `src/strongswan_vici_adapter.c`
+
+現在は `include/eventnet/strongswan_observer.h` / `src/strongswan_observer.c` に、`swanctl --list-sas`出力をchild stateへ変換する依存なしのパーサを実装し、`include/eventnet/strongswan_vici_adapter.h` / `src/strongswan_vici_adapter.c`にVICI callback境界を追加しています。さらに、libviciがある環境では`EVENTNET_ENABLE_STRONGSWAN_VICI`でsocket接続、version request、Tunnel操作、CHILD SA状態取得、有限event購読、切断後の有限回再接続、socket切断までの無期限event購読を行うclient／probeを有効化できます。`eventnet_strongswan_vici_controller_probe`と`eventnetd --vici-monitor-*`では実VICI eventをcontroller reconcileへ接続できます。残る作業は、rekey／DPD等のイベント種別ごとの運用ポリシー、再起動時の購読復旧、service権限の実環境固定です。
 
 役割:
 
@@ -201,11 +217,11 @@ int en_runtime_plan_generate_netns(
 
 ### 6.2 VPP adapter
 
-追加予定:
+実装済みの接合境界:
 
 - `include/eventnet/vpp_adapter.h`
 - `src/vppctl_adapter.c`
-- 将来: `src/vpp_api_adapter.c`
+- 実装済みの接合境界: `src/vpp_api_adapter.c`
 
 役割:
 
@@ -214,23 +230,29 @@ int en_runtime_plan_generate_netns(
 - FIB / route存在確認をする。
 - counterをhealth評価へ渡す。
 
+`include/eventnet/vpp_api_adapter.h` / `src/vpp_api_adapter.c`には、VAPI生成コードをcallbackとして注入する薄いadapter境界を実装しています。現時点の既定実装は`vppctl` adapterであり、Binary APIの実transportはVPP SDK依存が揃った環境でcallbackへ接続します。
+
+VPP observerのCLIは`--table TABLE_ID`で対象VRFを明示でき、同一prefixが複数tableにあるFIB出力から指定tableのrouteだけをevent化します。生成eventには検出した`table_id`を任意フィールドとして含め、telemetry parserでも0以上の整数として検証します。
+
 未踏提出では、まず `vppctl` command adapterで十分です。
 VPP binary APIは後段です。
 
 ### 6.3 Health probe adapter
 
-追加予定:
+Agent側の実測入口として`examples/eventnet_agent.c`を実装済みです。Pathごとのping、RTT、packet loss、jitter、連続成功／失敗回数をJSONL telemetryへ変換し、`eventnetd`の共通health入力へ渡せます。`--yaml`と`--intent`を指定するとYAMLの候補Pathと終端Segmentのremote endpointを自動展開し、複数拠点・Hub・Relay候補を手入力なしで定期測定できます。シミュレーション入力と実ping入力を同じschemaで扱い、CLI値とping出力のstrict validationも行います。Linuxでは`fork`／`exec`、Windowsでは`_popen`を使い、OSごとのping引数（`-c/-W`、`-n/-w`）と`time<1ms`表記を吸収します。segmentがないlegacy routeでは`route_next_hop`を使用します。
+
+本番共通化で追加する場所:
 
 - `include/eventnet/health_probe.h`
 - `src/health_probe_ping.c`
 
-役割:
+残っている役割:
 
 - pingでRTT / lossを測る。
 - consecutive failure / recoveryを作る。
 - `en_path_health_t` へ変換する。
 
-将来:
+将来拡張:
 
 - BFD
 - FRRouting連携
@@ -238,13 +260,14 @@ VPP binary APIは後段です。
 
 ## 7. daemon loopを置く場所
 
-`eventnetd --once` が動いてから実装します。
+`examples/eventnetd.c`に、論文評価用の最小daemon loopを実装済みです。`--interval-ms` / `--count`による周期評価、標準入力またはLinux Unix socketからのJSONL受信、`--batch-size`による測定ラウンド化、state file復元、file入力のreload、SIGHUP reload、UID認証、入力レート制限、status JSONL出力までを一つの実行ファイルで確認できます。
 
-追加 / 拡張予定:
+本番運用へ拡張する場所:
 
-- `examples/eventnetd.c`
-- `src/event_loop.c`
-- `include/eventnet/event_loop.h`
+- `examples/eventnetd.c`から共通reconcile loopを`src/event_loop.c`へ分離する。
+- systemd等のservice managerと接続する。
+- `--socket-parallel`による有限N接続の同時読み取りは実装済み。無期限接続の同時受信と常駐service化を追加する。
+- strongSwan VICIの有限event購読と`monitor-forever`はprobeからeventnetd stdinへ接続可能で、eventnetd自身の`--vici-monitor-*`にも内蔵した。残りはrekey／DPD運用とVPP Binary API観測である。
 
 CLI案:
 
@@ -256,40 +279,55 @@ build-linux-cc/eventnetd samples/linux-vm-netns.yaml \
   --status-json out/eventnetd/status.jsonl
 ```
 
-必要な処理:
+残っている処理:
 
-- interval実行
-- config reload
-- signal handling
-- last applied pathの保持
-- rollback / retry / backoff
-- hold-down / hysteresis
+- eventnetd socket reconnect retry / backoff、有限parallel socket受信（実装済み）
+- apply planのコマンド実行失敗時は、各apply commandに対応するrollbackを記録し、実行済み操作だけを逆順で戻す処理を実装済み。対応情報がない手作成planは従来のrollback listへ後方互換fallbackする。生成netns runtimeについても失敗時trapと明示rollback scriptを持つ。
+- YAMLの`failure_threshold` / `recovery_threshold`、健全active Pathの`hold_down_ms`、品質差分の`hysteresis_percent`による切替抑制を実装済み。
+- 無期限parallel接続を含む常駐service化
+- 観測状態の永続化と再起動後の自動reconcile
 
-## 8. 未踏提出までに実装する順番
+## 8. 論文作成までと未踏期間の順番
 
-推奨順:
+論文作成まで:
 
-1. `examples/eventnetd.c` に `--once` を作る。
-2. `out/eventnetd/events.txt` を読む簡易event parserを作る。
-3. `out/eventnetd/status.jsonl` を出す。
-4. `--generate-runtime` で既存netns runtime生成へつなぐ。
-5. `scripts/vm-eventnetd-once-smoke.sh` を追加する。
-6. `scripts/demo-mitou.sh` に `eventnetd --once` demoを足す。
-7. `src/reconcile.c` へ共通化する。
-8. `src/explain_json.c` へ共通化する。
-9. health条件のscenarioを増やす。
-10. 提出資料用に、設計との差分と到達点を図にする。
+1. YAML閾値、telemetry schema、adapter API、Explain出力を固定する。
+2. Direct／Hub／Relay／VLANのVM評価とFailure／Recovery評価を再現可能にする。
+3. `eventnetd`の周期入力、reload、state復元、安全な入力境界を評価する。
+4. strongSwan／VPP CLI runtime、rollback、IPsec対象外遮断を評価する。
+5. 実装済み範囲とVICI／VPP Binary APIの未完了codec範囲を文書へ分離する。
+6. 論文用に同一telemetryへ異なる閾値を適用する比較手順を固定する。
+
+論文作成後から未踏期間:
+
+1. 物理またはクラウド環境で遅延・Loss・Jitter・帯域を再現する。
+2. 閾値、hold-down、hysteresisを変え、切替時間・通信影響・切替頻度を測定する。
+3. VPPの対象SDK版を固定し、Binary APIのroute／VRF／VLAN codecを実装する。
+4. Graceful Transitionを実通信で評価し、Immediateとの差を定量化する。
+5. Linux namespace上でFRR／BGPの広告・withdrawalを接続する。
+6. Controller HAを追加し、停止後のActive Path維持と再reconcileを評価する。
+7. 余力があればFlow Preserveへ進み、長時間TCPで既存flow維持を測定する。
+
+Node能力のYAML宣言、Path全端点の能力照合、disabled Node除外、未知Node検証は`vm-evaluate.sh node-capability`で再現できます。これは能力profileの宣言・選択境界の評価であり、実際のCloud VPN／FRR backend接続を完了したことを意味しません。
+
+`.github/workflows/ci.yml`では、外部network OSSを必要としないCMake／CTestと全shell scriptの構文をLinux・Windowsで自動検証します。実strongSwan／VPP runtimeは依存とroot権限が必要なため、Linux VMの`paper-evaluation-checklist.md`を別の実証ゲートとして扱います。
 
 ## 9. 後回しでよい場所
+
+### 9.1 Hub VPP実データ面の残課題
+
+`VPP_TOPOLOGY=hub`では、site-a／site-bとhub-1のnamespace linkを作成できます。しかし現行の単一VPP instanceへ全portを収容したまま、同一宛先prefixをHub経由とsite-b直結へ同時に転送することはできません。したがって、この設定はHub linkの確認とController生成planの検証用であり、Hub経由の実パケット疎通を完了したものではありません。
+
+実装する場合は、Hub側VPPを独立instanceとして起動するか、VPPのVRF／分離tableと経路リークを含む設計へ変更し、forward／return双方のFIB、VLAN sub-interface、IPsec selectorを同一試験で確認します。
 
 未踏提出の第一段階では、以下は実装しなくてよいです。
 
 - GUI
 - FRRouting本統合
 - VPP binary API
-- strongSwan VICI event購読
+- strongSwan VICIのrekey／DPD等を含む運用ポリシーとservice復旧
 - Flow Preserve本実装
-- systemd service化
+- systemd unitの実環境適用（テンプレートは追加済み）
 - 永続DB
 - HA controller
 

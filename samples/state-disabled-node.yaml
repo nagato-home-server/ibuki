@@ -1,0 +1,33 @@
+nodes:
+  - id: site-a
+    administrative_state: enabled
+  - id: site-b
+    administrative_state: disabled
+
+tunnels:
+  - id: tun-a-b
+    local_node: site-a
+    remote_node: site-b
+    local_endpoint: 203.0.113.10
+    remote_endpoint: 203.0.113.9
+    local_ts: 10.10.1.0/24
+    remote_ts: 10.10.2.0/24
+
+paths:
+  - id: path-a-b
+    source: site-a
+    destination: site-b
+    segments:
+      - id: seg-a-b
+        from: site-a
+        to: site-b
+        tunnel_id: tun-a-b
+
+intents:
+  - id: intent-a-b
+    traffic:
+      source: site-a
+      destination: site-b
+    path_selection:
+      mode: explicit
+      path_id: path-a-b

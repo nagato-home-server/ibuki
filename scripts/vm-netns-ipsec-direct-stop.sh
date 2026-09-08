@@ -31,4 +31,9 @@ for ns in site-a site-b; do
 done
 
 rm -rf "$SWANCTL_WORK_BASE"
-sh "$ROOT_DIR/scripts/vm-netns-ipsec-direct-clean.sh"
+for ns in site-a site-b; do
+  ip netns exec "$ns" ip xfrm state flush 2>/dev/null || true
+  ip netns exec "$ns" ip xfrm policy flush 2>/dev/null || true
+done
+
+printf 'Flushed xfrm state and policy in site-a/site-b.\n'

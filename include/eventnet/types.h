@@ -17,6 +17,9 @@
 #define EN_MAX_WAYPOINTS 8
 #define EN_MAX_COMPARISONS 8
 #define EN_MAX_VPP_EDGES 16
+#define EN_MAX_ALLOWED_VLANS 32
+#define EN_MAX_ROUTES 16
+#define EN_MAX_TRAFFIC_KEY_LEN (EN_MAX_ID_LEN * 2 + 24)
 
 typedef enum {
     EN_ADMIN_ENABLED = 0,
@@ -122,6 +125,9 @@ typedef struct {
     char local_id[EN_MAX_ID_LEN];
     char remote_id[EN_MAX_ID_LEN];
     char psk[EN_MAX_ID_LEN];
+    char auth_method[EN_MAX_ID_LEN];
+    char local_cert[EN_MAX_ID_LEN];
+    char remote_cacerts[EN_MAX_ID_LEN];
     char local_traffic_selector[EN_MAX_ID_LEN];
     char remote_traffic_selector[EN_MAX_ID_LEN];
     char protocol[EN_MAX_ID_LEN];
@@ -137,6 +143,16 @@ typedef struct {
 } en_segment_t;
 
 typedef struct {
+    char route_id[EN_MAX_ID_LEN];
+    char node_id[EN_MAX_ID_LEN];
+    char destination_prefix[EN_MAX_ID_LEN];
+    char next_hop[EN_MAX_ID_LEN];
+    char interface_name[EN_MAX_ID_LEN];
+    int table_id;
+    int metric;
+} en_route_t;
+
+typedef struct {
     char path_id[EN_MAX_ID_LEN];
     char source[EN_MAX_ID_LEN];
     char destination[EN_MAX_ID_LEN];
@@ -145,6 +161,9 @@ typedef struct {
     char egress_tunnel_id[EN_MAX_ID_LEN];
     char waypoints[EN_MAX_WAYPOINTS][EN_MAX_ID_LEN];
     size_t waypoint_count;
+    en_route_t routes[EN_MAX_ROUTES];
+    size_t route_count;
+    bool routes_explicit;
     en_segment_t segments[EN_MAX_SEGMENTS];
     size_t segment_count;
     int priority;
@@ -155,6 +174,8 @@ typedef struct {
 typedef struct {
     char source[EN_MAX_ID_LEN];
     char destination[EN_MAX_ID_LEN];
+    bool has_vlan_id;
+    int vlan_id;
 } en_traffic_selector_t;
 
 typedef struct {
@@ -162,10 +183,17 @@ typedef struct {
     double max_rtt_ms;
     bool has_max_packet_loss_percent;
     double max_packet_loss_percent;
+    bool has_hysteresis_percent;
+    double hysteresis_percent;
+    int failure_threshold;
+    int recovery_threshold;
+    int hold_down_ms;
     char forbidden_waypoints[EN_MAX_WAYPOINTS][EN_MAX_ID_LEN];
     size_t forbidden_waypoint_count;
     char required_waypoints[EN_MAX_WAYPOINTS][EN_MAX_ID_LEN];
     size_t required_waypoint_count;
+    char required_capabilities[EN_MAX_CAPABILITIES][EN_MAX_ID_LEN];
+    size_t required_capability_count;
 } en_path_constraints_t;
 
 typedef struct {
@@ -183,6 +211,8 @@ typedef struct {
     int max_pause_ms;
     int drain_timeout_ms;
     int timeout_ms;
+    int retry_count;
+    int retry_backoff_ms;
 } en_transition_policy_t;
 
 typedef struct {
@@ -193,6 +223,8 @@ typedef struct {
 typedef struct {
     char intent_id[EN_MAX_ID_LEN];
     en_traffic_selector_t traffic;
+    bool block_non_ipsec;
+    bool deny_unmatched_vlan;
     en_path_selection_t path_selection;
     en_transition_policy_t transition;
     en_fallback_policy_t fallback;
@@ -200,22 +232,38 @@ typedef struct {
 
 typedef struct {
     char node_id[EN_MAX_ID_LEN];
+    char port_id[EN_MAX_ID_LEN];
     char host_interface[EN_MAX_ID_LEN];
     char vpp_interface[EN_MAX_ID_LEN];
     char namespace_interface[EN_MAX_ID_LEN];
     char namespace_address[EN_MAX_ID_LEN];
     char vpp_address[EN_MAX_ID_LEN];
     char next_hop[EN_MAX_ID_LEN];
+    int allowed_vlans[EN_MAX_ALLOWED_VLANS];
+    size_t allowed_vlan_count;
 } en_vpp_edge_t;
 
 typedef struct {
     char path_id[EN_MAX_ID_LEN];
+    char source_node[EN_MAX_ID_LEN];
+    char target[EN_MAX_ID_LEN];
+    int sequence;
     en_health_state_t state;
     double rtt_ms;
     double packet_loss_percent;
     double jitter_ms;
     int consecutive_failures;
     int consecutive_successes;
+    bool has_table_id;
+    int table_id;
+    char observed_destination_prefix[EN_MAX_ID_LEN];
+    char observed_next_hop[EN_MAX_ID_LEN];
+    char observed_tunnel_id[EN_MAX_ID_LEN];
+    char observed_interface_name[EN_MAX_ID_LEN];
+    bool has_route_observation;
+    bool has_interface_observation;
+    en_health_state_t route_state;
+    en_health_state_t interface_state;
     long long last_updated_ms;
 } en_path_health_t;
 

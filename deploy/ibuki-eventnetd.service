@@ -1,0 +1,32 @@
+[Unit]
+Description=Ibuki eventnetd telemetry controller
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=ibuki
+Group=ibuki
+ExecStartPre=/usr/bin/test -x /usr/local/libexec/ibuki/eventnetd
+ExecStartPre=/usr/bin/test -r /etc/ibuki/ibuki.yaml
+ExecStart=/usr/local/libexec/ibuki/eventnetd /etc/ibuki/ibuki.yaml --telemetry-socket /run/ibuki/eventnetd.sock --socket-accept-count 0 --socket-retry-count 3 --socket-retry-backoff-ms 500 --state-file /var/lib/ibuki/state.tsv --backend command
+Restart=on-failure
+RestartSec=2s
+RuntimeDirectory=ibuki
+StateDirectory=ibuki
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectHome=yes
+ProtectSystem=strict
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/run/ibuki /var/lib/ibuki
+
+[Install]
+WantedBy=multi-user.target

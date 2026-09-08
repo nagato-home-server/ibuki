@@ -4,6 +4,8 @@
 #include "eventnet/types.h"
 
 typedef struct {
+    en_node_t nodes[EN_MAX_NODES];
+    size_t node_count;
     en_tunnel_t tunnels[EN_MAX_TUNNELS];
     size_t tunnel_count;
     en_path_t paths[EN_MAX_PATHS];

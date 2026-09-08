@@ -4,6 +4,8 @@
 #include "eventnet/controller.h"
 
 typedef struct {
+    en_node_t nodes[EN_MAX_NODES];
+    size_t node_count;
     en_path_t paths[EN_MAX_PATHS];
     size_t path_count;
     en_intent_t intents[EN_MAX_CANDIDATES];
@@ -14,8 +16,9 @@ typedef struct {
     size_t observed_tunnel_count;
     en_path_health_t health[EN_MAX_PATHS];
     size_t health_count;
-    char traffic_keys[EN_MAX_CANDIDATES][EN_MAX_ID_LEN * 2];
+    char traffic_keys[EN_MAX_CANDIDATES][EN_MAX_TRAFFIC_KEY_LEN];
     char applied_paths[EN_MAX_CANDIDATES][EN_MAX_ID_LEN];
+    long long applied_since_ms[EN_MAX_CANDIDATES];
     size_t applied_count;
     en_transition_state_t transition_state;
     en_error_t errors[EN_MAX_ERRORS];
@@ -40,7 +43,9 @@ en_path_t *en_find_path(en_controller_t *controller, const char *path_id);
 en_path_health_t *en_find_health(en_controller_t *controller, const char *path_id);
 en_tunnel_t *en_find_tunnel(en_controller_t *controller, const char *tunnel_id);
 en_tunnel_t *en_find_desired_tunnel(en_controller_t *controller, const char *tunnel_id);
+const en_node_t *en_find_node(const en_controller_t *controller, const char *node_id);
 const char *en_get_applied_path(en_controller_t *controller, const char *traffic_key);
+long long en_get_applied_since_ms(en_controller_t *controller, const char *traffic_key);
 void en_set_applied_path(en_controller_t *controller, const char *traffic_key, const char *path_id);
 en_error_code_t en_select_path(en_controller_t *controller, const en_intent_t *intent, en_selection_result_t *result);
 en_error_code_t en_transition_path(en_controller_t *controller, const en_intent_t *intent, en_path_t *target_path);

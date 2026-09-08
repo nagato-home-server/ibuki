@@ -52,4 +52,13 @@ grep -q '"selected_path":"path-via-hub"' "$OUT_DIR/multistep-explain.jsonl"
 grep -q '"selected_path":"path-via-relay-c"' "$OUT_DIR/multistep-explain.jsonl"
 printf 'explain_jsonl_written: %s\n' "$OUT_DIR/multistep-explain.jsonl"
 
+set +e
+"$BUILD_DIR/eventnet_scenario" "$YAML" --health 'path-direct=healthy,rtt=nan,loss=0' >/dev/null 2>&1
+invalid_health_status=$?
+set -e
+if [ "$invalid_health_status" -ne 2 ]; then
+  printf 'Scenario smoke failed: invalid health values were accepted.\n' >&2
+  exit 1
+fi
+
 printf '\nEventNet scenario smoke passed.\n'

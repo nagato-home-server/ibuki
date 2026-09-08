@@ -1,0 +1,27 @@
+tunnels:
+  - id: tun-invalid
+    local_node: site-a
+    remote_node: site-b
+
+paths:
+  - id: path-missing-next-hop
+    source: site-a
+    destination: site-b
+    routes:
+      - id: missing-next-hop
+        node_id: site-a
+        destination_prefix: 10.10.2.0/24
+    segments:
+      - id: invalid-segment
+        from: site-a
+        to: site-b
+        tunnel_id: tun-invalid
+
+intents:
+  - id: intent-invalid-route
+    traffic:
+      source: site-a
+      destination: site-b
+    path_selection:
+      mode: explicit
+      path_id: path-missing-next-hop

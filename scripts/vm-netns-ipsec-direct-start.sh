@@ -25,7 +25,7 @@ for ns in site-a site-b; do
   }
 done
 
-sh "$ROOT_DIR/scripts/vm-netns-ipsec-direct-generate.sh"
+sh "$ROOT_DIR/scripts/vm-netns-ipsec.sh" direct generate
 
 for ns in site-a site-b; do
   pid_file="$RUN_BASE/$ns/charon.pid"
@@ -127,6 +127,6 @@ load_node site-b
 initiate_direct
 
 printf '\nDirect IPsec attempt completed. Inspect with:\n'
-printf '  sudo sh scripts/vm-netns-ipsec-direct-status.sh\n'
+printf '  sudo sh scripts/vm-netns-ipsec.sh direct status\n'
 printf '  sudo swanctl --list-sas --uri unix://%s/site-a/charon.vici\n' "$RUN_BASE"
 printf '  sudo swanctl --list-sas --uri unix://%s/site-b/charon.vici\n' "$RUN_BASE"

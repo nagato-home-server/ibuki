@@ -100,7 +100,11 @@ dpkg -l 'vpp*'
 
 ## 4. Controller側の高優先リスク
 
-### 4.1 YAML由来値のcommand injection
+### 4.0 Observer eventのroute identity
+
+VPP observerは`show ip fib`のprefix・next-hop・interfaceをJSONLへ変換するため、観測出力をそのまま信頼するとevent JSONの破壊や別routeの誤受理につながります。現在は許可文字を検証し、route詳細がある場合はeventnetdでPathのroute定義と照合します。strongSwan eventの`tunnel_id`もPath segmentと照合します。実VICI/VPP transport接続時は、transport側のnode identity、socket権限、期待table/interfaceの追加検証が必要です。
+
+### 4.1 YAML由来値のcommand injection（対策状況）
 
 不安な場所:
 
@@ -109,59 +113,51 @@ dpkg -l 'vpp*'
 - `src/command_adapters.c`
 - `examples/eventnet_scenario.c`
 
-根拠:
+監査時の懸念:
 
-- YAML由来の `tunnel_id`、`path_id`、`route_destination_prefix`、`route_next_hop` などをshell command文字列へ直接埋めている。
-- `en_apply_plan_run()` と command adapter が `system()` で実行している。
-- `eventnet_scenario --generate-runtime` は `yaml` path / path id をshell command文字列へ直接埋めて `system()` で実行している。
+- YAML由来の `tunnel_id`、`path_id`、`route_destination_prefix`、`route_next_hop` は、以前shell command文字列へ入る経路があった。
+- Windows互換fallbackと、明示的にshell構文を要求する任意templateには、後方互換のためshell実行経路が残っている。
 
 特に不安な行:
 
-- `src/apply_plan.c`
-  - `system(plan->commands[i])`
-- `src/command_adapters.c`
-  - `system(command)`
-- `src/render_commands.c`
-  - `swanctl --initiate --child %s`
-  - `vppctl ip route add %s via %s`
-- `examples/eventnet_scenario.c`
-  - `sh scripts/vm-generate-netns-runtime.sh %s --path %s`
+現行のLinux既定経路:
+
+- `en_apply_plan_run()`はtoken検証後に`fork`／`execvp`で実行する。
+- command adapterは単純commandをshellなしで実行し、shell記号を必要とするtemplateだけ互換shell経路へ送る。
+- `eventnet_scenario --generate-runtime`と`eventnet_agent`のLinux実測も引数配列実行を使う。
+- `src/render_commands.c`と生成runtimeの値はallowlist検証後に出力する。
 
 影響:
 
 - YAMLやCLI引数を信頼しない運用にすると、root権限実行時に任意command実行へつながる可能性がある。
 
-優先対策:
+残る対策:
 
-1. `system()` を使わず、argv配列で `fork` + `execvp` / `posix_spawn` へ寄せる。
-2. すぐには難しければ、commandへ入る値にallowlist validatorを入れる。
-3. IDは `[A-Za-z0-9_.:-]+` 程度に制限する。
-4. CIDR / IP addressは専用parserで検証する。
-5. `eventnet_scenario` の `--generate-runtime` はshell経由ではなく、runtime generator関数を直接呼ぶ設計へ移す。
+1. Windows互換fallbackと任意templateのshell経路を引数配列APIへ移行する。
+2. CIDR／IP addressをallowlistだけでなく専用parserでも検証する。
+3. 実VPP Binary API codec接続時も同じ入力検証と権限分離を適用する。
 
-### 4.2 `swanctl.conf` injection
+### 4.2 `swanctl.conf` injection（対策状況）
 
 不安な場所:
 
 - `src/apply_plan.c`
-- `scripts/vm-netns-ipsec-direct-generate.sh`
-- `scripts/vm-netns-ipsec-hub-generate.sh`
+- `scripts/vm-netns-ipsec.sh direct generate`
+- `scripts/vm-netns-ipsec.sh hub generate`
 
-根拠:
+監査時の懸念:
 
-- YAML由来値を `swanctl.conf` の設定値としてそのまま出している。
-- `secret = %s`、`id = %s`、`local_addrs = %s` などがquote/escapeされていない。
-- `psk` や `id` に改行、brace、特殊文字が入ると、設定構造を壊す可能性がある。
+- YAML由来値を `swanctl.conf` の設定値として出力するため、値の境界と出力権限が重要になる。
 
 影響:
 
 - 悪意あるYAMLを入力すると、意図しないconnectionやsecret設定を注入できる可能性がある。
 
-優先対策:
+現行対策と残課題:
 
-1. swanctl configに出す値を厳格にvalidateする。
-2. PSKはconfig本文ではなく、root-only secret fileまたは環境変数から扱う。
-3. 出力前に `\n`、`\r`、`{`、`}`、`;` などを拒否する。
+1. Tunnel、ID、endpoint、証明書パスはYAML allowlistで検証する。
+2. 生成configはLinuxで`O_NOFOLLOW`・0600のdescriptor書き込みを行う。
+3. PSKの秘密管理とWindows互換書き込み経路の強化は残課題である。
 
 ### 4.3 PSKの扱い
 
@@ -169,10 +165,10 @@ dpkg -l 'vpp*'
 
 - `samples/ipsec-routes.yaml`
 - `samples/linux-vm-netns.yaml`
-- `scripts/vm-netns-ipsec-direct-generate.sh`
-- `scripts/vm-netns-ipsec-hub-generate.sh`
-- `scripts/vm-netns-ipsec-direct-start.sh`
-- `scripts/vm-netns-ipsec-hub-start.sh`
+- `scripts/vm-netns-ipsec.sh direct generate`
+- `scripts/vm-netns-ipsec.sh hub generate`
+- `scripts/vm-netns-ipsec.sh direct start`
+- `scripts/vm-netns-ipsec.sh hub start`
 
 根拠:
 
@@ -346,7 +342,7 @@ dpkg -l 'vpp*'
 
 現時点で「このcontrollerが即remote exploit可能」と断定できるものは見つけていません。
 
-ただし、YAMLやCLI入力を信頼できないものとして扱うなら、controller側のcommand生成・`system()`・secret handlingはかなり不安です。
+ただし、YAMLやCLI入力を信頼できないものとして扱うなら、controller側のcommand生成・残存する`system()` fallback・secret handlingは引き続き注意が必要です。Linuxの生成plan実行と既定command adapterはshellを介さない実行へ移行済みです。
 
 未踏提出向けプロトタイプとしては、次のセキュリティ改善を入れるだけでも説明力が上がります。
 
@@ -365,8 +361,44 @@ dpkg -l 'vpp*'
 - `swanctl.conf` load失敗時にconfig本文をstderrへ出さない。
 - `scripts/vm-shell-check.sh` を追加し、全shell scriptの構文確認をできるようにした。
 
+state fileの復元もLinuxでは`O_NOFOLLOW`付きで開くようにし、サービスユーザーが意図しないsymlink先を読み込まないようにした。さらに通常ファイルであることとgroup／otherの書き込み不可を確認する。stateが存在しない場合だけ初回起動として扱い、権限エラー・symlink・危険なmodeは起動失敗として扱う。
+
 残る主要リスク:
 
-- YAML由来値のallowlist validation。
-- `system()` / shell command実行経路の縮小。
+- 任意templateとWindows互換fallbackに残る`system()`経路の縮小。
 - VMに入っている strongSwan / VPP package version のCVE確認。
+- 実VPP Binary API message codec接続後の入力境界・権限分離確認。
+
+## 11. 2026-09-08 対応済みメモ
+
+- Tunnel、Path、Intent、Segment、RouteのYAML識別子とroute属性にallowlist検証を追加した。
+- `copy_id()`の長さ超過時に黙って切り詰めず、必須項目の欠落としてYAML検証で拒否するようにした。
+- status JSONLへ文字列エスケープを追加し、外部入力によるJSON破壊を防いだ。
+- `en_apply_plan_run`のLinux実行をtoken検証付き`fork`/`execvp`へ変更した。Windows互換fallbackと任意templateは別経路として残し、信頼できる設定だけで使用する。
+- `eventnet_scenario --generate-runtime`のLinux実行も`fork`/`exec`へ変更し、YAML／Path引数のshell解釈を排除した。実験用入力でも既定のLinux評価経路はshell文字列連結を行わない。
+- `eventnet_agent`のLinux実測pingを`fork`/`execlp`へ変更し、targetをshellへ連結しないようにした。Windowsの互換経路は`_popen`を使うが、targetは許可文字検証後にのみcommandへ展開する。Windows固有のping引数と`time<1ms`出力も個別に処理する。
+- command adapterのtemplateも、shellメタ文字を含まない場合はLinuxで`exec`経路へ送り、パイプやリダイレクトを明示的に使う従来templateだけをshell経路へ残す。既存templateの互換性を維持しながら、通常の単純commandのshell面を縮小した。
+- 不完全telemetry、重複route、重複waypoint、required/forbidden矛盾を回帰テストで拒否する。
+- state復元時に現在Intentのtraffic keyとPath所属（explicit／candidate／fallback）を照合し、別Intentや候補外Pathのstateを拒否する。複数traffic keyの復元では、既に復元したPathの状態をstandbyへ戻さない。
+- YAMLの識別子・route属性・VPP edgeにallowlist検証を実装済み。入力値にshellメタ文字を許可せず、生成runtimeへの混入を拒否する。
+- eventnetdのstatus JSONL出力もLinuxでは`O_NOFOLLOW`付きdescriptorで開き、symlink・非regular file・group／other書き込み可能な既存ファイルを拒否する。
+- Agentの通常／追記JSONL出力もLinuxでは`O_NOFOLLOW`・regular file・group／other書き込み不可を確認して開き、新規ファイルは0600で作成する。
+- eventnetdのfile telemetry入力もLinuxでは`O_NOFOLLOW`付きdescriptorで開き、regular file以外とgroup／other書き込み可能なファイルを拒否する。Agent出力とdaemon入力を同じsymlink非追従・権限境界に揃えた。
+- state復元時にPathのadministrative stateも確認し、YAMLで無効化されたPathを旧stateから再びActiveにしない。
+- state復元時にPathの端点と全segmentのNodeも確認し、無効化または未知のNodeを含む旧stateをActiveにしない。
+- Linuxビルドでstack protector、FORTIFY、RELROを既定有効にした。これは入力検証の代替ではなく、メモリ破壊時の影響を低減するベースライン対策である。
+
+### 常駐XFRM blockの再利用
+
+`eventnetd --backend command --apply`で`block_non_ipsec: true`を使う場合、Controller再起動後に同じpolicyを重複追加しない必要がある。現在はapply時に`ip xfrm policy list`を読み、selector・方向・priority・`action block`が同一policyブロックに揃う場合だけ既存policyとして再利用する。送受信の片方だけが存在する場合は自動修復せず失敗させ、外部で作られた既存policyはController終了時に削除しない。
+
+この判定はLinuxのXFRM出力形式に依存するため、実VMで`ip xfrm policy list`の出力を確認する。形式が異なる場合は、推測で緩い文字列判定へ戻さず、対象ディストリビューションの出力parserを追加する。
+
+Tunnel削除時は、先にSA終了を実行し、終了が成功した場合にだけblock policyを削除する。SA終了またはblock削除に失敗した場合は、cleartextを許す方向へ進めない。
+
+### command adapterの実行境界
+
+VPP socket、VLAN、XFRM、capture用commandの組み立てでは、固定長bufferへの`snprintf`結果を検査する。入力がbuffer長以上の場合は、切り詰められたcommandを実行せず`invalid_argument`として失敗させる。POSIXの`exec`経路でもargv化前の長さを確認する。これはsocket pathやselectorが別の短い値へ化けることを防ぐための境界であり、実際のLinux VMでは長大な入力拒否も評価へ追加する。
+- eventnetdのlistener／client Unix socketを`CLOEXEC`付きで作成・acceptするようにした。daemonがcommand backendをfork／execする際、Agent接続socketを子プロセスへ継承しない。
+- eventnetdの初回file streamと設定reloadも共通の`en_telemetry_open_jsonl`を使うようにした。安全検査を通らない経路がreload時だけ残らないよう、telemetry file入力のopen箇所を一つへ集約した。
+- eventnetdのfile telemetry入力にも4MiBの総入力上限を追加した。空行や無効行だけでrecord数上限をすり抜けてCPUを消費する入力をboundedにし、socket／parallel入力と同じ上限設計に揃えた。

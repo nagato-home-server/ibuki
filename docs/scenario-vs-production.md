@@ -4,6 +4,33 @@
 
 `eventnet_scenario` は本番daemonではありません。Path selection、fallback、recovery、evaluated policyを安全かつ高速に実験するためのテストハーネスです。
 
+最小のproduction入口として `eventnetd` も追加しています。現時点では、YAMLとAgent JSONLを読み込み、`--once` 相当の1回評価、`--interval-ms` / `--count` による周期評価、標準入力またはLinux Unixソケットによる逐次評価を実行します。有限接続では `--socket-parallel` により複数Agentを同時受信し、同一Controller状態へ集約できます。Backendはmockを既定値とし、command adapterをdry-runまたは明示的な`--apply`で選べます。strongSwanの操作は`swanctl --uri`を介して接続先を指定でき、`--swanctl-config`を併用するとconnection設定をloadしてからTunnelを開始できます。libvici有効ビルドでは`--vici-monitor-child`／`--vici-monitor-path`により、eventnetd自身がstrongSwanの`child-updown`を購読し、同じControllerへ再reconcileできます。VPPのCLI socket、VRF table準備、VLAN sub-interfaceの存在確認・作成・up、route投入、任意のFIB検証もcommand adapterへ接続できます。VPP Binary APIは接続、受信FD、dispatch、generic callback、生成messageの所有権境界まで実装済みですが、route／VLAN／VRFの具体codecは対象SDK版を固定した後段階として残しています。
+
+Agentの逐次入力には `--telemetry-stdin` を使えます。`--telemetry FILE`もJSONL streamとして扱い、`--batch-size N`指定時はN件ごとに1回reconcileします。`--count C`はC回のbatch評価を要求し、各batchでN件を消費します。EOF時にN件未満となったbatchは適用せず、要求したC batchに到達しなければ終了コード1になります。Linuxでは `--telemetry-socket PATH` も使え、JSONL 1行ごとに同じController状態を更新して再評価します。複数Pathを同一測定ラウンドとして扱う場合は `--batch-size N` を指定し、N件を反映してから1回だけ再評価します。ソケットは既定では1接続ですが、`--socket-accept-count N --state-file PATH`により複数Agentを同一共有batchへ集約できます（N>1、有限接続）。共有batchの入力は4MiBを上限とし、`--socket-parallel`を付けるとN接続を同時pollで読み取り、`--socket-parallel-timeout-ms`超過時はreconcileせず終了します。`--socket-accept-count 0`なら無期限に逐次接続を受け付けます。Linuxでは`--socket-uid UID`で接続元UIDを検証できます。認証はUIDのみです。
+
+file入力の周期実行では `--reload-config --state-file PATH` を指定すると、各周期の開始時にYAMLを再読込します。再読込に失敗した周期は適用せず終了し、前回の適用Pathはstate fileから復元します。stdin／socket入力との組み合わせは受け付けません。LinuxではSIGTERM／SIGINTを全入力モードで受け付け、直前に保存済みのstateを保持して終了します。`vm-eventnet-event-smoke.sh`でfile周期入力を停止させ、state fileが残ることを再現できます。
+
+障害イベントの最小形式は `{"schema":"ibuki.event.path.v1","event":"path_failed|path_recovered","path_id":"...","timestamp_ms":...}` です。`eventnetd`はこれをhealth更新として扱うため、既存のPath選択・fallback・recovery処理を共有できます。Linux Unix socketでは、同一接続から複数のイベントスナップショットをbatch単位で連続処理できます。`--socket-accept-count N`（N>1）では有限個のAgent接続を共有batchへ集約し、全入力を一つのController状態で再評価します。
+
+strongSwan／VPPの将来の購読元は、それぞれ `ibuki.event.tunnel.v1` または `ibuki.event.vpp.route.v1` の `path_id`、`tunnel_id`、`state`、`timestamp_ms`へ変換できます。`installed`／`rekeying`／`up`はhealthy、`deleted`／`down`／`failed`はfailedとして既存reconcileへ入力します。
+observerのeventモードから`eventnetd --telemetry-stdin`へパイプするend-to-end smokeも用意しています。
+Linux VMでは`vm-observer-eventnetd-runtime-smoke.sh`により、実際のstrongSwan VICI socketからの`--list-sas`出力とVPPの`show ip fib`出力をそれぞれobserver eventへ変換し、同じ`eventnetd`へ投入できます。これは常駐VICI購読ではありませんが、実runtimeの観測値が共通telemetry境界とPath identity検証を通過することを確認します。
+
+通常のhealth入力で受理する状態値は `healthy`、`degraded`、`failed`、`unhealthy` に限定し、未知の値は入力エラーとして扱います。入力が高頻度になり得る環境では `--max-records-per-second N` を指定して、1秒あたりのレコード数を制限できます。既定値0は無制限です。
+
+telemetry parserはPath IDの許可文字、metricの有限値・範囲、timestampを検証し、壊れたJSONLや不正な測定値をPath Selectionへ渡しません。
+file入力でも空行以外はv1 schemaを要求し、schema欠落・未知schema・数値後ろの不正文字は明示的に拒否します。入力を読み飛ばして部分的に評価することはありません。
+
+VLAN付きIntentでは、生成されたVPP netns planにsub-interface作成と有効化を含めます。これはVPP CLI計画の段階であり、実環境のparent interface、権限、既存設定との整合性はLinux VMで確認する必要があります。
+VPP observerは`show interface`からVLAN sub-interfaceの存在と`up`状態も解析できます。
+
+VLAN telemetryはroute観測と対象sub-interface観測を同一Pathへ集約します。両方のup観測が揃わない限りhealthyとは判定せず、未観測またはdownの場合はfallback対象にします。
+標準入力／逐次socketの常駐処理では、観測が別batchで到着した一時的な`no_candidate`でdaemonを終了せず、次のbatchを待ちます。全batchが失敗した場合だけ非0終了になります。
+`deny_unmatched_vlan: true`を指定したIntentでは、生成planとcommand backendがVPP親interfaceへIPv4/IPv6 deny-all ACLを適用し、指定sub-interface以外の未タグ通信を遮断する構成も選べます。VLAN smokeでは親interfaceにも別のL3経路を設定してから未タグpingを実行し、単なる未設定経路ではなくACLによる拒否を確認します。`vpp_edges.allowed_vlans`を指定したedgeでは一覧外VLANのsub-interface作成・route投入を拒否します。VLANごとのFIB table割当と設定生成は実装済みですが、実trunk上の複数VLAN疎通とVPPでの実パケット分離は未検証です。
+
+現行のVLAN Policyは、指定VLANをtraffic keyとPath selectionへ結び付け、指定VLANのsub-interfaceだけへrouteを生成します。加えて`block_non_ipsec: true`を指定したIntentでは、Tunnel selector範囲に限定した双方向XFRM block policyを生成し、command backendのapply経路でも同じblockをTunnel単位で追加・削除します。`deny_unmatched_vlan: true`を指定したIntentでは、VPP親interfaceへIPv4/IPv6 deny-all ACLを適用し、未タグ通信を遮断できます。さらに`vpp_edges.allowed_vlans`でedge単位の許可VLANを制限できます。したがって、同一source/destinationでもVLANごとに選択PathとFIB計画を分離し、IPsec対象範囲のcleartext fallbackも抑止できます。一方、実trunk上の複数VLAN疎通とVPPでの実パケット分離は未検証です。論文前の実験では「許可VLANの疎通」「一覧外VLANのplan拒否」「deny ACLによる未タグ通信の遮断」「XFRM block planとcommand backendの双方向生成」を確認します。
+`--verify-vpp`を実applyで指定すると、explicit routeのFIB存在確認に加えてinterface up確認を行います。
+
 ## 1. なぜscenario harnessを先に作るか
 
 未踏提出向けには、単に実ネットワークを一回動かすだけではなく、次を示せることが重要です。
@@ -163,9 +190,9 @@ Health:
 - desiredとobservedの差分検出
 - path candidate再評価
 - transition開始条件
-- hold-down/hysteresis
+- failure/recovery threshold、健全active Pathの時間ベースhold-down、品質差分hysteresis（実装済み）
 - fallback/recovery policy
-- retry/backoff
+- transitionの有限retry/backoff、socket reconnect retry/backoff（実装済み）
 - rollback
 
 ### 6.6 Apply orchestration

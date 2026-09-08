@@ -14,8 +14,7 @@
 | 一発デモ | `demo-mitou.sh` |
 | scenario実験 | `vm-eventnet-scenario-smoke.sh` |
 | netns underlay | `vm-netns-setup.sh`, `vm-netns-smoke.sh`, `vm-netns-clean.sh` |
-| direct IPsec | `vm-netns-ipsec-direct-*.sh` |
-| hub IPsec | `vm-netns-ipsec-hub-*.sh` |
+| IPsec direct/hub | `vm-netns-ipsec.sh direct|hub <action>` |
 | VPP準備 | `vm-vpp-preflight.sh`, `vm-install-vpp-fdio.sh` |
 | VPP netns | `vm-vpp-netns-*.sh`, `vm-vpp-controller-netns-smoke.sh` |
 | controller netns | `vm-netns-controller-smoke.sh` |
@@ -23,6 +22,7 @@
 
 root が必要なスクリプトは `sudo sh scripts/<script>.sh` で実行します。
 通常ユーザーでよいものは `sh scripts/<script>.sh` で実行します。
+各shellの引数・環境変数は `docs/shell-commands.md` にまとめています。
 
 ## 0. One-shot Demo
 
@@ -132,8 +132,8 @@ sudo sh scripts/vm-netns-clean.sh
 strongSwan daemon 起動の前段として、site-a / site-b 双方の direct tunnel 設定を生成できます。
 
 ```sh
-sh scripts/vm-netns-ipsec-direct-generate.sh
-sudo sh scripts/vm-netns-ipsec-direct-status.sh
+sh scripts/vm-netns-ipsec.sh direct generate
+sudo sh scripts/vm-netns-ipsec.sh direct status
 ```
 
 生成先:
@@ -144,7 +144,7 @@ sudo sh scripts/vm-netns-ipsec-direct-status.sh
 XFRM の掃除:
 
 ```sh
-sudo sh scripts/vm-netns-ipsec-direct-clean.sh
+sudo sh scripts/vm-netns-ipsec.sh direct clean
 ```
 
 ## 7. Direct IPsec Start Attempt
@@ -152,20 +152,20 @@ sudo sh scripts/vm-netns-ipsec-direct-clean.sh
 `/usr/lib/ipsec/charon` がある場合、site-a / site-b namespace 内で direct tunnel を起動できます。
 
 ```sh
-sudo sh scripts/vm-netns-ipsec-direct-start.sh
-sudo sh scripts/vm-netns-ipsec-direct-status.sh
+sudo sh scripts/vm-netns-ipsec.sh direct start
+sudo sh scripts/vm-netns-ipsec.sh direct status
 ```
 
 ログ:
 
 ```sh
-sh scripts/vm-netns-ipsec-direct-logs.sh
+sh scripts/vm-netns-ipsec.sh direct logs
 ```
 
 暗号化された direct tunnel に実際の LAN ping が流れるか確認します。
 
 ```sh
-sudo sh scripts/vm-netns-ipsec-direct-smoke.sh
+sudo sh scripts/vm-netns-ipsec.sh direct smoke
 ```
 
 この smoke test は `site-a -> site-b` の ping に加えて、`swanctl --list-sas` の ESP packet counter が増えることを確認します。
@@ -173,7 +173,7 @@ sudo sh scripts/vm-netns-ipsec-direct-smoke.sh
 停止:
 
 ```sh
-sudo sh scripts/vm-netns-ipsec-direct-stop.sh
+sudo sh scripts/vm-netns-ipsec.sh direct stop
 ```
 
 ## 8. Hub IPsec Start Attempt
@@ -181,9 +181,9 @@ sudo sh scripts/vm-netns-ipsec-direct-stop.sh
 direct IPsec を停止してから、`site-a -> hub-1 -> site-b` の hub 経由 route-based IPsec を起動します。
 
 ```sh
-sudo sh scripts/vm-netns-ipsec-direct-stop.sh
-sudo sh scripts/vm-netns-ipsec-hub-start.sh
-sudo sh scripts/vm-netns-ipsec-hub-status.sh
+sudo sh scripts/vm-netns-ipsec.sh direct stop
+sudo sh scripts/vm-netns-ipsec.sh hub start
+sudo sh scripts/vm-netns-ipsec.sh hub status
 ```
 
 hub path は中継ノードで複数 tunnel を扱うため、policy-based IPsec ではなく XFRM interface を使います。
@@ -194,19 +194,19 @@ hub path は中継ノードで複数 tunnel を扱うため、policy-based IPsec
 実 traffic が hub 経由の ESP に乗るか確認します。
 
 ```sh
-sudo sh scripts/vm-netns-ipsec-hub-smoke.sh
+sudo sh scripts/vm-netns-ipsec.sh hub smoke
 ```
 
 ログ:
 
 ```sh
-sh scripts/vm-netns-ipsec-hub-logs.sh
+sh scripts/vm-netns-ipsec.sh hub logs
 ```
 
 停止:
 
 ```sh
-sudo sh scripts/vm-netns-ipsec-hub-stop.sh
+sudo sh scripts/vm-netns-ipsec.sh hub stop
 ```
 
 ## 9. Controller/YAML Selected Netns Runtime
@@ -258,7 +258,7 @@ cat out/netns-runtime/selected-path.txt
 sh out/netns-runtime/apply-selected.sh
 ```
 
-この段階では runtime script は `path-direct` と `path-via-hub` に対応しています。`path-via-relay-c` は次の拡張対象です。
+この段階では runtime script は `path-direct`、`path-via-hub`、`path-via-relay-c`のplan生成に対応しています。Relayの実IPsec runtime適用は、複数中継Tunnelの実環境検証項目として別途扱います。
 
 ## 10. VPP Route Plan Preparation
 
@@ -420,3 +420,15 @@ JSON出力を確認する場合:
 ```sh
 cat out/scenario/multistep-explain.jsonl
 ```
+
+AgentをUnix socketへ複数接続して一つの評価batchへ集約する場合は、Linuxで次のように起動できます。
+
+```sh
+build-linux-cc/eventnetd samples/linux-vm-netns.yaml \
+  --telemetry-socket /run/ibuki/eventnetd.sock \
+  --socket-accept-count 2 --socket-parallel \
+  --socket-parallel-timeout-ms 5000 --state-file out/eventnetd.state
+```
+
+これは指定数の接続を同時に受信して終了する評価用モードです。無期限の本番運用は
+`deploy/ibuki-eventnetd.service` を使い、まず `--apply` なしで動作と権限を確認します。

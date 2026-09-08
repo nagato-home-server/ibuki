@@ -1,0 +1,95 @@
+tunnels:
+  - id: tun-vlan-a-hub
+    local_node: site-a
+    remote_node: hub-1
+    local_endpoint: 203.0.113.14
+    remote_endpoint: 203.0.113.13
+    local_id: site-a
+    remote_id: hub-1
+    psk: "change-me"
+    local_ts: 10.10.1.0/24
+    remote_ts: 10.10.254.0/24
+  - id: tun-vlan-hub-b
+    local_node: hub-1
+    remote_node: site-b
+    local_endpoint: 203.0.113.17
+    remote_endpoint: 203.0.113.18
+    local_id: hub-1
+    remote_id: site-b
+    psk: "change-me"
+    local_ts: 10.10.254.0/24
+    remote_ts: 10.10.2.0/24
+
+vpp_edges:
+  - node_id: site-a
+    port_id: edge
+    vpp_interface: host-vpp-site-a
+    next_hop: 172.16.101.2
+    allowed_vlans:
+      - 100
+  - node_id: hub-1
+    port_id: hub-a
+    vpp_interface: host-vpp-hub-1
+    next_hop: 172.16.103.2
+    allowed_vlans:
+      - 100
+  - node_id: hub-1
+    port_id: hub-b
+    vpp_interface: host-vpp-hub-b
+    next_hop: 172.16.104.2
+    allowed_vlans:
+      - 100
+  - node_id: site-b
+    port_id: edge
+    vpp_interface: host-vpp-site-b
+    next_hop: 172.16.102.2
+    allowed_vlans:
+      - 100
+
+paths:
+  - id: path-vlan-hub
+    source: site-a
+    destination: site-b
+    route_destination_prefix: 10.10.2.0/24
+    route_next_hop: 172.16.103.2
+    egress_tunnel_id: tun-vlan-a-hub
+    waypoints:
+      - hub-1
+    priority: 10
+    routes:
+      - id: vlan-hub-forward
+        node_id: site-a
+        destination_prefix: 10.10.2.0/24
+        next_hop: 172.16.101.2
+        table: 100
+      - id: vlan-hub-forward-relay
+        node_id: hub-1
+        destination_prefix: 10.10.2.0/24
+        next_hop: 172.16.103.2
+        interface: host-vpp-hub-b
+        table: 100
+      - id: vlan-hub-return
+        node_id: site-b
+        destination_prefix: 10.10.1.0/24
+        next_hop: 172.16.102.2
+        table: 100
+    segments:
+      - id: seg-vlan-a-hub
+        from: site-a
+        to: hub-1
+        tunnel_id: tun-vlan-a-hub
+      - id: seg-vlan-hub-b
+        from: hub-1
+        to: site-b
+        tunnel_id: tun-vlan-hub-b
+
+intents:
+  - id: intent-vlan-hub
+    traffic:
+      source: site-a
+      destination: site-b
+      vlan_id: 100
+    deny_unmatched_vlan: true
+    path_selection:
+      mode: explicit
+      path_id: path-vlan-hub

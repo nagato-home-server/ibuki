@@ -1,0 +1,358 @@
+tunnels:
+  - id: tun-a-b
+    local_node: site-a
+    remote_node: site-b
+    local_endpoint: 203.0.113.10
+    remote_endpoint: 203.0.113.9
+    local_id: site-a
+    remote_id: site-b
+    psk: "change-me"
+    local_ts: 10.10.1.0/24
+    remote_ts: 10.10.2.0/24
+
+  - id: tun-a-hub
+    local_node: site-a
+    remote_node: hub-1
+    local_endpoint: 203.0.113.14
+    remote_endpoint: 203.0.113.13
+    local_id: site-a
+    remote_id: hub-1
+    psk: "change-me"
+    local_ts: 10.10.1.0/24
+    remote_ts: 10.10.254.0/24
+
+  - id: tun-hub-b
+    local_node: hub-1
+    remote_node: site-b
+    local_endpoint: 203.0.113.17
+    remote_endpoint: 203.0.113.18
+    local_id: hub-1
+    remote_id: site-b
+    psk: "change-me"
+    local_ts: 10.10.254.0/24
+    remote_ts: 10.10.2.0/24
+
+  - id: tun-a-relay-c
+    local_node: site-a
+    remote_node: relay-c
+    local_endpoint: 203.0.113.22
+    remote_endpoint: 203.0.113.21
+    local_id: site-a
+    remote_id: relay-c
+    psk: "change-me"
+    local_ts: 10.10.1.0/24
+    remote_ts: 10.10.253.0/24
+
+  - id: tun-relay-c-b
+    local_node: relay-c
+    remote_node: site-b
+    local_endpoint: 203.0.113.26
+    remote_endpoint: 203.0.113.25
+    local_id: relay-c
+    remote_id: site-b
+    psk: "change-me"
+    local_ts: 10.10.253.0/24
+    remote_ts: 10.10.2.0/24
+
+paths:
+  - id: path-legacy-single-route
+    source: site-a
+    destination: site-b
+    route_destination_prefix: 10.10.2.0/24
+    route_next_hop: 203.0.113.9
+    egress_tunnel_id: tun-a-b
+    priority: 10
+    segments:
+      - id: seg-a-b-legacy
+        from: site-a
+        to: site-b
+        tunnel_id: tun-a-b
+
+  - id: path-explicit-single-route
+    source: site-a
+    destination: site-b
+    egress_tunnel_id: tun-a-b
+    priority: 20
+    routes:
+      - id: dst-to-site-b
+        node_id: site-a
+        destination_prefix: 10.10.2.0/24
+        next_hop: 203.0.113.9
+    segments:
+      - id: seg-a-b-single
+        from: site-a
+        to: site-b
+        tunnel_id: tun-a-b
+
+  - id: path-bidirectional-routes
+    source: site-a
+    destination: site-b
+    egress_tunnel_id: tun-a-b
+    priority: 30
+    routes:
+      - id: dst-to-site-b
+        node_id: site-a
+        dst_prefix: 10.10.2.0/24
+        via: 203.0.113.9
+      - id: return-to-site-a
+        node: site-b
+        prefix: 10.10.1.0/24
+        via: 203.0.113.10
+    segments:
+      - id: seg-a-b-bidir
+        from: site-a
+        to: site-b
+        tunnel_id: tun-a-b
+
+  - id: path-hub-node-routes
+    source: site-a
+    destination: site-b
+    egress_tunnel_id: tun-a-hub
+    waypoints:
+      - hub-1
+    priority: 40
+    routes:
+      - id: site-a-to-site-b
+        node_id: site-a
+        destination_prefix: 10.10.2.0/24
+        next_hop: 203.0.113.13
+      - id: hub-return-to-site-a
+        node_id: hub-1
+        destination_prefix: 10.10.1.0/24
+        next_hop: 203.0.113.14
+      - id: hub-to-site-b
+        node_id: hub-1
+        destination_prefix: 10.10.2.0/24
+        next_hop: 203.0.113.18
+      - id: site-b-return-to-site-a
+        node_id: site-b
+        destination_prefix: 10.10.1.0/24
+        next_hop: 203.0.113.17
+    segments:
+      - id: seg-a-hub
+        from: site-a
+        to: hub-1
+        tunnel_id: tun-a-hub
+      - id: seg-hub-b
+        from: hub-1
+        to: site-b
+        tunnel_id: tun-hub-b
+
+  - id: path-route-attributes
+    source: site-a
+    destination: site-b
+    egress_tunnel_id: tun-a-b
+    priority: 50
+    routes:
+      - id: attr-route
+        node_id: site-a
+        to: 10.10.2.0/24
+        via: 203.0.113.9
+        interface: ipsec0
+        table: 100
+        metric: 20
+    segments:
+      - id: seg-a-b-attr
+        from: site-a
+        to: site-b
+        tunnel_id: tun-a-b
+
+  - id: path-relay-chain-routes
+    source: site-a
+    destination: site-b
+    egress_tunnel_id: tun-a-relay-c
+    waypoints:
+      - relay-c
+    priority: 60
+    routes:
+      - id: chain-site-a-to-relay
+        node_id: site-a
+        destination_prefix: 10.10.2.0/24
+        next_hop: 203.0.113.21
+      - id: chain-relay-to-site-b
+        node_id: relay-c
+        destination_prefix: 10.10.2.0/24
+        next_hop: 203.0.113.25
+      - id: chain-relay-return
+        node_id: relay-c
+        destination_prefix: 10.10.1.0/24
+        next_hop: 203.0.113.22
+      - id: chain-site-b-return
+        node_id: site-b
+        destination_prefix: 10.10.1.0/24
+        next_hop: 203.0.113.26
+    segments:
+      - id: seg-a-relay-chain
+        from: site-a
+        to: relay-c
+        tunnel_id: tun-a-relay-c
+      - id: seg-relay-chain-b
+        from: relay-c
+        to: site-b
+        tunnel_id: tun-relay-c-b
+
+  - id: path-asymmetric-routes
+    source: site-a
+    destination: site-b
+    egress_tunnel_id: tun-a-hub
+    waypoints:
+      - hub-1
+    priority: 70
+    routes:
+      - id: asymmetric-forward
+        node_id: site-a
+        destination_prefix: 10.10.2.0/24
+        next_hop: 203.0.113.13
+      - id: asymmetric-hub-forward
+        node_id: hub-1
+        destination_prefix: 10.10.2.0/24
+        next_hop: 203.0.113.18
+      - id: asymmetric-return
+        node_id: site-b
+        destination_prefix: 10.10.1.0/24
+        next_hop: 203.0.113.17
+    segments:
+      - id: seg-a-hub-asymmetric
+        from: site-a
+        to: hub-1
+        tunnel_id: tun-a-hub
+      - id: seg-hub-b-asymmetric
+        from: hub-1
+        to: site-b
+        tunnel_id: tun-hub-b
+
+  - id: path-priority-backup
+    source: site-a
+    destination: site-b
+    egress_tunnel_id: tun-a-b
+    priority: 80
+    routes:
+      - id: backup-to-site-b
+        node_id: site-a
+        destination_prefix: 10.10.2.0/24
+        next_hop: 203.0.113.9
+    segments:
+      - id: seg-a-b-backup
+        from: site-a
+        to: site-b
+        tunnel_id: tun-a-b
+
+intents:
+  - id: intent-legacy-single-route
+    traffic:
+      source: site-a
+      destination: site-b
+    path_selection:
+      mode: explicit
+      path_id: path-legacy-single-route
+
+  - id: intent-explicit-single-route
+    traffic:
+      source: site-a
+      destination: site-b
+    path_selection:
+      mode: explicit
+      path_id: path-explicit-single-route
+
+  - id: intent-bidirectional-routes
+    traffic:
+      source: site-a
+      destination: site-b
+    path_selection:
+      mode: explicit
+      path_id: path-bidirectional-routes
+
+  - id: intent-hub-node-routes
+    traffic:
+      source: site-a
+      destination: site-b
+    path_selection:
+      mode: explicit
+      path_id: path-hub-node-routes
+
+  - id: intent-route-attributes
+    traffic:
+      source: site-a
+      destination: site-b
+    path_selection:
+      mode: explicit
+      path_id: path-route-attributes
+
+  - id: intent-relay-chain-routes
+    traffic:
+      source: site-a
+      destination: site-b
+    path_selection:
+      mode: explicit
+      path_id: path-relay-chain-routes
+
+  - id: intent-asymmetric-routes
+    traffic:
+      source: site-a
+      destination: site-b
+    path_selection:
+      mode: explicit
+      path_id: path-asymmetric-routes
+
+  - id: intent-priority-backup
+    traffic:
+      source: site-a
+      destination: site-b
+    path_selection:
+      mode: priority
+      candidates:
+        - path-legacy-single-route
+        - path-priority-backup
+      constraints:
+        hold_down_ms: 1000
+    transition:
+      retry_count: 1
+      retry_backoff_ms: 25
+
+  - id: intent-evaluated-stability
+    traffic:
+      source: site-a
+      destination: site-b
+    path_selection:
+      mode: evaluated
+      candidates:
+        - path-legacy-single-route
+        - path-priority-backup
+      comparison_order:
+        - latency
+        - packet_loss
+      constraints:
+        hysteresis_percent: 15
+        hold_down_ms: 0
+    transition:
+      retry_count: 1
+      retry_backoff_ms: 25
+
+  - id: intent-vlan-security-hub
+    traffic:
+      source: site-a
+      destination: site-b
+      vlan_id: 100
+    path_selection:
+      mode: priority
+      candidates:
+        - path-legacy-single-route
+        - path-hub-node-routes
+      constraints:
+        required_waypoints:
+          - hub-1
+
+  - id: intent-vlan-direct
+    traffic:
+      source: site-a
+      destination: site-b
+      vlan_id: 200
+    block_non_ipsec: true
+    path_selection:
+      mode: priority
+      candidates:
+        - path-legacy-single-route
+        - path-hub-node-routes
+      constraints:
+        failure_threshold: 3
+        recovery_threshold: 2

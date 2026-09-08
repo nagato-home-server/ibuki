@@ -1,0 +1,32 @@
+tunnels:
+  - id: tun-cert-a-b
+    local_node: site-a
+    remote_node: site-b
+    local_endpoint: 198.51.100.10
+    remote_endpoint: 198.51.100.20
+    local_id: site-a.example
+    remote_id: site-b.example
+    auth_method: pubkey
+    local_cert: site-a.crt
+    remote_cacerts: example-ca.crt
+    local_ts: 10.10.1.0/24
+    remote_ts: 10.10.2.0/24
+
+paths:
+  - id: path-cert-direct
+    source: site-a
+    destination: site-b
+    segments:
+      - id: seg-cert-a-b
+        from: site-a
+        to: site-b
+        tunnel_id: tun-cert-a-b
+
+intents:
+  - id: intent-cert-a-b
+    traffic:
+      source: site-a
+      destination: site-b
+    path_selection:
+      mode: explicit
+      path_id: path-cert-direct

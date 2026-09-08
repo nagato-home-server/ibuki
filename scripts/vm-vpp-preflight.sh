@@ -29,6 +29,22 @@ check_cmd vppctl
 check_cmd ip
 check_service vpp
 
+if [ "${VPP_TOPOLOGY:-edge}" = "hub" ]; then
+  printf '\nHub topology prerequisites:\n'
+  if ip netns list | awk '{print $1}' | grep -qx 'hub-1'; then
+    printf 'ok: namespace hub-1\n'
+  else
+    printf 'missing: namespace hub-1\n'
+    missing=1
+  fi
+  if command -v vpp >/dev/null 2>&1 && vpp --help 2>&1 | grep -q -- '-c'; then
+    printf 'ok: VPP supports per-instance config option\n'
+  else
+    printf 'unknown: VPP per-instance config option\n'
+  fi
+  printf 'note: this preflight does not start a second VPP instance.\n'
+fi
+
 if command -v vppctl >/dev/null 2>&1; then
   printf '\nVPP version:\n'
   vppctl show version 2>/dev/null || true

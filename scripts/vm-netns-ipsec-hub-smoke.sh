@@ -20,7 +20,7 @@ require_socket() {
   ns="$1"
   socket_path="$RUN_BASE/$ns/charon.vici"
   if [ ! -S "$socket_path" ]; then
-    printf 'missing VICI socket: %s. Run sudo sh scripts/vm-netns-ipsec-hub-start.sh first.\n' "$socket_path" >&2
+    printf 'missing VICI socket: %s. Run sudo sh scripts/vm-netns-ipsec.sh hub start first.\n' "$socket_path" >&2
     exit 1
   fi
 }

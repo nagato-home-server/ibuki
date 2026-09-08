@@ -44,6 +44,10 @@ strongSwanとVPPを組み合わせたruntimeを生成し、
    - strongSwanをLinux network namespace内で起動し、direct/hub IPsec tunnelを確立しています。
    - VPPをhost-interface経由でnamespaceへ接続し、controllerが生成したroute planを実VPPへ適用してLAN forwardingを確認しています。
 
+5. **Node能力と運用状態の宣言**
+   - YAMLの`nodes`でNodeのrole、endpoint、capability、administrative stateを表現できます。
+   - Intentの`required_capabilities`で利用可能能力を経路選択条件にでき、disabled Nodeと未知Node参照を拒否・除外します。
+
 ## 3. 実装済みコンポーネント
 
 ### 3.1 C controller core
@@ -112,7 +116,7 @@ Path selection は `src/path_selection.c` にあります。
   - packet loss、latency、hop count、priority、path id などの比較順序に従って候補を比較します。
   - 品質に応じた経路制御の入口です。
 
-現在のevaluated selectionは基本形です。ヒステリシス、ホールドダウン、連続成功回数などの安定化制御はまだ入れていません。
+evaluated selectionには、`failure_threshold` / `recovery_threshold`による連続判定、健全なactive Pathの`hold_down_ms`、品質差分に対する`hysteresis_percent`を実装済みです。単発の揺らぎによる頻繁な切替を抑えます。長時間負荷下での収束時間・切替頻度の実環境評価は今後の課題です。
 
 ### 3.4 Transition model
 
@@ -128,9 +132,9 @@ prepare
 -> completed
 ```
 
-失敗時にはrollbackへ進む骨格もあります。
+失敗時には、apply済みcommandに対応するrollbackだけを逆順で実行する骨格があります。対応情報がない手作成planには従来のrollback listを使う後方互換も残しています。
 
-ただし、このTransition modelは現時点では「controller内部の状態遷移モデル」です。VMで実際にstrongSwan/VPPを動かす部分は、主に生成されたshell scriptが担っています。将来的なproduction `eventnetd` では、このTransition modelと実adapter操作をより密に接続します。
+実runtime接続の中心は`swanctl`／`vppctl` adapterと生成shellですが、libviciの操作・観測・event購読とVPP Binary APIの低レベルtransportも接合境界まで実装しています。command adapterにはVICI socket指定、SA verify、VICI URIへのconnection config load、VPP CLI socket指定、VRF table・VLAN sub-interface準備、切替時のroute削除・旧Path再投入を実装しています。`block_non_ipsec`指定時はTunnel selector限定のXFRM blockも同じadapterから適用します。
 
 ### 3.5 Runtime generator
 
@@ -418,19 +422,43 @@ controllerの判断と説明JSONLを再現できる。
 
 ### 8.1 常駐daemonではない
 
-現在はCLIとscriptで実行します。本番では `eventnetd` が常駐し、config reload、signal handling、event loop、status outputを持つ必要があります。
+`eventnetd` はCLIとして実装済みで、周期評価、標準入力、Linux Unix socket入力、status JSONL、state file復元、file入力の`--reload-config`、再読込失敗時の旧設定維持、Linuxの`--reload-on-sighup`、UID認証、入力レート制限を持ちます。`--batch-size`により複数PathのAgent測定を1ラウンドとして反映でき、`--socket-parallel`では有限N接続をpollで同時受信して共有Controller状態へ統合します。`--socket-accept-count 0`では無期限の逐次受信も行えます。Linuxのstatus JSONL出力は`O_NOFOLLOW`付きdescriptorで開き、symlink・非regular file・group／other書き込み可能な既存ファイルを拒否します。`vm-evaluate.sh telemetry-long`ではAgentのJSONLをeventnetdのfile周期入力へ渡し、reconcile回数・status JSONL・state fileを一括評価できます。`telemetry-live`ではAgentが1件ずつ追記する間にeventnetdが同じファイルを周期再読込します。failure/recoveryイベントの入力とstale telemetryの期限判定もsmokeで検証しています。systemd unitテンプレートは追加済みですが、実環境での権限・socket整合性検証と無期限parallel service化は未実施です。
+
+既定のstrongSwan/VPP command rendererは、YAML由来の識別子・アドレス・route値を許可文字検証してからshell commandへ展開します。YAML loaderは固定長fieldの容量超過も拒否し、識別子の静かな切り詰めによる衝突を防ぎます。管理者が指定する任意template commandは実行権限を持つため、提出後の本番化ではexec引数配列またはVICI/VPP APIへ移行します。
+Linuxの既定command adapterは引数を分割して`execvp`で実行し、shellを介しません。任意templateもshellメタ文字を含まない単純commandは同じexec経路へ送り、パイプ・リダイレクトを明示したtemplateだけを後方互換のshell拡張として残します。WindowsではCLI互換のsystem fallbackを使います。
 
 ### 8.2 状態観測は限定的
 
-現在はscenario harnessでhealthやfailureを注入しています。本番では、strongSwan、VPP、health probeから実際の状態を継続的に観測する必要があります。
+Agentのping telemetryと期限判定は実装済みです。strongSwanはcommand実行・SA verify・libviciの有限／無期限event probeまで、VPPはCLI observerとBinary API transportの接続・受信FD・generic event callback、生成messageのallocate／send／free／availability境界まで実装しています。VPP生成messageによるFIB操作や、各backendの継続counter観測は未実装です。
+AgentはPath IDとsource labelを検証してからJSONLへ出力し、入力値による壊れたrecord生成を防ぎます。
+YAMLから候補Pathを展開する場合は、直列Pathの最後のsegmentに対応するremote endpointを測定し、segmentを持たないlegacy routeでは`route_next_hop`へfallbackします。
+また、`ibuki.event.path.v1` の `path_failed` / `path_recovered` をJSONLから受ける最小イベント境界を実装しています。VICIの有限／無期限probe監視と、libvici有効ビルドのeventnetd `--vici-monitor-*`は同じtelemetry境界へ接続できます。
+strongSwan tunnel状態とVPP route状態についても、`ibuki.event.tunnel.v1`／`ibuki.event.vpp.route.v1`を同じhealth入力へ変換できます。VPP interface状態は`eventnet_vpp_interface_observer`で`ibuki.event.vpp.interface.v1`へ変換でき、VLAN sub-interfaceのidentityとup/downをeventnetdで検証します。実VICIについてはeventnetd内蔵monitorからこのschemaを継続生成でき、VPP API側は生成messageを専用adapterから同じschemaへ変換する段階です。
+ファイル入力とLinux Unix socket入力の両方で、同一接続から複数イベントをbatch単位で連続reconcileするsmokeを用意しています。
+Unix socketは起動時に所有者限定権限で作成し、指定パスに通常ファイルが存在する場合は上書き・削除せず停止します。
+state fileは一時ファイルへ書き込み完了後に置換し、reconcile途中のプロセス終了で前回の復旧情報が空になるリスクを抑えます。復元時は現在のIntentから再構成したtraffic key、Path所属、Pathと全経由Nodeのadministrative stateと照合し、別Intent・候補外・無効化済みPath／Nodeのstateはfail-closedで拒否します。
+VPP observerはVRF付き`show ip fib`について`--table TABLE_ID`で対象tableを選択でき、`table_id`付きroute eventをeventnetdへ入力する評価まで実装しています。不正なtable IDはCLIとtelemetry parserの両方で拒否します。
 
-### 8.3 strongSwan VICI event購読は未実装
+### 8.3 strongSwan VICI event購読は部分実装
 
-現時点では `swanctl` とscriptでSA確立・状態確認を行っています。本番ではVICI eventを購読し、IKE SA / CHILD SA の作成・削除・rekey・DPDなどをcontrollerのObserved Stateへ反映する必要があります。
+現時点では `swanctl --uri` とscriptでSA確立・`--list-sas --child`確認を行っています。`en_strongswan_parse_list_sas`により、`swanctl --list-sas`のchild stateをObserved Tunnelのstate/healthへ変換し、Linuxの`--verify-swanctl`実行時には取得出力をパーサへ渡して`INSTALLED`／`REKEYING`以外を切替失敗として扱います。加えて、libviciがある環境では`eventnet_strongswan_vici_probe`で実socketへのversion request、指定CHILDのinitiate／terminate、SA観測、有限時間の`child-updown` event購読、切断後の有限回再接続、`monitor-forever`による無期限event配信を確認できます。`eventnet_strongswan_vici_controller_probe --monitor`とeventnetdの`--vici-monitor-*`では、child-updown eventをtelemetryとして同じcontrollerへ再reconcileできます。未実装なのは、rekey／DPD等のイベント種別に応じた個別運用ポリシーと、service再起動時の購読復旧固定です。
 
-### 8.4 VPP binary API連携は未実装
+### 8.4 VPP binary API連携は一部実装
 
-現時点では主に `vppctl` commandを生成・実行しています。本番ではVPP API、FIB状態取得、interface/counter observationなどをadapter化する必要があります。
+現時点では主に `vppctl` commandを生成・実行しています。`--verify-vpp`を指定したcommand backendでは、route apply後に`show ip fib`を取得し、期待prefixごとの存在・期待next-hop一致を確認します。explicit routeにinterfaceがある場合はさらに`show interface`でup状態を確認し、VLAN IntentではYAMLの全VPP edgeについて`vpp_interface.VLAN_ID`のup状態も確認します。本番ではVPP API、counter observationなどをさらにadapter化する必要があります。
+VPP Binary APIについては、CMakeの`EVENTNET_ENABLE_VPP_API`オプションとLinux preflightで`vapi/vapi.h`／`libvapi.so`、`libvapiclient.so`、または`libvppapiclient.so`の有無を検出できます。API未導入環境では従来のCLI adapterを使用し、依存が揃った環境でのみ次段階のAPI adapterを有効化します。
+また、VAPI生成コードをcallbackとして注入する`en_vpp_api_adapter`境界を追加しました。controllerのPath遷移とVPP SDKのmessage生成を分離し、SDKの版差をcontroller本体へ漏らさない構成です。
+さらに、`en_vpp_api_apply_path_operations`でPathをroute／VRF／VLANの操作順へ正規化し、生成message callbackへ渡す境界を追加しました。実SDKのmessage codecとVPP FIBへの実反映はLinux SDK確認後の残課題です。
+interface観測callbackとobserver event schemaも同じ境界へ追加し、VLAN sub-interfaceの状態をroute選択前に検証できるようにしています。VLAN付きIntentではroute観測と対象sub-interface観測を同一Pathへ集約し、両方のupが揃わない場合はhealthyにしません。`deny_unmatched_vlan: true`では、VPP親interfaceへのIPv4/IPv6 deny-all ACL生成とcommand backend適用も行います。
+
+VLAN Policyについては、IntentのVLAN IDとrequired waypointを選択結果・selected-path summaryへ保存し、VPP netns planにsub-interface作成・有効化を生成するところまで実装しています。VLAN IDごとのtraffic key分離と、Agent thresholdによるPath維持／fallbackも追加しました。`eventnetd --backend command`でもVPP edgeのsub-interfaceを存在確認し、不足時に作成・有効化してからrouteを投入します。さらに`block_non_ipsec: true`ではTunnel selector限定の双方向XFRM block／rollback planを生成し、常駐command backendのapply経路にも同じblock追加・削除を反映します。`deny_unmatched_vlan: true`ではVPP親interfaceへIPv4/IPv6 deny-all ACLを適用できます。`vpp_edges.allowed_vlans`ではedge単位の一覧外VLANをplan生成・command backendの両方で拒否します。VLANごとのFIB table割当もplan生成とcommand backendへ反映済みです。現行のVPP VLAN smokeではタグ付きLANの実疎通を確認できますが、一覧外VLANの実trunk評価とVPP上の実パケット分離は未検証です。
+また、VLAN指定時の明示routeは `parent.VLAN` sub-interfaceを出力interfaceとして参照します。VPP edgeを含む専用サンプルで生成結果を検証していますが、実VPP上でのタグ付きLAN疎通はLinux VMで別途確認が必要です。
+`deny_unmatched_vlan: true`を指定した場合は、VPP親interfaceへのIPv4/IPv6 deny-all ACL生成とcommand backend適用まで実装済みです。`allowed_vlans`による一覧外VLANの生成時拒否と、VLANごとのFIB table設定も実装済みです。未タグdropの実パケット評価、実trunkの複数VLAN評価、VPP上の実パケット分離は未検証です。
+VPP edgeを含む経路はVPP-only runtimeとして生成でき、選択・統合apply scriptからVPP netns planへ接続します。IPsecとVPPを同一applyで組み合わせる運用は、引き続きLinux VMでの実測が必要です。
+
+### 8.4 Graceful Transitionの範囲
+
+Gracefulでは、旧Pathをdraining状態にして短いpause/drain期間を設け、新Pathへのforwarding切替後に旧Pathのrouteと専用tunnelを撤去します。切替失敗時は既存rollbackへ戻ります。TCPフローの識別・保持を行うFlow Preserveや、Gracefulの通信影響を定量測定する評価は未実装です。
 
 ### 8.5 FRRoutingは未実装
 
@@ -456,19 +484,29 @@ GUIは後段です。現時点ではCLI、script、JSONL、text outputで実証�
 
 未踏提出までに追加すると効果が大きい順:
 
-1. **簡易 `eventnetd --once` / `--loop`**
-   - file eventを読み、scenario harnessではなくcontroller loopとして判断する。
-   - `out/eventnetd/status.jsonl` に状態を出す。
+1. **Linux VMでの再現評価固定**
+   - `route-yaml`、`cert-auth`、event socket、state復元、VLAN tagged trafficを一つの評価手順へまとめる。
+   - pass / partial / skipの根拠と実行時間を保存する。`vm-evaluate.sh`は実行環境manifest（時刻、OS/kernel、git revision、dirty状態、使用バイナリ）も出力する。
 
-2. **提出資料用の図**
+2. **VLAN／VRF／FIBの実反映と遮断評価**
+   - VLAN tagged traffic、explicit route、XFRM block、VLAN対象外dropの差分をLinux VMで確認する。
+
+3. **実transport接合**
+   - strongSwan VICIはprobeからeventnetd stdinへの有限接続とeventnetd自身の有限／無期限購読まで実装済み。次にrekey／DPD運用とVPP Binary API messageを依存環境で実装する。
+   - 既存のcallback adapterとobserver schemaをtransportから利用する。
+
+4. **提出資料用の図**
    - YAML -> Controller -> strongSwan/VPP -> Explain JSONL の流れを1枚にする。
    - direct/fallback/evaluated の切替図を作る。
 
-3. **IPsec/VPP同一packet pipelineの設計メモ**
+5. **IPsec/VPP同一packet pipelineの設計メモ**
    - 現runtimeとの違いを明確にする。
    - XFRM interface、VPP interface、Linux routeの関係を整理する。
 
-4. **scenario case追加**
+6. **Agent／eventnetd長時間評価**
+   - parallel socket、stale／sequence、state復元、再接続backoffを長時間測定する。
+
+7. **scenario case追加**
    - required waypoint
    - forbidden waypoint
    - max RTT violation
@@ -480,5 +518,5 @@ GUIは後段です。現時点ではCLI、script、JSONL、text outputで実証�
 - FRRouting本統合
 - VPP binary API
 - strongSwan VICI event購読
-- systemd化
+- systemd unitの実環境検証（テンプレートは追加済み）
 - 本番HA/永続DB

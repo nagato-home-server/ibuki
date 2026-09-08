@@ -24,12 +24,12 @@ for ns in site-a hub-1 site-b; do
     exit 1
   }
   if [ -s "$DIRECT_RUN_BASE/$ns/charon.pid" ] && kill -0 "$(cat "$DIRECT_RUN_BASE/$ns/charon.pid")" 2>/dev/null; then
-    printf 'direct IPsec charon is still running in %s. Run sudo sh scripts/vm-netns-ipsec-direct-stop.sh first.\n' "$ns" >&2
+    printf 'direct IPsec charon is still running in %s. Run sudo sh scripts/vm-netns-ipsec.sh direct stop first.\n' "$ns" >&2
     exit 1
   fi
 done
 
-sh "$ROOT_DIR/scripts/vm-netns-ipsec-hub-generate.sh"
+sh "$ROOT_DIR/scripts/vm-netns-ipsec.sh" hub generate
 
 for ns in site-a hub-1 site-b; do
   pid_file="$RUN_BASE/$ns/charon.pid"
@@ -140,7 +140,7 @@ initiate_hub() {
   swanctl --initiate --uri "unix://$RUN_BASE/hub-1/charon.vici" --child tun-hub-b
 }
 
-sh "$ROOT_DIR/scripts/vm-netns-ipsec-hub-clean.sh"
+sh "$ROOT_DIR/scripts/vm-netns-ipsec.sh" hub clean
 prepare_node site-a
 prepare_node hub-1
 prepare_node site-b
@@ -154,5 +154,5 @@ configure_routes
 initiate_hub
 
 printf '\nHub IPsec attempt completed. Inspect with:\n'
-printf '  sudo sh scripts/vm-netns-ipsec-hub-status.sh\n'
-printf '  sudo sh scripts/vm-netns-ipsec-hub-smoke.sh\n'
+printf '  sudo sh scripts/vm-netns-ipsec.sh hub status\n'
+printf '  sudo sh scripts/vm-netns-ipsec.sh hub smoke\n'

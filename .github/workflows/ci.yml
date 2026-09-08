@@ -1,0 +1,61 @@
+name: Ibuki CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  linux-core:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build-ci -DCMAKE_BUILD_TYPE=Debug
+      - name: Build
+        run: cmake --build build-ci --parallel
+      - name: Test
+        run: ctest --test-dir build-ci --output-on-failure
+      - name: Install layout
+        run: |
+          cmake --install build-ci --prefix "$PWD/out/ci-install"
+          test -x out/ci-install/libexec/ibuki/eventnetd
+          test -f out/ci-install/lib/systemd/system/ibuki-eventnetd.service
+          test -x out/ci-install/bin/eventnet_agent
+      - name: Check shell syntax
+        run: for script in scripts/*.sh; do sh -n "$script"; done
+      - name: Status output security smoke
+        run: BUILD_DIR=build-ci sh scripts/vm-eventnetd-status-security-smoke.sh samples/linux-vm-netns.yaml
+
+  linux-sanitizers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure Sanitizers
+        run: >-
+          cmake -S . -B build-sanitizers -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
+          -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+      - name: Build Sanitizers
+        run: cmake --build build-sanitizers --parallel
+      - name: Test Sanitizers
+        env:
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1
+        run: ctest --test-dir build-sanitizers --output-on-failure
+
+  windows-core:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build-ci
+      - name: Build
+        run: cmake --build build-ci --config Debug --parallel
+      - name: Test
+        run: ctest --test-dir build-ci -C Debug --output-on-failure
+      - name: Install layout
+        shell: pwsh
+        run: |
+          cmake --install build-ci --config Debug --prefix out/ci-install
+          if (!(Test-Path out/ci-install/libexec/ibuki/eventnetd.exe)) { throw "eventnetd install missing" }
+          if (!(Test-Path out/ci-install/bin/eventnet_agent.exe)) { throw "agent install missing" }

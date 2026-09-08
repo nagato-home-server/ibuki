@@ -1,0 +1,1 @@
+{"schema":"ibuki.telemetry.path_health.v1","path_id":"path-legacy-no-segment","source":"site-a","target":"192.0.2.2","sequence":1,"rtt_ms":8.000,"packet_loss_percent":0.000,"jitter_ms":0.000,"state":"healthy","consecutive_successes":1,"consecutive_failures":0,"timestamp_ms":1}

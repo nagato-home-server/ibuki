@@ -5,6 +5,15 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
+#include <errno.h>
+#include <math.h>
+
+#if !defined(_WIN32)
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
 
 typedef struct {
     char path_id[EN_MAX_ID_LEN];
@@ -38,6 +47,7 @@ static bool append_json_event(const scenario_options_t *options, const en_reconc
 static en_health_state_t parse_health_state(const char *value, bool *ok);
 static en_comparison_key_t parse_comparison_key_arg(const char *value, bool *ok);
 static bool parse_health_arg(const char *text, injected_health_t *health);
+static bool parse_health_number(const char *text, double minimum, double maximum, double *value);
 static void apply_health_override(en_health_probe_mock_t *health_mock, const injected_health_t *health);
 static bool force_selection_mode(en_intent_t *intent, const char *mode);
 static bool force_comparison_order(en_intent_t *intent, const char *value);
@@ -354,7 +364,15 @@ static bool parse_health_arg(const char *text, injected_health_t *health)
         return false;
     }
     *equals = '\0';
-    snprintf(health->path_id, sizeof(health->path_id), "%.63s", buf);
+    if (buf[0] == '\0' || strlen(buf) >= sizeof(health->path_id)) {
+        return false;
+    }
+    for (const unsigned char *cursor = (const unsigned char *)buf; *cursor != '\0'; cursor++) {
+        if (!(isalnum(*cursor) || *cursor == '_' || *cursor == '-' || *cursor == '.')) {
+            return false;
+        }
+    }
+    snprintf(health->path_id, sizeof(health->path_id), "%s", buf);
     health->state = EN_HEALTH_HEALTHY;
     char *cursor = equals + 1;
     while (cursor != NULL && *cursor != '\0') {
@@ -380,16 +398,38 @@ static bool parse_health_arg(const char *text, injected_health_t *health)
                     return false;
                 }
             } else if (strcmp(key, "rtt") == 0 || strcmp(key, "rtt_ms") == 0) {
-                health->rtt_ms = atof(value);
+                if (!parse_health_number(value, 0.0, 86400000.0, &health->rtt_ms)) {
+                    return false;
+                }
                 health->has_rtt_ms = true;
             } else if (strcmp(key, "loss") == 0 || strcmp(key, "packet_loss") == 0) {
-                health->packet_loss_percent = atof(value);
+                if (!parse_health_number(value, 0.0, 100.0, &health->packet_loss_percent)) {
+                    return false;
+                }
                 health->has_packet_loss_percent = true;
+            } else {
+                return false;
             }
         }
         cursor = comma == NULL ? NULL : comma + 1;
     }
     return health->path_id[0] != '\0';
+}
+
+static bool parse_health_number(const char *text, double minimum, double maximum, double *value)
+{
+    char *end = NULL;
+    double parsed;
+    if (text == NULL || text[0] == '\0') {
+        return false;
+    }
+    errno = 0;
+    parsed = strtod(text, &end);
+    if (errno == ERANGE || end == text || *end != '\0' || !isfinite(parsed) || parsed < minimum || parsed > maximum) {
+        return false;
+    }
+    *value = parsed;
+    return true;
 }
 
 static void apply_health_override(en_health_probe_mock_t *health_mock, const injected_health_t *health)
@@ -571,7 +611,24 @@ static int generate_runtime(const char *program, const char *yaml, const en_reco
     }
     printf("generate_runtime_command: %s\n", command);
     fflush(stdout);
-    int rc = system(command);
+    int rc = 0;
+#if defined(_WIN32)
+    rc = system(command);
+#else
+    pid_t child = fork();
+    if (child < 0) return 1;
+    if (child == 0) {
+        if (active_path != NULL && failed_path != NULL && strcmp(active_path, failed_path) == 0) {
+            execlp("sh", "sh", "scripts/vm-generate-netns-runtime.sh", yaml, "--active-path", active_path, "--fail-path", failed_path, (char *)NULL);
+        } else {
+            execlp("sh", "sh", "scripts/vm-generate-netns-runtime.sh", yaml, "--path", result->selected_path, (char *)NULL);
+        }
+        _exit(127);
+    }
+    int wait_status = 0;
+    if (waitpid(child, &wait_status, 0) < 0 || !WIFEXITED(wait_status)) return 1;
+    rc = WEXITSTATUS(wait_status);
+#endif
     if (rc != 0) {
         fprintf(stderr, "generate runtime command failed\n");
         return 1;

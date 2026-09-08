@@ -3,10 +3,26 @@
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/time.h>
+#endif
 
 long long en_now_ms(void)
 {
-    return (long long)time(NULL) * 1000LL;
+#ifdef _WIN32
+    FILETIME file_time;
+    ULARGE_INTEGER ticks;
+    GetSystemTimeAsFileTime(&file_time);
+    ticks.LowPart = file_time.dwLowDateTime;
+    ticks.HighPart = file_time.dwHighDateTime;
+    return (long long)(ticks.QuadPart / 10000ULL) - 11644473600000LL;
+#else
+    struct timeval current_time;
+    if (gettimeofday(&current_time, NULL) != 0) return (long long)time(NULL) * 1000LL;
+    return (long long)current_time.tv_sec * 1000LL + current_time.tv_usec / 1000L;
+#endif
 }
 
 void en_copy_id(char *dst, size_t dst_len, const char *src)
@@ -83,6 +99,45 @@ en_tunnel_t *en_find_desired_tunnel(en_controller_t *controller, const char *tun
     return NULL;
 }
 
+static bool path_nodes_enabled(const en_controller_t *controller, const en_path_t *path)
+{
+    if (controller == NULL || path == NULL || controller->state.node_count == 0) return true;
+    const en_node_t *source = en_find_node(controller, path->source);
+    const en_node_t *destination = en_find_node(controller, path->destination);
+    if (source == NULL || destination == NULL || source->administrative_state != EN_ADMIN_ENABLED ||
+        destination->administrative_state != EN_ADMIN_ENABLED) return false;
+    for (size_t index = 0; index < path->waypoint_count; index++) {
+        const en_node_t *waypoint = en_find_node(controller, path->waypoints[index]);
+        if (waypoint == NULL || waypoint->administrative_state != EN_ADMIN_ENABLED) return false;
+    }
+    for (size_t index = 0; index < path->segment_count; index++) {
+        const en_node_t *from = en_find_node(controller, path->segments[index].from_node);
+        const en_node_t *to = en_find_node(controller, path->segments[index].to_node);
+        if (from == NULL || to == NULL || from->administrative_state != EN_ADMIN_ENABLED ||
+            to->administrative_state != EN_ADMIN_ENABLED) return false;
+    }
+    return true;
+}
+
+const en_path_t *en_controller_find_path(const en_controller_t *controller, const char *path_id)
+{
+    return en_find_path((en_controller_t *)controller, path_id);
+}
+
+bool en_controller_path_nodes_enabled(const en_controller_t *controller, const en_path_t *path)
+{
+    return path_nodes_enabled(controller, path);
+}
+
+const en_node_t *en_find_node(const en_controller_t *controller, const char *node_id)
+{
+    if (controller == NULL || node_id == NULL) return NULL;
+    for (size_t index = 0; index < controller->state.node_count; index++) {
+        if (en_streq(controller->state.nodes[index].node_id, node_id)) return &controller->state.nodes[index];
+    }
+    return NULL;
+}
+
 const char *en_get_applied_path(en_controller_t *controller, const char *traffic_key)
 {
     if (controller == NULL || traffic_key == NULL) {
@@ -96,6 +151,15 @@ const char *en_get_applied_path(en_controller_t *controller, const char *traffic
     return NULL;
 }
 
+long long en_get_applied_since_ms(en_controller_t *controller, const char *traffic_key)
+{
+    if (controller == NULL || traffic_key == NULL) return 0;
+    for (size_t i = 0; i < controller->state.applied_count; i++) {
+        if (en_streq(controller->state.traffic_keys[i], traffic_key)) return controller->state.applied_since_ms[i];
+    }
+    return 0;
+}
+
 void en_set_applied_path(en_controller_t *controller, const char *traffic_key, const char *path_id)
 {
     if (controller == NULL || traffic_key == NULL || path_id == NULL) {
@@ -104,6 +168,7 @@ void en_set_applied_path(en_controller_t *controller, const char *traffic_key, c
     for (size_t i = 0; i < controller->state.applied_count; i++) {
         if (en_streq(controller->state.traffic_keys[i], traffic_key)) {
             en_copy_id(controller->state.applied_paths[i], sizeof(controller->state.applied_paths[i]), path_id);
+            controller->state.applied_since_ms[i] = en_now_ms();
             return;
         }
     }
@@ -111,7 +176,23 @@ void en_set_applied_path(en_controller_t *controller, const char *traffic_key, c
         size_t idx = controller->state.applied_count++;
         en_copy_id(controller->state.traffic_keys[idx], sizeof(controller->state.traffic_keys[idx]), traffic_key);
         en_copy_id(controller->state.applied_paths[idx], sizeof(controller->state.applied_paths[idx]), path_id);
+        controller->state.applied_since_ms[idx] = en_now_ms();
     }
+}
+
+en_error_code_t en_controller_restore_applied_path(en_controller_t *controller, const char *traffic_key, const char *path_id)
+{
+    if (controller == NULL || traffic_key == NULL || path_id == NULL || traffic_key[0] == '\0' || path_id[0] == '\0') {
+        return EN_ERR_INVALID_ARGUMENT;
+    }
+    en_path_t *restored_path = en_find_path(controller, path_id);
+    if (restored_path == NULL) return EN_ERR_NOT_FOUND;
+    if (restored_path->administrative_state != EN_ADMIN_ENABLED || !path_nodes_enabled(controller, restored_path)) {
+        return EN_ERR_STATE_CONFLICT;
+    }
+    restored_path->operational_state = EN_PATH_ACTIVE;
+    en_set_applied_path(controller, traffic_key, path_id);
+    return EN_ERR_NONE;
 }
 
 void en_make_traffic_key(const en_traffic_selector_t *traffic, char *buf, size_t buf_len)
@@ -123,7 +204,11 @@ void en_make_traffic_key(const en_traffic_selector_t *traffic, char *buf, size_t
         buf[0] = '\0';
         return;
     }
-    snprintf(buf, buf_len, "%s->%s", traffic->source, traffic->destination);
+    if (traffic->has_vlan_id) {
+        snprintf(buf, buf_len, "%s->%s|vlan=%d", traffic->source, traffic->destination, traffic->vlan_id);
+    } else {
+        snprintf(buf, buf_len, "%s->%s", traffic->source, traffic->destination);
+    }
 }
 
 const char *en_controller_applied_path(const en_controller_t *controller, const char *traffic_key)

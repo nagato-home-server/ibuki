@@ -9,8 +9,36 @@ en_error_code_t en_render_swanctl_initiate(
     size_t buf_len
 );
 
+en_error_code_t en_render_swanctl_initiate_uri(
+    const en_tunnel_t *tunnel,
+    const char *uri,
+    char *buf,
+    size_t buf_len
+);
+
 en_error_code_t en_render_swanctl_terminate(
     const en_tunnel_t *tunnel,
+    char *buf,
+    size_t buf_len
+);
+
+en_error_code_t en_render_swanctl_terminate_uri(
+    const en_tunnel_t *tunnel,
+    const char *uri,
+    char *buf,
+    size_t buf_len
+);
+
+en_error_code_t en_render_swanctl_list_sas_uri(
+    const en_tunnel_t *tunnel,
+    const char *uri,
+    char *buf,
+    size_t buf_len
+);
+
+en_error_code_t en_render_swanctl_load_conns_uri(
+    const char *uri,
+    const char *filename,
     char *buf,
     size_t buf_len
 );
@@ -28,8 +56,27 @@ en_error_code_t en_render_vpp_route_replace(
     size_t buf_len
 );
 
+en_error_code_t en_render_vpp_route_replace_entry(
+    const en_route_t *route,
+    char *buf,
+    size_t buf_len
+);
+
 en_error_code_t en_render_vpp_route_delete(
     const en_path_t *path,
+    char *buf,
+    size_t buf_len
+);
+
+en_error_code_t en_render_vpp_route_delete_with_tunnel(
+    const en_path_t *path,
+    const en_tunnel_t *egress_tunnel,
+    char *buf,
+    size_t buf_len
+);
+
+en_error_code_t en_render_vpp_route_delete_entry(
+    const en_route_t *route,
     char *buf,
     size_t buf_len
 );

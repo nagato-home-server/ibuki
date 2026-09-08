@@ -1,0 +1,14 @@
+paths:
+  - id: path-empty-no-segment
+    source: site-a
+    destination: site-b
+    priority: 10
+
+intents:
+  - id: intent-empty-no-segment
+    traffic:
+      source: site-a
+      destination: site-b
+    path_selection:
+      mode: explicit
+      path_id: path-empty-no-segment

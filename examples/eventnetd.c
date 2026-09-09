@@ -309,51 +309,29 @@ static void print_result(const en_reconcile_result_t *result)
     }
 }
 
-static void write_json_string(FILE *output, const char *value)
-{
-    const unsigned char *cursor = (const unsigned char *)(value == NULL ? "" : value);
-    fputc('"', output);
-    for (; *cursor != '\0'; cursor++) {
-        switch (*cursor) {
-        case '"': fputs("\\\"", output); break;
-        case '\\': fputs("\\\\", output); break;
-        case '\b': fputs("\\b", output); break;
-        case '\f': fputs("\\f", output); break;
-        case '\n': fputs("\\n", output); break;
-        case '\r': fputs("\\r", output); break;
-        case '\t': fputs("\\t", output); break;
-        default:
-            if (*cursor < 0x20) fprintf(output, "\\u%04x", *cursor);
-            else fputc(*cursor, output);
-            break;
-        }
-    }
-    fputc('"', output);
-}
-
 static void write_status_json(FILE *output, const en_reconcile_result_t *result)
 {
     if (output == NULL) return;
-    fputs("{\"schema\":\"ibuki.status.v1\",\"timestamp_ms\":", output);
-    fprintf(output, "%lld,\"intent_id\":", now_ms());
-    write_json_string(output, result->intent_id);
-    fputs(",\"selected_path\":", output);
-    write_json_string(output, result->selected_path);
-    fputs(",\"transition_state\":", output);
-    write_json_string(output, en_transition_state_name(result->transition_state));
-    fputs(",\"reason\":", output);
-    write_json_string(output, result->explanation.reason);
-    fputs(",\"excluded\":[", output);
-    for (size_t index = 0; index < result->explanation.excluded_count; index++) {
-        if (index > 0) fputc(',', output);
-        fputs("{\"path_id\":", output);
-        write_json_string(output, result->explanation.excluded_path_ids[index]);
-        fputs(",\"reason\":", output);
-        write_json_string(output, result->explanation.excluded_reasons[index]);
-        fputc('}', output);
+    yyjson_mut_doc *document = yyjson_mut_doc_new(NULL);
+    yyjson_mut_val *root = document == NULL ? NULL : yyjson_mut_obj(document);
+    yyjson_mut_val *excluded = root == NULL ? NULL : yyjson_mut_obj_add_arr(document, root, "excluded");
+    bool valid = root != NULL && excluded != NULL &&
+        yyjson_mut_obj_add_str(document, root, "schema", "ibuki.status.v1") &&
+        yyjson_mut_obj_add_sint(document, root, "timestamp_ms", now_ms()) &&
+        yyjson_mut_obj_add_str(document, root, "intent_id", result->intent_id) &&
+        yyjson_mut_obj_add_str(document, root, "selected_path", result->selected_path) &&
+        yyjson_mut_obj_add_str(document, root, "transition_state", en_transition_state_name(result->transition_state)) &&
+        yyjson_mut_obj_add_str(document, root, "reason", result->explanation.reason);
+    for (size_t index = 0; valid && index < result->explanation.excluded_count; index++) {
+        yyjson_mut_val *item = yyjson_mut_arr_add_obj(document, excluded);
+        valid = item != NULL && yyjson_mut_obj_add_str(document, item, "path_id", result->explanation.excluded_path_ids[index]) &&
+            yyjson_mut_obj_add_str(document, item, "reason", result->explanation.excluded_reasons[index]);
     }
-    fputs("]}\n", output);
-    fflush(output);
+    if (valid) {
+        yyjson_mut_doc_set_root(document, root);
+        (void)en_json_mut_doc_write_line(output, document);
+    }
+    yyjson_mut_doc_free(document);
 }
 
 static bool valid_state_field(const char *value, bool path_id)

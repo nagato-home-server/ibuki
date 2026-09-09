@@ -1,6 +1,7 @@
 #include "eventnet/controller.h"
 #include "eventnet/mock_adapters.h"
 #include "eventnet/yaml_config.h"
+#include "eventnet/json_output.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -52,7 +53,6 @@ static void apply_health_override(en_health_probe_mock_t *health_mock, const inj
 static bool force_selection_mode(en_intent_t *intent, const char *mode);
 static bool force_comparison_order(en_intent_t *intent, const char *value);
 static void print_result(const en_reconcile_result_t *result);
-static void json_string(FILE *file, const char *value);
 static int generate_runtime(const char *program, const char *yaml, const en_reconcile_result_t *result, const char *active_path, const char *failed_path);
 static void usage(const char *program);
 
@@ -516,81 +516,41 @@ static bool append_json_event(const scenario_options_t *options, const en_reconc
         fprintf(stderr, "failed to open explain json: %s\n", options->explain_json);
         return false;
     }
-    fprintf(file, "{");
-    fprintf(file, "\"schema\":\"eventnet.scenario.explain.v1\",");
-    fprintf(file, "\"scenario_step\":");
-    json_string(file, step_name == NULL ? "single" : step_name);
-    fprintf(file, ",");
-    fprintf(file, "\"yaml\":");
-    json_string(file, options->filename);
-    fprintf(file, ",");
-    fprintf(file, "\"intent\":");
-    json_string(file, result->intent_id);
-    fprintf(file, ",");
-    fprintf(file, "\"selection_mode\":");
-    json_string(file, options->mode == NULL ? "yaml" : options->mode);
-    fprintf(file, ",");
-    fprintf(file, "\"active_path\":");
-    json_string(file, options->active_path == NULL ? "" : options->active_path);
-    fprintf(file, ",");
-    fprintf(file, "\"failed_path\":");
-    json_string(file, options->failed_path == NULL ? "" : options->failed_path);
-    fprintf(file, ",");
-    fprintf(file, "\"selected_path\":");
-    json_string(file, result->selected_path);
-    fprintf(file, ",");
-    fprintf(file, "\"transition_state\":");
-    json_string(file, en_transition_state_name(result->transition_state));
-    fprintf(file, ",");
-    fprintf(file, "\"reason\":");
-    json_string(file, result->explanation.reason);
-    fprintf(file, ",");
-    fprintf(file, "\"expect\":");
-    json_string(file, options->expected_path == NULL ? "" : options->expected_path);
-    fprintf(file, ",");
-    fprintf(file, "\"result\":");
-    json_string(file, expect_pass ? "pass" : "fail");
-    fprintf(file, ",");
-    fprintf(file, "\"excluded\":[");
-    for (size_t i = 0; i < result->explanation.excluded_count; i++) {
-        fprintf(file, "%s{\"path_id\":", i == 0 ? "" : ",");
-        json_string(file, result->explanation.excluded_path_ids[i]);
-        fprintf(file, ",\"reason\":");
-        json_string(file, result->explanation.excluded_reasons[i]);
-        fprintf(file, "}");
+    yyjson_mut_doc *document = yyjson_mut_doc_new(NULL);
+    yyjson_mut_val *root = document == NULL ? NULL : yyjson_mut_obj(document);
+    yyjson_mut_val *excluded = root == NULL ? NULL : yyjson_mut_obj_add_arr(document, root, "excluded");
+    yyjson_mut_val *injected = root == NULL ? NULL : yyjson_mut_obj_add_arr(document, root, "injected_health");
+    bool valid = root != NULL && excluded != NULL && injected != NULL &&
+        yyjson_mut_obj_add_str(document, root, "schema", "eventnet.scenario.explain.v1") &&
+        yyjson_mut_obj_add_str(document, root, "scenario_step", step_name == NULL ? "single" : step_name) &&
+        yyjson_mut_obj_add_str(document, root, "yaml", options->filename) &&
+        yyjson_mut_obj_add_str(document, root, "intent", result->intent_id) &&
+        yyjson_mut_obj_add_str(document, root, "selection_mode", options->mode == NULL ? "yaml" : options->mode) &&
+        yyjson_mut_obj_add_str(document, root, "active_path", options->active_path == NULL ? "" : options->active_path) &&
+        yyjson_mut_obj_add_str(document, root, "failed_path", options->failed_path == NULL ? "" : options->failed_path) &&
+        yyjson_mut_obj_add_str(document, root, "selected_path", result->selected_path) &&
+        yyjson_mut_obj_add_str(document, root, "transition_state", en_transition_state_name(result->transition_state)) &&
+        yyjson_mut_obj_add_str(document, root, "reason", result->explanation.reason) &&
+        yyjson_mut_obj_add_str(document, root, "expect", options->expected_path == NULL ? "" : options->expected_path) &&
+        yyjson_mut_obj_add_str(document, root, "result", expect_pass ? "pass" : "fail");
+    for (size_t i = 0; valid && i < result->explanation.excluded_count; i++) {
+        yyjson_mut_val *item = yyjson_mut_arr_add_obj(document, excluded);
+        valid = item != NULL && yyjson_mut_obj_add_str(document, item, "path_id", result->explanation.excluded_path_ids[i]) &&
+            yyjson_mut_obj_add_str(document, item, "reason", result->explanation.excluded_reasons[i]);
     }
-    fprintf(file, "],");
-    fprintf(file, "\"injected_health\":[");
-    for (size_t i = 0; i < options->injected_count; i++) {
+    for (size_t i = 0; valid && i < options->injected_count; i++) {
         const injected_health_t *health = &options->injected[i];
-        fprintf(file, "%s{\"path_id\":", i == 0 ? "" : ",");
-        json_string(file, health->path_id);
-        fprintf(file, ",\"state\":");
-        json_string(file, en_health_state_name(health->state));
-        fprintf(file, ",\"rtt_ms\":%.3f,\"packet_loss_percent\":%.3f}", health->has_rtt_ms ? health->rtt_ms : 10.0, health->has_packet_loss_percent ? health->packet_loss_percent : 0.0);
+        yyjson_mut_val *item = yyjson_mut_arr_add_obj(document, injected);
+        valid = item != NULL && yyjson_mut_obj_add_str(document, item, "path_id", health->path_id) &&
+            yyjson_mut_obj_add_str(document, item, "state", en_health_state_name(health->state)) &&
+            yyjson_mut_obj_add_real(document, item, "rtt_ms", health->has_rtt_ms ? health->rtt_ms : 10.0) &&
+            yyjson_mut_obj_add_real(document, item, "packet_loss_percent", health->has_packet_loss_percent ? health->packet_loss_percent : 0.0);
     }
-    fprintf(file, "]}\n");
+    if (valid) { yyjson_mut_doc_set_root(document, root); valid = en_json_mut_doc_write_line(file, document) == EN_ERR_NONE; }
+    yyjson_mut_doc_free(document);
     fclose(file);
     printf("explain_json: %s\n", options->explain_json);
-    return true;
-}
-
-static void json_string(FILE *file, const char *value)
-{
-    fputc('"', file);
-    if (value != NULL) {
-        for (const char *cursor = value; *cursor != '\0'; cursor++) {
-            if (*cursor == '"' || *cursor == '\\') {
-                fputc('\\', file);
-                fputc(*cursor, file);
-            } else if (*cursor == '\n') {
-                fputs("\\n", file);
-            } else {
-                fputc(*cursor, file);
-            }
-        }
-    }
-    fputc('"', file);
+    return valid;
 }
 
 static int generate_runtime(const char *program, const char *yaml, const en_reconcile_result_t *result, const char *active_path, const char *failed_path)

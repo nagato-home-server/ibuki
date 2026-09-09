@@ -86,7 +86,28 @@ void en_health_probe_mock_set(en_health_probe_mock_t *mock, en_path_health_t hea
                 current->packet_loss_percent = current->state == EN_HEALTH_FAILED ? 100.0 : 0.0;
                 current->last_updated_ms = health.last_updated_ms;
             } else {
+                bool had_route_observation = current->has_route_observation;
+                en_health_state_t previous_route_state = current->route_state;
+                bool had_interface_observation = current->has_interface_observation;
+                en_health_state_t previous_interface_state = current->interface_state;
+                bool had_table_id = current->has_table_id;
+                int previous_table_id = current->table_id;
+                char previous_destination_prefix[EN_MAX_ID_LEN] = {0};
+                char previous_next_hop[EN_MAX_ID_LEN] = {0};
+                char previous_interface_name[EN_MAX_ID_LEN] = {0};
+                snprintf(previous_destination_prefix, sizeof(previous_destination_prefix), "%s", current->observed_destination_prefix);
+                snprintf(previous_next_hop, sizeof(previous_next_hop), "%s", current->observed_next_hop);
+                snprintf(previous_interface_name, sizeof(previous_interface_name), "%s", current->observed_interface_name);
                 *current = health;
+                current->has_route_observation = had_route_observation;
+                current->route_state = previous_route_state;
+                current->has_interface_observation = had_interface_observation;
+                current->interface_state = previous_interface_state;
+                current->has_table_id = had_table_id;
+                current->table_id = previous_table_id;
+                snprintf(current->observed_destination_prefix, sizeof(current->observed_destination_prefix), "%s", previous_destination_prefix);
+                snprintf(current->observed_next_hop, sizeof(current->observed_next_hop), "%s", previous_next_hop);
+                snprintf(current->observed_interface_name, sizeof(current->observed_interface_name), "%s", previous_interface_name);
             }
             return;
         }

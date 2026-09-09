@@ -38,6 +38,9 @@ for ns in site-a site-b; do
     old_wrapper_pid=$(cat "$wrapper_pid_file")
     kill "$old_wrapper_pid" 2>/dev/null || true
   fi
+  for namespace_pid in $(ip netns pids "$ns" 2>/dev/null || true); do
+    kill "$namespace_pid" 2>/dev/null || true
+  done
 done
 
 prepare_node() {
@@ -69,7 +72,7 @@ start_node() {
   fi
 
   printf 'Starting charon in namespace %s...\n' "$ns"
-  ip netns exec "$ns" unshare -m -- sh -c "mount --bind '$run_dir' /run && '$CHARON'" >/dev/null 2>>"$log_file" &
+  ip netns exec "$ns" unshare -m -- sh -c "mount --bind '$run_dir' /run && '$CHARON'" >"$log_file" 2>&1 &
   echo "$!" > "$run_dir/eventnet-wrapper.pid"
 
   for _ in 1 2 3 4 5 6 7 8 9 10; do
@@ -86,6 +89,10 @@ start_node() {
 
   printf 'charon did not create VICI socket for %s. Log follows:\n' "$ns" >&2
   cat "$log_file" >&2 || true
+  printf 'charon-related namespace state for %s:\n' "$ns" >&2
+  ip netns pids "$ns" >&2 || true
+  printf 'runtime directory for %s:\n' "$ns" >&2
+  ls -la "$run_dir" >&2 || true
   exit 1
 }
 

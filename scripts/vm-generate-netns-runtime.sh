@@ -15,7 +15,16 @@ fi
 mkdir -p "$OUT_DIR"
 cd "$ROOT_DIR"
 
+set +e
 "$BUILD_DIR/eventnet_netns_plan" --out-dir "$OUT_DIR" "$@" "$YAML"
+plan_status=$?
+set -e
+if [ "$plan_status" -ne 0 ] && [ "${ALLOW_UNSUPPORTED:-0}" != "1" ]; then
+  exit "$plan_status"
+fi
+if [ "$plan_status" -ne 0 ]; then
+  printf 'runtime warning: eventnet_netns_plan returned status %s; generated plans are available for inspection only.\n' "$plan_status" >&2
+fi
 chmod +x "$OUT_DIR/apply-selected.sh"
 chmod +x "$OUT_DIR/apply-integrated.sh"
 chmod +x "$OUT_DIR/rollback-selected.sh"

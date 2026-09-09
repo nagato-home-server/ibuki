@@ -16,6 +16,8 @@ if(UNIX AND EVENTNET_ENABLE_HARDENING)
 endif()
 
 add_library(eventnet_controller
+    third_party/yyjson/yyjson.c
+    src/json_output.c
     src/audit.c
     src/command_adapters.c
     src/controller.c
@@ -37,7 +39,7 @@ add_library(eventnet_controller
     src/vpp_adapter_mock.c
 )
 
-target_include_directories(eventnet_controller PUBLIC include)
+target_include_directories(eventnet_controller PUBLIC include third_party/yyjson)
 if(UNIX)
     target_link_libraries(eventnet_controller PUBLIC m)
 endif()

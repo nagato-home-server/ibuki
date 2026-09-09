@@ -15,9 +15,21 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#if !defined(_WIN32)
+#include <sys/stat.h>
+#endif
 
 #define ASSERT_TRUE(expr) do { if (!(expr)) { fprintf(stderr, "assert failed: %s:%d: %s\n", __FILE__, __LINE__, #expr); exit(1); } } while (0)
 #define ASSERT_STREQ(left, right) ASSERT_TRUE(strcmp((left), (right)) == 0)
+
+static void make_test_file_private(const char *filename)
+{
+#if !defined(_WIN32)
+    (void)chmod(filename, 0600);
+#else
+    (void)filename;
+#endif
+}
 
 typedef struct {
     int install_count;
@@ -600,11 +612,11 @@ static void test_applied_path_can_be_restored(void)
     ASSERT_TRUE(en_controller_restore_applied_path(controller, "site-a->site-c", "path-via-hub") == EN_ERR_NONE);
     ASSERT_STREQ(en_controller_applied_path(controller, "site-a->site-b"), "path-direct");
     ASSERT_STREQ(en_controller_applied_path(controller, "site-a->site-c"), "path-via-hub");
-    ASSERT_TRUE(en_find_path(controller, "path-direct")->operational_state == EN_PATH_ACTIVE);
-    ASSERT_TRUE(en_find_path(controller, "path-via-hub")->operational_state == EN_PATH_ACTIVE);
-    en_find_path(controller, "path-direct")->administrative_state = EN_ADMIN_DISABLED;
+    ASSERT_TRUE(en_controller_find_path(controller, "path-direct")->operational_state == EN_PATH_ACTIVE);
+    ASSERT_TRUE(en_controller_find_path(controller, "path-via-hub")->operational_state == EN_PATH_ACTIVE);
+    ((en_path_t *)en_controller_find_path(controller, "path-direct"))->administrative_state = EN_ADMIN_DISABLED;
     ASSERT_TRUE(en_controller_restore_applied_path(controller, "site-a->site-b", "path-direct") == EN_ERR_STATE_CONFLICT);
-    en_find_path(controller, "path-direct")->administrative_state = EN_ADMIN_ENABLED;
+    ((en_path_t *)en_controller_find_path(controller, "path-direct"))->administrative_state = EN_ADMIN_ENABLED;
     ASSERT_TRUE(en_controller_restore_applied_path(controller, "site-a->site-b", "missing") == EN_ERR_NOT_FOUND);
     en_controller_destroy(controller);
 }
@@ -844,7 +856,11 @@ static void test_vlan_health_requires_route_and_interface(void)
 
 static void test_telemetry_file_schema_validation(void)
 {
+#if defined(_WIN32)
     const char *filename = "eventnet-test-telemetry.jsonl";
+#else
+    const char *filename = "/tmp/eventnet-test-telemetry.jsonl";
+#endif
     const char *valid_record = "{\"schema\":\"ibuki.telemetry.path_health.v1\",\"path_id\":\"path-direct\",\"state\":\"healthy\",\"rtt_ms\":10,\"packet_loss_percent\":0,\"jitter_ms\":0,\"timestamp_ms\":1000}\n";
     en_path_health_t records[EN_MAX_PATHS] = {0};
     size_t record_count = 0;
@@ -854,6 +870,7 @@ static void test_telemetry_file_schema_validation(void)
     fputs("\n", file);
     fputs(valid_record, file);
     fclose(file);
+    make_test_file_private(filename);
     ASSERT_TRUE(en_telemetry_load_jsonl(filename, records, EN_MAX_PATHS, &record_count, error, sizeof(error)) == EN_ERR_NONE);
     ASSERT_TRUE(record_count == 1);
 
@@ -861,6 +878,7 @@ static void test_telemetry_file_schema_validation(void)
     ASSERT_TRUE(file != NULL);
     fputs("{\"schema\":\"ibuki.event.vpp.interface.v1\",\"path_id\":\"path-direct\",\"interface_name\":\"ipsec0\",\"state\":\"up\",\"timestamp_ms\":1000}\n", file);
     fclose(file);
+    make_test_file_private(filename);
     record_count = 0;
     ASSERT_TRUE(en_telemetry_load_jsonl(filename, records, EN_MAX_PATHS, &record_count, error, sizeof(error)) == EN_ERR_NONE);
     ASSERT_TRUE(record_count == 1 && records[0].state == EN_HEALTH_HEALTHY);
@@ -870,6 +888,7 @@ static void test_telemetry_file_schema_validation(void)
     ASSERT_TRUE(file != NULL);
     fputs("not-json\n", file);
     fclose(file);
+    make_test_file_private(filename);
     record_count = 0;
     ASSERT_TRUE(en_telemetry_load_jsonl(filename, records, EN_MAX_PATHS, &record_count, error, sizeof(error)) == EN_ERR_INVALID_ARGUMENT);
 
@@ -877,6 +896,7 @@ static void test_telemetry_file_schema_validation(void)
     ASSERT_TRUE(file != NULL);
     fputs("{\"schema\":\"ibuki.telemetry.path_health.v2\",\"path_id\":\"path-direct\"}\n", file);
     fclose(file);
+    make_test_file_private(filename);
     record_count = 0;
     ASSERT_TRUE(en_telemetry_load_jsonl(filename, records, EN_MAX_PATHS, &record_count, error, sizeof(error)) == EN_ERR_INVALID_ARGUMENT);
     remove(filename);
@@ -1714,7 +1734,16 @@ static void test_yaml_loader_supports_multiport_vpp_edges(void)
           "  - node_id: hub-1\n"
           "    port_id: hub-b\n"
           "    vpp_interface: host-vpp-hub-b\n"
-          "    next_hop: 172.16.4.2\n", file);
+          "    next_hop: 172.16.4.2\n"
+          "paths:\n"
+          "  - id: path-a-b\n"
+          "    source: site-a\n"
+          "    destination: site-b\n"
+          "    routes:\n"
+          "      - id: route-a-b\n"
+          "        node_id: hub-1\n"
+          "        destination_prefix: 10.0.2.0/24\n"
+          "        next_hop: 172.16.3.2\n", file);
     fclose(file);
     en_yaml_config_t config = {0};
     char error[256] = {0};

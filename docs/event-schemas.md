@@ -1,5 +1,9 @@
 # Ibuki Event Schemas
 
+Telemetry JSONLの構文解析は、`third_party/yyjson`を利用している。JSONLのフレーミングは`eventnetd`と`en_telemetry_load_jsonl()`が担当し、1行のJSON構文解析はyyjsonが担当する。Ibuki固有のschema、Path/Tunnel/Route identity、数値範囲、timestamp、freshnessの検証はController側で継続して行う。
+
+yyjsonはリポジトリ内に同梱しているため、外部ライブラリの事前インストールなしにCMakeビルドと`vm-build-cc.sh`の両方を実行できる。
+
 IbukiのAgent、observer、`eventnetd`が交換するJSON Linesの契約です。1行が1つのJSON objectであり、空行以外は必ず既知のschemaを持つ必要があります。
 
 ## 1. Path health telemetry

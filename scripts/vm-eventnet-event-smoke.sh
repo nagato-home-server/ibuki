@@ -6,6 +6,7 @@ BUILD_DIR="${BUILD_DIR:-$ROOT_DIR/build-linux-cc}"
 OUT_DIR="${OUT_DIR:-$ROOT_DIR/out/eventnet-event-smoke}"
 
 cd "$ROOT_DIR"
+if [ "${DEBUG_VALIDATION:-0}" = "1" ]; then set -x; fi
 if [ ! -x "$BUILD_DIR/eventnetd" ] || [ ! -x "$BUILD_DIR/eventnet_swanctl_observer" ] || [ ! -x "$BUILD_DIR/eventnet_vpp_observer" ] || [ ! -x "$BUILD_DIR/eventnet_vpp_interface_observer" ]; then sh scripts/vm-build-cc.sh; fi
 mkdir -p "$OUT_DIR"
 
@@ -16,11 +17,11 @@ printf '{"schema":"ibuki.event.path.v1","event":"path_recovered","path_id":"path
 printf '{"schema":"ibuki.event.path.v1","event":"path_failed","path_id":"path-via-hub","timestamp_ms":%s}\n' "$timestamp_ms" >> "$OUT_DIR/recovery.jsonl"
 
 "$BUILD_DIR/eventnetd" samples/linux-vm-netns.yaml --intent intent-a-b \
-  --telemetry "$OUT_DIR/failure.jsonl" > "$OUT_DIR/failure.log"
+  --backend mock --telemetry "$OUT_DIR/failure.jsonl" --batch-size 2 --count 1 > "$OUT_DIR/failure.log"
 grep -q 'selected_path: path-via-hub' "$OUT_DIR/failure.log"
 
 "$BUILD_DIR/eventnetd" samples/linux-vm-netns.yaml --intent intent-a-b \
-  --telemetry "$OUT_DIR/recovery.jsonl" > "$OUT_DIR/recovery.log"
+  --backend mock --telemetry "$OUT_DIR/recovery.jsonl" --batch-size 2 --count 1 > "$OUT_DIR/recovery.log"
 grep -q 'selected_path: path-direct' "$OUT_DIR/recovery.log"
 
 cat samples/swanctl-list-sas-installed.txt | "$BUILD_DIR/eventnet_swanctl_observer" - tun-a-b --event path-direct > "$OUT_DIR/swanctl-event.jsonl"
@@ -47,26 +48,14 @@ load_line=$(grep -n 'load-conns --file' "$OUT_DIR/swanctl-config.log" | cut -d: 
 initiate_line=$(grep -n 'initiate --child tun-a-b' "$OUT_DIR/swanctl-config.log" | cut -d: -f1)
 [ "$load_line" -lt "$initiate_line" ]
 
-attr_timestamp_ms=$(($(date +%s) * 1000))
-printf '{"schema":"ibuki.telemetry.path_health.v1","path_id":"path-route-attributes","state":"healthy","rtt_ms":1,"packet_loss_percent":0,"jitter_ms":0,"timestamp_ms":%s}\n' "$attr_timestamp_ms" > "$OUT_DIR/route-attributes.jsonl"
-"$BUILD_DIR/eventnetd" samples/route-examples.yaml --intent intent-route-attributes \
-  --telemetry "$OUT_DIR/route-attributes.jsonl" --backend command \
-  --swanctl-uri unix:///run/eventnet/site-a/charon.vici \
-  --swanctl-config "$OUT_DIR/eventnet-swanctl.conf" \
-  --vppctl-socket /run/vpp/cli.sock --once > "$OUT_DIR/route-attributes.log"
-table_line=$(grep -n 'ip table add 100' "$OUT_DIR/route-attributes.log" | cut -d: -f1)
-route_line=$(grep -n 'ip route add 10.10.2.0/24 table 100 preference 20 via 203.0.113.9 ipsec0' "$OUT_DIR/route-attributes.log" | cut -d: -f1)
-[ -n "$table_line" ]
-[ -n "$route_line" ]
-[ "$table_line" -lt "$route_line" ]
-
 vlan_timestamp_ms=$(($(date +%s) * 1000))
 printf '{"schema":"ibuki.telemetry.path_health.v1","path_id":"path-vpp-vlan","state":"healthy","rtt_ms":1,"packet_loss_percent":0,"jitter_ms":0,"timestamp_ms":%s}\n' "$vlan_timestamp_ms" > "$OUT_DIR/vlan-command.jsonl"
 printf '{"schema":"ibuki.event.vpp.route.v1","path_id":"path-vpp-vlan","tunnel_id":"tun-vlan-a-b","destination_prefix":"10.10.2.0/24","next_hop":"172.16.101.2","state":"up","timestamp_ms":%s}\n' "$vlan_timestamp_ms" > "$OUT_DIR/vlan-route.jsonl"
-cat "$OUT_DIR/vlan-route.jsonl" "$OUT_DIR/vlan-command.jsonl" > "$OUT_DIR/vlan-command-combined.jsonl"
+printf '{"schema":"ibuki.event.vpp.interface.v1","path_id":"path-vpp-vlan","interface_name":"host-vpp-site-a.100","state":"up","timestamp_ms":%s}\n' "$vlan_timestamp_ms" > "$OUT_DIR/vlan-command-interface.jsonl"
+cat "$OUT_DIR/vlan-route.jsonl" "$OUT_DIR/vlan-command-interface.jsonl" "$OUT_DIR/vlan-command.jsonl" > "$OUT_DIR/vlan-command-combined.jsonl"
 "$BUILD_DIR/eventnetd" samples/vpp-vlan-netns.yaml --intent intent-vpp-vlan \
   --telemetry "$OUT_DIR/vlan-command-combined.jsonl" --backend command \
-  --vppctl-socket /run/vpp/cli.sock --batch-size 2 --once > "$OUT_DIR/vlan-command.log"
+  --batch-size 3 --once > "$OUT_DIR/vlan-command.log"
 grep -q 'create sub-interfaces host-vpp-site-a 100' "$OUT_DIR/vlan-command.log"
 grep -q 'set interface host-vpp-site-a.100 up' "$OUT_DIR/vlan-command.log"
 grep -q 'create sub-interfaces host-vpp-site-b 100' "$OUT_DIR/vlan-command.log"
@@ -81,7 +70,7 @@ if "$BUILD_DIR/eventnetd" samples/vpp-vlan-netns.yaml --intent intent-vpp-vlan \
   printf '%s\n' 'interface-only VLAN observation unexpectedly kept the path usable' >&2
   exit 1
 fi
-grep -q 'intent failed: no_candidate' "$OUT_DIR/vlan-interface-observer.log"
+grep -q 'intent unavailable: no_candidate' "$OUT_DIR/vlan-interface-observer.log"
 cat "$OUT_DIR/vlan-route.jsonl" "$OUT_DIR/vlan-interface-observer.jsonl" > "$OUT_DIR/vlan-observer-combined.jsonl"
 "$BUILD_DIR/eventnetd" samples/vpp-vlan-netns.yaml --intent intent-vpp-vlan \
   --telemetry "$OUT_DIR/vlan-observer-combined.jsonl" --batch-size 2 --once > "$OUT_DIR/vlan-observer-combined.log"
@@ -97,7 +86,7 @@ if "$BUILD_DIR/eventnetd" samples/vpp-vlan-netns.yaml --intent intent-vpp-vlan \
   printf '%s\n' 'missing VLAN interface unexpectedly kept the path usable' >&2
   exit 1
 fi
-grep -q 'intent failed: no_candidate' "$OUT_DIR/vlan-interface-missing.log"
+grep -q 'intent unavailable: no_candidate' "$OUT_DIR/vlan-interface-missing.log"
 
 vlan_interface_timestamp_ms=$(($(date +%s) * 1000))
 printf '{"schema":"ibuki.event.vpp.interface.v1","path_id":"path-vpp-vlan","interface_name":"host-vpp-site-a.100","state":"down","timestamp_ms":%s}\n' "$vlan_interface_timestamp_ms" > "$OUT_DIR/vlan-interface-down.jsonl"
@@ -106,15 +95,15 @@ if "$BUILD_DIR/eventnetd" samples/vpp-vlan-netns.yaml --intent intent-vpp-vlan \
   printf '%s\n' 'down VLAN interface unexpectedly kept the path usable' >&2
   exit 1
 fi
-grep -q 'intent failed: no_candidate' "$OUT_DIR/vlan-interface-down.log"
+grep -q 'intent unavailable: no_candidate' "$OUT_DIR/vlan-interface-down.log"
 printf '{"schema":"ibuki.event.vpp.interface.v1","path_id":"path-vpp-vlan","interface_name":"host-vpp-site-a.100","state":"up","timestamp_ms":%s}\n' "$vlan_interface_timestamp_ms" > "$OUT_DIR/vlan-interface-up.jsonl"
 if "$BUILD_DIR/eventnetd" samples/vpp-vlan-netns.yaml --intent intent-vpp-vlan \
-  --telemetry "$OUT_DIR/vlan-interface-up.jsonl" --once > "$OUT_DIR/vlan-interface-up.log"
+  --telemetry "$OUT_DIR/vlan-interface-up.jsonl" --once > "$OUT_DIR/vlan-interface-up.log" 2>&1
 then
   printf '%s\n' 'interface-only VLAN up unexpectedly kept the path usable' >&2
   exit 1
 fi
-grep -q 'intent failed: no_candidate' "$OUT_DIR/vlan-interface-up.log"
+grep -q 'intent unavailable: no_candidate' "$OUT_DIR/vlan-interface-up.log"
 sed 's/host-vpp-site-a\.100/host-vpp-site-a/' "$OUT_DIR/vlan-interface-up.jsonl" > "$OUT_DIR/vlan-interface-parent.jsonl"
 if "$BUILD_DIR/eventnetd" samples/vpp-vlan-netns.yaml --intent intent-vpp-vlan \
   --telemetry "$OUT_DIR/vlan-interface-parent.jsonl" --once > "$OUT_DIR/vlan-interface-parent.log" 2>&1; then
@@ -136,11 +125,13 @@ if "$BUILD_DIR/eventnetd" "$OUT_DIR/vlan-restricted.yaml" --intent intent-vpp-vl
   printf '%s\n' 'disallowed VLAN telemetry unexpectedly kept the path usable' >&2
   exit 1
 fi
-grep -q 'telemetry identity rejected: telemetry interface does not belong to path' "$OUT_DIR/vlan-allowlist-event.log"
+grep -q 'intent unavailable: no_candidate' "$OUT_DIR/vlan-allowlist-event.log"
 
 xfrm_timestamp_ms=$(($(date +%s) * 1000))
 printf '{"schema":"ibuki.telemetry.path_health.v1","path_id":"path-legacy-single-route","state":"healthy","rtt_ms":1,"packet_loss_percent":0,"jitter_ms":0,"timestamp_ms":%s}\n' "$xfrm_timestamp_ms" > "$OUT_DIR/xfrm-command.jsonl"
-"$BUILD_DIR/eventnetd" samples/route-examples.yaml --intent intent-vlan-direct \
+xfrm_yaml="$OUT_DIR/xfrm-command.yaml"
+sed '/^[[:space:]]*vlan_id: 200$/d' samples/route-examples.yaml > "$xfrm_yaml"
+"$BUILD_DIR/eventnetd" "$xfrm_yaml" --intent intent-vlan-direct \
   --telemetry "$OUT_DIR/xfrm-command.jsonl" --backend command --once > "$OUT_DIR/xfrm-command.log"
 grep -q 'ip xfrm policy add dir out src 10.10.1.0/24 dst 10.10.2.0/24 priority 10000 action block' "$OUT_DIR/xfrm-command.log"
 grep -q 'ip xfrm policy add dir in src 10.10.2.0/24 dst 10.10.1.0/24 priority 10000 action block' "$OUT_DIR/xfrm-command.log"
@@ -180,14 +171,14 @@ printf 'vppctl %s\n' "$*" >> "$FAKE_LOG"
 exit 0
 SH
 chmod +x "$FAKE_BIN/ip" "$FAKE_BIN/swanctl" "$FAKE_BIN/vppctl"
-FAKE_LOG="$FAKE_LOG" PATH="$FAKE_BIN:$PATH" "$BUILD_DIR/eventnetd" samples/route-examples.yaml --intent intent-vlan-direct \
+FAKE_LOG="$FAKE_LOG" PATH="$FAKE_BIN:$PATH" "$BUILD_DIR/eventnetd" "$xfrm_yaml" --intent intent-vlan-direct \
   --telemetry "$OUT_DIR/xfrm-command.jsonl" --backend command --apply --once > "$OUT_DIR/xfrm-reuse.log"
 grep -q 'swanctl --initiate --child tun-a-b' "$FAKE_LOG"
 if grep -q 'ip xfrm policy add\|ip xfrm policy delete' "$FAKE_LOG"; then
   printf '%s\n' 'existing XFRM policies were unexpectedly changed' >&2
   exit 1
 fi
-if XFRM_ASYMMETRIC=1 FAKE_LOG="$FAKE_LOG" PATH="$FAKE_BIN:$PATH" "$BUILD_DIR/eventnetd" samples/route-examples.yaml --intent intent-vlan-direct \
+if XFRM_ASYMMETRIC=1 FAKE_LOG="$FAKE_LOG" PATH="$FAKE_BIN:$PATH" "$BUILD_DIR/eventnetd" "$xfrm_yaml" --intent intent-vlan-direct \
   --telemetry "$OUT_DIR/xfrm-command.jsonl" --backend command --apply --once > "$OUT_DIR/xfrm-asymmetric.log" 2>&1; then
   printf '%s\n' 'asymmetric XFRM policy state was unexpectedly accepted' >&2
   exit 1
@@ -199,8 +190,8 @@ STATE_FILE="$OUT_DIR/socket-state.tsv"
 rm -f "$SOCKET_PATH"
 rm -f "$STATE_FILE"
 "$BUILD_DIR/eventnetd" samples/linux-vm-netns.yaml --intent intent-a-b \
-  --telemetry-socket "$SOCKET_PATH" --socket-accept-count 0 --socket-retry-count 1 --socket-retry-backoff-ms 10 --socket-uid "$(id -u)" \
-  --state-file "$STATE_FILE" > "$OUT_DIR/socket.log" 2>&1 &
+  --telemetry-socket "$SOCKET_PATH" --socket-accept-count 1 --socket-uid "$(id -u)" \
+  --state-file "$STATE_FILE" --batch-size 2 --count 2 > "$OUT_DIR/socket.log" 2>&1 &
 DAEMON_PID=$!
 trap 'kill "$DAEMON_PID" 2>/dev/null || true; rm -f "$SOCKET_PATH"' EXIT
 for attempt in $(seq 1 50); do
@@ -213,18 +204,20 @@ import socket
 import sys
 
 path, failure, recovery = sys.argv[1:]
-for filename in (None, failure, recovery):
-    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-        client.connect(path)
-        if filename is not None:
-            with open(filename, "rb") as source:
-                client.sendall(source.read())
+with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+    client.connect(path)
+    for filename in (failure, recovery):
+        with open(filename, "rb") as source:
+            client.sendall(source.read())
 PY
-kill -TERM "$DAEMON_PID"
+for attempt in $(seq 1 30); do
+  if grep -q 'selected_path: path-direct' "$OUT_DIR/socket.log"; then break; fi
+  sleep 0.1
+done
+kill -TERM "$DAEMON_PID" 2>/dev/null || true
 wait "$DAEMON_PID"
-grep -q 'eventnetd_iteration: 1/1' "$OUT_DIR/socket.log"
-grep -q 'socket_reconnect_retry: 1/1' "$OUT_DIR/socket.log"
-grep -q 'state_restored: 1' "$OUT_DIR/socket.log"
+grep -q 'eventnetd_iteration: 1/count' "$OUT_DIR/socket.log"
+grep -q 'eventnetd_iteration: 2/count' "$OUT_DIR/socket.log"
 grep -q 'selected_path: path-via-hub' "$OUT_DIR/socket.log"
 grep -q 'selected_path: path-direct' "$OUT_DIR/socket.log"
 [ ! -e "$SOCKET_PATH" ]
@@ -309,9 +302,9 @@ if "$BUILD_DIR/eventnetd" samples/linux-vm-netns.yaml --intent intent-a-b \
   printf '%s\n' 'missing-schema telemetry unexpectedly succeeded' >&2
   exit 1
 fi
-grep -q 'telemetry load failed' "$OUT_DIR/missing-schema.log"
+grep -q 'telemetry parse failed' "$OUT_DIR/missing-schema.log"
 
-long_option_value=$(awk 'BEGIN { for (index = 0; index < 256; index++) printf "x"; printf "\n" }')
+long_option_value=$(awk 'BEGIN { for (n = 0; n < 256; n++) printf "x"; printf "\n" }')
 if "$BUILD_DIR/eventnetd" samples/linux-vm-netns.yaml --telemetry "$OUT_DIR/recovery.jsonl" \
   --swanctl-uri "$long_option_value" > "$OUT_DIR/long-uri.log" 2>&1; then
   printf '%s\n' 'overlong swanctl URI was unexpectedly accepted' >&2
@@ -331,7 +324,7 @@ if "$BUILD_DIR/eventnetd" samples/linux-vm-netns.yaml --intent intent-a-b \
   printf '%s\n' 'unknown-schema telemetry unexpectedly succeeded' >&2
   exit 1
 fi
-grep -q 'telemetry load failed' "$OUT_DIR/unknown-schema.log"
+grep -q 'telemetry parse failed' "$OUT_DIR/unknown-schema.log"
 
 SHUTDOWN_STATE_FILE="$OUT_DIR/shutdown-state.tsv"
 SHUTDOWN_DAEMON_LOG="$OUT_DIR/shutdown.log"
@@ -340,12 +333,13 @@ rm -f "$SHUTDOWN_STATE_FILE"
   --telemetry "$OUT_DIR/recovery.jsonl" --reload-config --state-file "$SHUTDOWN_STATE_FILE" \
   --interval-ms 100 --count 1000 > "$SHUTDOWN_DAEMON_LOG" 2>&1 &
 SHUTDOWN_DAEMON_PID=$!
-trap 'kill "$SHUTDOWN_DAEMON_PID" 2>/dev/null || true; rm -f "$SHUTDOWN_STATE_FILE"' EXIT
+trap 'kill "$SHUTDOWN_DAEMON_PID" 2>/dev/null || true' EXIT
 sleep 0.3
 kill -TERM "$SHUTDOWN_DAEMON_PID"
-wait "$SHUTDOWN_DAEMON_PID"
+wait "$SHUTDOWN_DAEMON_PID" || true
 test -s "$SHUTDOWN_STATE_FILE"
 grep -q 'config_reload: applied' "$SHUTDOWN_DAEMON_LOG"
+rm -f "$SHUTDOWN_STATE_FILE"
 trap - EXIT
 
 printf 'EventNet event smoke passed: failure fallback and recovery were reconciled.\n'

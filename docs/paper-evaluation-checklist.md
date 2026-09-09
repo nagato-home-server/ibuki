@@ -117,3 +117,21 @@ ctest --test-dir build --output-on-failure -R 'eventnet_state_wrong_(intent|path
 - 実trunk上のVLAN間分離。
 
 これらはcontrollerのPath選択・telemetry・runtime plan生成の検証結果と混同せず、将来実装として報告します。
+
+## 7. 論文執筆へ移る判定
+
+root不要の論文前validationは、次の一括実行で全caseがpassすることを基準にします。
+
+```sh
+BUILD_DIR=build-paper-baseline sh scripts/vm-paper-validation.sh samples/linux-vm-netns.yaml
+```
+
+root不要範囲で確認する項目は、C単体、全Path選択方式、route YAML網羅、Agent／telemetry、閾値・安定性、event reconcile、socket、reload、status／plan security、Shell構文です。2026-09-08時点でこれらは全件passしています。
+
+rootが必要な次の項目は、Linux VMの依存とsudoが利用できるときだけ追加実行します。
+
+```sh
+sudo BUILD_DIR=build-paper-baseline RUN_RUNTIME=1 sh scripts/vm-paper-validation.sh samples/linux-vm-netns.yaml
+```
+
+VPP未導入は`skip`、charonがVICI socketを生成しない場合はruntime環境の`fail`として、controller coreの完了判定とは分けて記録します。これらの追加評価が未完了でも、論文では「実装済みの制御層」と「未検証または未実装の実backend運用」を明確に分離して記述します。

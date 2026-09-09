@@ -235,6 +235,10 @@ en_error_code_t en_apply_plan_write_swanctl_conf(
 #if defined(_WIN32)
     FILE *file = fopen(filename, "w");
 #else
+    struct stat existing_stat;
+    if (lstat(filename, &existing_stat) == 0 && S_ISLNK(existing_stat.st_mode)) {
+        return EN_ERR_STATE_CONFLICT;
+    }
     char temporary_filename[512] = {0};
     if (snprintf(temporary_filename, sizeof(temporary_filename), "%s.tmp-plan-%ld", filename, (long)getpid()) >= (int)sizeof(temporary_filename)) {
         return EN_ERR_INVALID_ARGUMENT;

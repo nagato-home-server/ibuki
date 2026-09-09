@@ -3,6 +3,7 @@
 #endif
 
 #include "eventnet/vpp_observer.h"
+#include "eventnet/json_output.h"
 
 #include <ctype.h>
 #include <limits.h>
@@ -165,25 +166,23 @@ en_error_code_t en_vpp_route_observation_to_event_json(const en_vpp_route_observ
         output == NULL || output_len == 0 || timestamp_ms < 0) return EN_ERR_INVALID_ARGUMENT;
     const char *state = observation->present ? "up" : "down";
     bool has_route_details = observation->destination_prefix[0] != '\0' && observation->next_hop[0] != '\0';
-    int written;
-    if (observation->table_id >= 0 && has_route_details) {
-        written = snprintf(output, output_len,
-            "{\"schema\":\"ibuki.event.vpp.route.v1\",\"path_id\":\"%s\",\"tunnel_id\":\"%s\",\"destination_prefix\":\"%s\",\"next_hop\":\"%s\",\"table_id\":%d,\"state\":\"%s\",\"timestamp_ms\":%lld}\n",
-            path_id, route_id, observation->destination_prefix, observation->next_hop, observation->table_id, state, timestamp_ms);
-    } else if (observation->table_id >= 0) {
-        written = snprintf(output, output_len,
-            "{\"schema\":\"ibuki.event.vpp.route.v1\",\"path_id\":\"%s\",\"tunnel_id\":\"%s\",\"table_id\":%d,\"state\":\"%s\",\"timestamp_ms\":%lld}\n",
-            path_id, route_id, observation->table_id, state, timestamp_ms);
-    } else if (has_route_details) {
-        written = snprintf(output, output_len,
-            "{\"schema\":\"ibuki.event.vpp.route.v1\",\"path_id\":\"%s\",\"tunnel_id\":\"%s\",\"destination_prefix\":\"%s\",\"next_hop\":\"%s\",\"state\":\"%s\",\"timestamp_ms\":%lld}\n",
-            path_id, route_id, observation->destination_prefix, observation->next_hop, state, timestamp_ms);
-    } else {
-        written = snprintf(output, output_len,
-            "{\"schema\":\"ibuki.event.vpp.route.v1\",\"path_id\":\"%s\",\"tunnel_id\":\"%s\",\"state\":\"%s\",\"timestamp_ms\":%lld}\n",
-            path_id, route_id, state, timestamp_ms);
+    yyjson_mut_doc *document = yyjson_mut_doc_new(NULL);
+    yyjson_mut_val *root = document == NULL ? NULL : yyjson_mut_obj(document);
+    bool valid = root != NULL && yyjson_mut_obj_add_str(document, root, "schema", "ibuki.event.vpp.route.v1") &&
+        yyjson_mut_obj_add_str(document, root, "path_id", path_id) && yyjson_mut_obj_add_str(document, root, "tunnel_id", route_id);
+    if (valid && has_route_details) valid = yyjson_mut_obj_add_str(document, root, "destination_prefix", observation->destination_prefix) && yyjson_mut_obj_add_str(document, root, "next_hop", observation->next_hop);
+    if (valid && observation->table_id >= 0) valid = yyjson_mut_obj_add_int(document, root, "table_id", observation->table_id);
+    if (valid) valid = yyjson_mut_obj_add_str(document, root, "state", state) && yyjson_mut_obj_add_sint(document, root, "timestamp_ms", timestamp_ms);
+    if (!valid) { yyjson_mut_doc_free(document); return EN_ERR_INVALID_ARGUMENT; }
+    yyjson_mut_doc_set_root(document, root);
+    en_error_code_t result = en_json_mut_doc_to_buffer(document, output, output_len);
+    yyjson_mut_doc_free(document);
+    if (result == EN_ERR_NONE) {
+        size_t length = strlen(output);
+        if (length + 2 > output_len) return EN_ERR_INVALID_ARGUMENT;
+        output[length] = '\n'; output[length + 1] = '\0';
     }
-    return written > 0 && (size_t)written < output_len ? EN_ERR_NONE : EN_ERR_INVALID_ARGUMENT;
+    return result;
 }
 
 en_error_code_t en_vpp_interface_observation_to_event_json(const en_vpp_interface_observation_t *observation,
@@ -191,8 +190,20 @@ en_error_code_t en_vpp_interface_observation_to_event_json(const en_vpp_interfac
 {
     if (observation == NULL || path_id == NULL || !valid_label(path_id) || observation->interface_name[0] == '\0' ||
         !valid_label(observation->interface_name) || output == NULL || output_len == 0 || timestamp_ms < 0) return EN_ERR_INVALID_ARGUMENT;
-    int written = snprintf(output, output_len,
-        "{\"schema\":\"ibuki.event.vpp.interface.v1\",\"path_id\":\"%s\",\"interface_name\":\"%s\",\"state\":\"%s\",\"timestamp_ms\":%lld}\n",
-        path_id, observation->interface_name, observation->present && observation->up ? "up" : "down", timestamp_ms);
-    return written > 0 && (size_t)written < output_len ? EN_ERR_NONE : EN_ERR_INVALID_ARGUMENT;
+    yyjson_mut_doc *document = yyjson_mut_doc_new(NULL);
+    yyjson_mut_val *root = document == NULL ? NULL : yyjson_mut_obj(document);
+    bool valid = root != NULL && yyjson_mut_obj_add_str(document, root, "schema", "ibuki.event.vpp.interface.v1") &&
+        yyjson_mut_obj_add_str(document, root, "path_id", path_id) && yyjson_mut_obj_add_str(document, root, "interface_name", observation->interface_name) &&
+        yyjson_mut_obj_add_str(document, root, "state", observation->present && observation->up ? "up" : "down") &&
+        yyjson_mut_obj_add_sint(document, root, "timestamp_ms", timestamp_ms);
+    if (!valid) { yyjson_mut_doc_free(document); return EN_ERR_INVALID_ARGUMENT; }
+    yyjson_mut_doc_set_root(document, root);
+    en_error_code_t result = en_json_mut_doc_to_buffer(document, output, output_len);
+    yyjson_mut_doc_free(document);
+    if (result == EN_ERR_NONE) {
+        size_t length = strlen(output);
+        if (length + 2 > output_len) return EN_ERR_INVALID_ARGUMENT;
+        output[length] = '\n'; output[length + 1] = '\0';
+    }
+    return result;
 }

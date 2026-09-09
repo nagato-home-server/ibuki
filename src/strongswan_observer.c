@@ -3,6 +3,7 @@
 #endif
 
 #include "eventnet/strongswan_observer.h"
+#include "eventnet/json_output.h"
 
 #include <ctype.h>
 #include <stdio.h>
@@ -132,8 +133,24 @@ en_error_code_t en_strongswan_observation_to_event_json(const en_strongswan_sa_o
     if (observation == NULL || path_id == NULL || !valid_label(path_id) || !valid_label(observation->child_id) || output == NULL || output_len == 0 || timestamp_ms < 0) return EN_ERR_INVALID_ARGUMENT;
     const char *state = observation->state == EN_TUNNEL_ESTABLISHED ? "installed" :
         observation->state == EN_TUNNEL_REKEYING ? "rekeying" : "failed";
-    int written = snprintf(output, output_len,
-        "{\"schema\":\"ibuki.event.tunnel.v1\",\"path_id\":\"%s\",\"tunnel_id\":\"%s\",\"state\":\"%s\",\"timestamp_ms\":%lld}\n",
-        path_id, observation->child_id, state, timestamp_ms);
-    return written > 0 && (size_t)written < output_len ? EN_ERR_NONE : EN_ERR_INVALID_ARGUMENT;
+    yyjson_mut_doc *document = yyjson_mut_doc_new(NULL);
+    yyjson_mut_val *root = document == NULL ? NULL : yyjson_mut_obj(document);
+    if (root == NULL || !yyjson_mut_obj_add_str(document, root, "schema", "ibuki.event.tunnel.v1") ||
+        !yyjson_mut_obj_add_str(document, root, "path_id", path_id) ||
+        !yyjson_mut_obj_add_str(document, root, "tunnel_id", observation->child_id) ||
+        !yyjson_mut_obj_add_str(document, root, "state", state) ||
+        !yyjson_mut_obj_add_sint(document, root, "timestamp_ms", timestamp_ms)) {
+        yyjson_mut_doc_free(document);
+        return EN_ERR_INVALID_ARGUMENT;
+    }
+    yyjson_mut_doc_set_root(document, root);
+    en_error_code_t result = en_json_mut_doc_to_buffer(document, output, output_len);
+    yyjson_mut_doc_free(document);
+    if (result == EN_ERR_NONE) {
+        size_t length = strlen(output);
+        if (length + 2 > output_len) return EN_ERR_INVALID_ARGUMENT;
+        output[length] = '\n';
+        output[length + 1] = '\0';
+    }
+    return result;
 }

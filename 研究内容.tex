@@ -400,6 +400,12 @@ GUIは本研究の新規性そのものではないが，最終的なIbukiでは
 
 実装済みの主な要素は，YAMLによるIntent（要求記述）/経路/Tunnel/VPP edgeの記述，Priority/Fallback/Evaluated Selection，Explain JSONL出力，swanctl設定生成，VPP route plan生成，Linux network namespace testbed，Direct/Hub IPsec 基本疎通試験，VPP host-interface forwarding 基本疎通試験，Controller生成planによるIPsec/VPP統合runtime 基本疎通試験である．これらの実装および評価結果は，GitHub repository \url{https://github.com/nagato-home-server/ibuki} に整理して公開している．図\ref{fig:github-qr}に，repositoryへアクセスするためのQR codeを示す．表\ref{tab:files}に主要ファイルを示す．
 
+試作実装の状態管理には固定長配列を用いている．Node，Path，Tunnel，Segment，Event，VPP edge等について最大要素数を定義し，設定読み込み時に上限を超えた入力を拒否する．これにより，動的メモリの所有権と解放処理を限定し，Linux VM上の再現実験における挙動を安定させている．一方で，この設計は大規模ネットワークへそのまま拡張できることを意味しない．拠点数やPath数の増加に伴い，容量上限とIDの線形検索が問題となるため，実運用化では動的配列，ID index，永続State Store，Controller間の状態同期が必要となる．
+
+strongSwanおよびVPPとの連携は，それぞれのOSSの内部実装をIbukiへ取り込むのではなく，Adapter境界を通じて外部Backendを制御する方式とした．strongSwanについては，command adapterが\texttt{swanctl}による設定読込，CHILD SAの開始・停止・確認を行い，libviciを用いるVICI adapterがcharonとの操作，状態観測，\texttt{child-updown} event購読を行う．IKEv2，暗号処理，IPsec SA，Linux XFRMの適用そのものはstrongSwanへ委譲し，Ibukiはその結果をObserved Tunnel Stateとして扱う．
+
+VPPについては，command adapterが\texttt{vppctl}によるroute，VLAN sub-interface，FIB table，ACLの適用と検証を行う．また，VPP Binary APIについては，Transport層が接続，message送受信，FD dispatch，event callbackの境界を提供し，API adapterがroute，VLAN，VRF操作をcallbackとして受け取る構成とした．ただし，VPPの対象バージョンに依存する生成message codecは未実装であり，VPP Binary APIによる実FIB操作は今後の実装課題である．この構造により，Path SelectionおよびPath Transitionの上位論理はstrongSwanやVPP固有のAPI型から分離される．
+
 \begin{figure}[h]
 \centering
 \includegraphics[width=35mm]{ibuki-github-qr.png}

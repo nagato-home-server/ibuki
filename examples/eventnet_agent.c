@@ -4,6 +4,7 @@
 
 #include "eventnet/types.h"
 #include "eventnet/yaml_config.h"
+#include "eventnet/json_output.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -236,12 +237,25 @@ static void write_measurement(FILE *output, const agent_options_t *options, cons
     int sequence, double rtt_ms, double loss_percent, double jitter_ms, int consecutive_successes, int consecutive_failures)
 {
     const char *state = loss_percent >= 100.0 ? "failed" : "healthy";
-    fprintf(output, "{\"schema\":\"ibuki.telemetry.path_health.v1\",\"path_id\":\"%s\"", path_id);
-    if (options->source != NULL) fprintf(output, ",\"source\":\"%s\"", options->source);
-    fprintf(output,
-        ",\"target\":\"%s\",\"sequence\":%d,\"rtt_ms\":%.3f,\"packet_loss_percent\":%.3f,\"jitter_ms\":%.3f,\"state\":\"%s\",\"consecutive_successes\":%d,\"consecutive_failures\":%d,\"timestamp_ms\":%lld}\n",
-        target, sequence, rtt_ms, loss_percent, jitter_ms, state, consecutive_successes, consecutive_failures, now_ms());
-    fflush(output);
+    yyjson_mut_doc *document = yyjson_mut_doc_new(NULL);
+    yyjson_mut_val *root = document == NULL ? NULL : yyjson_mut_obj(document);
+    bool valid = root != NULL && yyjson_mut_obj_add_str(document, root, "schema", "ibuki.telemetry.path_health.v1") &&
+        yyjson_mut_obj_add_str(document, root, "path_id", path_id);
+    if (valid && options->source != NULL) valid = yyjson_mut_obj_add_str(document, root, "source", options->source);
+    if (valid) valid = yyjson_mut_obj_add_str(document, root, "target", target) &&
+        yyjson_mut_obj_add_int(document, root, "sequence", sequence) &&
+        yyjson_mut_obj_add_real(document, root, "rtt_ms", rtt_ms) &&
+        yyjson_mut_obj_add_real(document, root, "packet_loss_percent", loss_percent) &&
+        yyjson_mut_obj_add_real(document, root, "jitter_ms", jitter_ms) &&
+        yyjson_mut_obj_add_str(document, root, "state", state) &&
+        yyjson_mut_obj_add_int(document, root, "consecutive_successes", consecutive_successes) &&
+        yyjson_mut_obj_add_int(document, root, "consecutive_failures", consecutive_failures) &&
+        yyjson_mut_obj_add_sint(document, root, "timestamp_ms", now_ms());
+    if (valid) {
+        yyjson_mut_doc_set_root(document, root);
+        (void)en_json_mut_doc_write_line(output, document);
+    }
+    yyjson_mut_doc_free(document);
 }
 
 static void wait_ms(int milliseconds)

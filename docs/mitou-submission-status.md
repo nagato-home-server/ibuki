@@ -4,6 +4,14 @@
 
 単に「どの機能があるか」を列挙するだけでなく、なぜその機能を実装したのか、どのような操作で何を確認できるのか、そして本番実装へ進む際に何が残っているのかを明確にします。
 
+## 論文執筆へ移行する現在地（2026-09-08）
+
+論文前に固定する実装範囲は完了しています。WSL上の非root基準validationで、C単体、scenario、全route YAML、Agent telemetry、閾値・安定性、イベント再選択、UNIX socket、設定reload、出力security、Shell構文がすべてpassしました。`event-reconcile`ではdirect障害時のhub fallback、回復時のdirect復帰、VLAN route／interface観測、XFRM遮断、共有socket batch、state保存まで確認しています。
+
+論文執筆前に必ず保存する成果物は、validationの`summary.csv`、各caseのログ、scenario Explain JSONL、生成されたselected path／runtime planです。rootが必要なVPP実適用、XFRM cleartext遮断、IPsec+VPP統合direct／fallbackはLinux VMで再実行できる追加実証ですが、今回の論文前C実装の完了条件には含めず、未実行時は`skip`、起動環境不整合時は`fail`として記録します。
+
+したがって、ここからの必須作業は論文の実験条件・結果・図表・考察の記述です。VPP Binary APIの版依存codec、strongSwanのrekey／DPD運用、FRR／BGP、HA、Graceful／Flow Preserve、実trunk分離、GUIは未踏期間以降の拡張であり、論文前に追加実装しません。
+
 ## 1. プロジェクト概要
 
 PathWeaver は、strongSwan、VPP、将来的には FRRouting などの既存ネットワークOSSを、宣言的なIntentとイベント駆動の制御ロジックで束ねるためのネットワーク制御基盤です。

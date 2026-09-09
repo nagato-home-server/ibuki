@@ -11,6 +11,7 @@
 #include "eventnet/command_adapters.h"
 #include "eventnet/telemetry.h"
 #include "eventnet/yaml_config.h"
+#include "eventnet/json_output.h"
 #if defined(EVENTNET_ENABLE_STRONGSWAN_VICI)
 #include "eventnet/strongswan_vici_adapter.h"
 #include "eventnet/strongswan_vici_client.h"
@@ -1220,7 +1221,10 @@ int main(int argc, char **argv)
     }
     if (reload_config) {
         en_yaml_config_t active_config = config;
-        if (reload_on_sighup) printf("sighup_reload: waiting\n");
+        if (reload_on_sighup) {
+            printf("sighup_reload: waiting\n");
+            fflush(stdout);
+        }
         for (int iteration = 0; (reload_on_sighup ? (count == 0 || iteration < count) : iteration < count) && !shutdown_requested(); iteration++) {
             if (reload_on_sighup) {
 #if !defined(_WIN32)

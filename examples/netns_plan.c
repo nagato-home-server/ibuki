@@ -358,7 +358,7 @@ static int write_vpp_route_plan(const char *filename, const en_yaml_config_t *co
         first_tunnel = find_tunnel(config, path->segments[0].tunnel_id);
         last_tunnel = find_tunnel(config, path->segments[path->segment_count - 1].tunnel_id);
     }
-    if ((path->segment_count > 0 && (first_tunnel == NULL || last_tunnel == NULL)) ||
+    if ((path->segment_count > 0 && !path->routes_explicit && (first_tunnel == NULL || last_tunnel == NULL)) ||
         (path->segment_count == 0 && ((!path->routes_explicit &&
             (path->route_destination_prefix[0] == '\0' || path->route_next_hop[0] == '\0')) ||
             (path->routes_explicit && path->route_count == 0)))) {
@@ -465,7 +465,7 @@ static int write_vpp_netns_route_plan(const char *filename, const en_yaml_config
         first_tunnel = find_tunnel(config, path->segments[0].tunnel_id);
         last_tunnel = find_tunnel(config, path->segments[path->segment_count - 1].tunnel_id);
     }
-    if ((path->segment_count > 0 && (first_tunnel == NULL || last_tunnel == NULL)) ||
+    if ((path->segment_count > 0 && !path->routes_explicit && (first_tunnel == NULL || last_tunnel == NULL)) ||
         (path->segment_count == 0 && ((!path->routes_explicit &&
             (path->route_destination_prefix[0] == '\0' || path->route_next_hop[0] == '\0')) ||
             (path->routes_explicit && path->route_count == 0)))) {

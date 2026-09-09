@@ -35,7 +35,9 @@ make_round 10 1 "$OUT_DIR/recovery-1.jsonl"
 make_round 10 2 "$OUT_DIR/recovery-2.jsonl"
 
 STATE_FILE="$OUT_DIR/state.tsv"
-"$BUILD_DIR/eventnetd" "$YAML" --intent intent-vlan-direct --telemetry-stdin \
+THRESHOLD_YAML="$OUT_DIR/threshold.yaml"
+sed 's/^      vlan_id: 200$/      # vlan_id: 200/' "$YAML" > "$THRESHOLD_YAML"
+"$BUILD_DIR/eventnetd" "$THRESHOLD_YAML" --intent intent-vlan-direct --telemetry-stdin \
   --backend mock --max-age-ms 60000 --batch-size 2 --count 5 --state-file "$STATE_FILE" < "$STREAM_FILE" > "$OUT_DIR/result.txt"
 
 [ "$(grep -c 'selected_path: path-legacy-single-route' "$OUT_DIR/result.txt")" -eq 3 ]

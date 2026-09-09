@@ -10,6 +10,8 @@ LDLIBS="${LDLIBS:--lm}"
 mkdir -p "$BUILD_DIR"
 
 COMMON_SRCS="
+third_party/yyjson/yyjson.c
+src/json_output.c
 src/apply_plan.c
 src/audit.c
 src/command_adapters.c
@@ -33,17 +35,27 @@ src/yaml_config.c
 
 cd "$ROOT_DIR"
 
-$CC $CFLAGS -Iinclude $COMMON_SRCS examples/yaml_demo.c -o "$BUILD_DIR/eventnet_yaml_demo" $LDLIBS
-$CC $CFLAGS -Iinclude $COMMON_SRCS examples/netns_plan.c -o "$BUILD_DIR/eventnet_netns_plan" $LDLIBS
-$CC $CFLAGS -Iinclude $COMMON_SRCS examples/eventnet_scenario.c -o "$BUILD_DIR/eventnet_scenario" $LDLIBS
-$CC $CFLAGS -Iinclude $COMMON_SRCS examples/demo.c -o "$BUILD_DIR/eventnet_demo" $LDLIBS
-$CC $CFLAGS -Iinclude $COMMON_SRCS examples/eventnet_agent.c -o "$BUILD_DIR/eventnet_agent" $LDLIBS
-$CC $CFLAGS -Iinclude $COMMON_SRCS examples/eventnetd.c -o "$BUILD_DIR/eventnetd" $LDLIBS
-$CC $CFLAGS -Iinclude $COMMON_SRCS examples/swanctl_observer.c -o "$BUILD_DIR/eventnet_swanctl_observer" $LDLIBS
-$CC $CFLAGS -Iinclude $COMMON_SRCS examples/vpp_observer.c -o "$BUILD_DIR/eventnet_vpp_observer" $LDLIBS
-$CC $CFLAGS -Iinclude $COMMON_SRCS examples/vpp_interface_observer.c -o "$BUILD_DIR/eventnet_vpp_interface_observer" $LDLIBS
-$CC $CFLAGS -Iinclude $COMMON_SRCS tests/test_controller.c -o "$BUILD_DIR/eventnet_tests" $LDLIBS
+compile_target() {
+    target=$1
+    source=$2
+    printf '[build] compiling %s\n' "$target"
+    $CC $CFLAGS -Iinclude -Ithird_party/yyjson $COMMON_SRCS "$source" -o "$BUILD_DIR/$target" $LDLIBS
+    printf '[build] completed %s\n' "$target"
+}
 
+compile_target eventnet_yaml_demo examples/yaml_demo.c
+compile_target eventnet_netns_plan examples/netns_plan.c
+compile_target eventnet_scenario examples/eventnet_scenario.c
+compile_target eventnet_demo examples/demo.c
+compile_target eventnet_agent examples/eventnet_agent.c
+compile_target eventnetd examples/eventnetd.c
+compile_target eventnet_swanctl_observer examples/swanctl_observer.c
+compile_target eventnet_vpp_observer examples/vpp_observer.c
+compile_target eventnet_vpp_interface_observer examples/vpp_interface_observer.c
+compile_target eventnet_tests tests/test_controller.c
+
+printf '[build] running eventnet_tests\n'
 "$BUILD_DIR/eventnet_tests"
+printf '[build] eventnet_tests passed\n'
 
 printf '\nBuilt without CMake: %s\n' "$BUILD_DIR"

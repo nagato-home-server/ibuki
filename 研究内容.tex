@@ -138,6 +138,8 @@ Ibukiは，Intent（要求記述） API，Policy Engine，Path Selection Engine�
 
 また，初期実装の対象はIPsec/IKEv2とstrongSwanを中心に置く．WireGuard，GRE，VXLAN，Cloud VPN等を現時点で同等に実装済みであるとは主張しない．これらは，Adapter/Plugin機構を通じた将来の拡張可能性を示すBackend候補である．ただし，本研究および未踏期間の実装範囲はL3制御に限定し，L2延伸やL2フレームのカプセル化は対象外とする．したがって提案手法の要点は，「すべてのTunnel実装を既に扱える」ことではなく，「下位実装差をAdapterとCapability（能力情報）へ押し出し，上位のPath ModelとTransition Modelを再利用可能にする構造を定める」ことにある．
 
+関連システムであるASANO System Version 1.0は，IPsecに加えてVXLAN，EVPN，DMVPN，NHRPを組み合わせたオーバーレイネットワークを構成し，拠点間のL2延伸を実現している．これに対してIbukiはL2延伸を目的とせず，L3のPath Selection，Telemetry，状態遷移，およびVPP route制御に対象を限定する．IbukiのL3トンネル方式はGRE over IPsecを第一候補とし，VTIはGREヘッダを追加しないroute-based IPsecの代替Backendとして位置付ける．この差分により，本研究ではASANOのL2機能を再実装するのではなく，異なるTunnel実装を共通の制御モデルで扱う構造を評価する．
+
 \begin{table}[h]
 \centering
 \caption{Ibukiの主要構成要素}

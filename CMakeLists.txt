@@ -257,6 +257,11 @@ add_test(NAME eventnet_yaml_vlan_hub_waypoint
         -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
         -DOUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/vlan-hub-plan-test
         -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/check-vlan-hub-plan.cmake)
+add_test(NAME eventnet_gre_over_ipsec_plan
+    COMMAND ${CMAKE_COMMAND}
+        -DEVENTNET_NETNS_PLAN=$<TARGET_FILE:eventnet_netns_plan>
+        -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/check-gre-over-ipsec-plan.cmake)
 
 install(TARGETS eventnetd
     RUNTIME DESTINATION libexec/ibuki

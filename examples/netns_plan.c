@@ -1,4 +1,5 @@
 #include "eventnet/controller.h"
+#include "eventnet/apply_plan.h"
 #include "eventnet/mock_adapters.h"
 #include "eventnet/yaml_config.h"
 
@@ -52,6 +53,58 @@ static const en_tunnel_t *find_tunnel(const en_yaml_config_t *config, const char
         }
     }
     return NULL;
+}
+
+static bool path_has_gre_tunnel(const en_yaml_config_t *config, const en_path_t *path)
+{
+    if (config == NULL || path == NULL) return false;
+    for (size_t index = 0; index < path->segment_count; index++) {
+        const en_tunnel_t *tunnel = find_tunnel(config, path->segments[index].tunnel_id);
+        if (tunnel != NULL && strcmp(tunnel->tunnel_type, "gre_over_ipsec") == 0) return true;
+    }
+    if (path->segment_count == 0) {
+        const en_tunnel_t *tunnel = find_tunnel(config, path->egress_tunnel_id);
+        return tunnel != NULL && strcmp(tunnel->tunnel_type, "gre_over_ipsec") == 0;
+    }
+    return false;
+}
+
+static int write_swanctl_plan(const char *filename, const en_yaml_config_t *config, const en_intent_t *intent, const en_path_t *path)
+{
+    en_apply_plan_t plan = {0};
+    if (en_apply_plan_from_config_with_file(config, intent, path, filename, &plan) != EN_ERR_NONE) return 1;
+    return en_apply_plan_write_swanctl_conf(&plan, filename) == EN_ERR_NONE ? 0 : 1;
+}
+
+static void write_vpp_gre_setup(FILE *file, const en_yaml_config_t *config, const en_path_t *path)
+{
+    const en_tunnel_t *seen[EN_MAX_SEGMENTS] = {0};
+    size_t seen_count = 0;
+    for (size_t index = 0; index < path->segment_count; index++) {
+        const en_tunnel_t *tunnel = find_tunnel(config, path->segments[index].tunnel_id);
+        if (tunnel == NULL || strcmp(tunnel->tunnel_type, "gre_over_ipsec") != 0) continue;
+        bool duplicate = false;
+        for (size_t prior = 0; prior < seen_count; prior++) if (seen[prior] == tunnel) duplicate = true;
+        if (duplicate || seen_count >= EN_MAX_SEGMENTS) continue;
+        seen[seen_count++] = tunnel;
+        fprintf(file, "printf '# GRE over IPsec: %s (%s -> %s)\\n'\n", tunnel->tunnel_id, tunnel->local_endpoint, tunnel->remote_endpoint);
+        if (tunnel->gre_instance >= 0) fprintf(file, "run_vpp create gre tunnel src %s dst %s instance %d\n", tunnel->local_endpoint, tunnel->remote_endpoint, tunnel->gre_instance);
+        else fprintf(file, "run_vpp create gre tunnel src %s dst %s\n", tunnel->local_endpoint, tunnel->remote_endpoint);
+        fprintf(file, "run_vpp set interface ip address %s %s\n", tunnel->gre_interface, tunnel->gre_local_address);
+        if (tunnel->gre_mtu > 0) fprintf(file, "run_vpp set interface mtu %s %d\n", tunnel->gre_interface, tunnel->gre_mtu);
+        fprintf(file, "run_vpp set interface state %s up\n", tunnel->gre_interface);
+    }
+    if (path->segment_count == 0) {
+        const en_tunnel_t *tunnel = find_tunnel(config, path->egress_tunnel_id);
+        if (tunnel != NULL && strcmp(tunnel->tunnel_type, "gre_over_ipsec") == 0) {
+            fprintf(file, "printf '# GRE over IPsec: %s (%s -> %s)\\n'\n", tunnel->tunnel_id, tunnel->local_endpoint, tunnel->remote_endpoint);
+            if (tunnel->gre_instance >= 0) fprintf(file, "run_vpp create gre tunnel src %s dst %s instance %d\n", tunnel->local_endpoint, tunnel->remote_endpoint, tunnel->gre_instance);
+            else fprintf(file, "run_vpp create gre tunnel src %s dst %s\n", tunnel->local_endpoint, tunnel->remote_endpoint);
+            fprintf(file, "run_vpp set interface ip address %s %s\n", tunnel->gre_interface, tunnel->gre_local_address);
+            if (tunnel->gre_mtu > 0) fprintf(file, "run_vpp set interface mtu %s %d\n", tunnel->gre_interface, tunnel->gre_mtu);
+            fprintf(file, "run_vpp set interface state %s up\n", tunnel->gre_interface);
+        }
+    }
 }
 
 static const en_intent_t *find_intent(const en_yaml_config_t *config, const char *intent_id)
@@ -133,6 +186,7 @@ static bool path_has_conflicting_tables(const en_path_t *path)
 
 static const char *runtime_kind(const en_yaml_config_t *config, const en_path_t *path)
 {
+    if (path_has_gre_tunnel(config, path)) return "vpp";
     if (path->segment_count == 0 && !path->routes_explicit &&
         path->route_destination_prefix[0] != '\0' && path->route_next_hop[0] != '\0') {
         return "vpp";
@@ -187,6 +241,11 @@ static int write_apply_script(const char *filename, const en_yaml_config_t *conf
     fprintf(file, "  exit \"$status\"\n");
     fprintf(file, "}\n");
     fprintf(file, "trap rollback_on_error EXIT\n\n");
+    fprintf(file, "SWANCTL=\"${SWANCTL:-swanctl}\"\n");
+    fprintf(file, "SWANCTL_URI=\"${SWANCTL_URI:-}\"\n");
+    fprintf(file, "run_swanctl() {\n");
+    fprintf(file, "  if [ -n \"$SWANCTL_URI\" ]; then \"$SWANCTL\" --uri \"$SWANCTL_URI\" \"$@\"; else \"$SWANCTL\" \"$@\"; fi\n");
+    fprintf(file, "}\n\n");
     fprintf(file, "printf 'eventnet selected path: %s\\n'\n", path->path_id);
     fprintf(file, "printf 'eventnet runtime kind: %s\\n'\n\n", kind);
     if (strcmp(kind, "direct") == 0) {
@@ -237,6 +296,11 @@ static int write_integrated_script(const char *filename, const en_yaml_config_t 
     fprintf(file, "  exit \"$status\"\n");
     fprintf(file, "}\n");
     fprintf(file, "trap rollback_on_error EXIT\n\n");
+    fprintf(file, "SWANCTL=\"${SWANCTL:-swanctl}\"\n");
+    fprintf(file, "SWANCTL_URI=\"${SWANCTL_URI:-}\"\n");
+    fprintf(file, "run_swanctl() {\n");
+    fprintf(file, "  if [ -n \"$SWANCTL_URI\" ]; then \"$SWANCTL\" --uri \"$SWANCTL_URI\" \"$@\"; else \"$SWANCTL\" \"$@\"; fi\n");
+    fprintf(file, "}\n\n");
     fprintf(file, "ensure_dummy_lan() {\n");
     fprintf(file, "  ns=\"$1\"\n");
     fprintf(file, "  addr=\"$2\"\n");
@@ -247,8 +311,6 @@ static int write_integrated_script(const char *filename, const en_yaml_config_t 
     fprintf(file, "  ip netns exec \"$ns\" ip link set lan0 up\n");
     fprintf(file, "}\n\n");
     fprintf(file, "apply_vpp_netns_runtime() {\n");
-    fprintf(file, "  sh scripts/vm-vpp-netns-setup.sh\n");
-    fprintf(file, "  DRY_RUN=0 sh out/netns-runtime/vpp-netns-route-plan.sh\n");
     fprintf(file, "  ip netns exec site-a ip route replace 10.10.2.0/24 via 172.16.1.1\n");
     fprintf(file, "  ip netns exec site-b ip route replace 10.10.1.0/24 via 172.16.2.1\n");
     fprintf(file, "  printf '\\n== integrated VPP forwarding: site-a -> site-b ==\\n'\n");
@@ -271,6 +333,15 @@ static int write_integrated_script(const char *filename, const en_yaml_config_t 
     } else if (strcmp(kind, "vpp") == 0) {
         fprintf(file, "sh scripts/vm-vpp-netns-setup.sh\n");
         fprintf(file, "DRY_RUN=0 sh out/netns-runtime/vpp-netns-route-plan.sh\n");
+        if (path_has_gre_tunnel(config, path)) {
+            fprintf(file, "run_swanctl --load-conns --file out/netns-runtime/gre-swanctl.conf\n");
+            for (size_t index = 0; index < path->segment_count; index++) {
+                const en_tunnel_t *tunnel = find_tunnel(config, path->segments[index].tunnel_id);
+                if (tunnel != NULL && strcmp(tunnel->tunnel_type, "gre_over_ipsec") == 0) {
+                    fprintf(file, "run_swanctl --initiate --child %s\n", tunnel->tunnel_id);
+                }
+            }
+        }
     } else {
         fprintf(file, "echo 'unsupported path for current integrated runtime: %s' >&2\n", path->path_id);
         fprintf(file, "exit 1\n");
@@ -289,7 +360,7 @@ static int write_integrated_script(const char *filename, const en_yaml_config_t 
     return 0;
 }
 
-static int write_rollback_script(const char *filename, const char *kind)
+static int write_rollback_script(const char *filename, const en_yaml_config_t *config, const en_path_t *path, const char *kind)
 {
     FILE *file = fopen(filename, "w");
     if (file == NULL) return 1;
@@ -302,6 +373,16 @@ static int write_rollback_script(const char *filename, const char *kind)
     } else if (strcmp(kind, "hub") == 0) {
         fprintf(file, "sh scripts/vm-netns-ipsec-hub-stop.sh\n");
     } else if (strcmp(kind, "vpp") == 0) {
+        fprintf(file, "SWANCTL=\"${SWANCTL:-swanctl}\"\nSWANCTL_URI=\"${SWANCTL_URI:-}\"\n");
+        fprintf(file, "run_swanctl() { if [ -n \"$SWANCTL_URI\" ]; then \"$SWANCTL\" --uri \"$SWANCTL_URI\" \"$@\"; else \"$SWANCTL\" \"$@\"; fi; }\n");
+        if (path_has_gre_tunnel(config, path)) {
+            for (size_t index = path->segment_count; index > 0; index--) {
+                const en_tunnel_t *tunnel = find_tunnel(config, path->segments[index - 1].tunnel_id);
+                if (tunnel != NULL && strcmp(tunnel->tunnel_type, "gre_over_ipsec") == 0) {
+                    fprintf(file, "run_swanctl --terminate --child %s || true\n", tunnel->tunnel_id);
+                }
+            }
+        }
         fprintf(file, "sh scripts/vm-vpp-netns-clean.sh\n");
     } else {
         fprintf(file, "printf '%%s\\n' 'unsupported runtime rollback' >&2\nexit 1\n");
@@ -369,10 +450,17 @@ static int write_summary(const char *filename, const en_yaml_config_t *config, c
         fprintf(file, "    to: %s\n", segment->to_node);
         fprintf(file, "    tunnel_id: %s\n", segment->tunnel_id);
         if (tunnel != NULL) {
+            fprintf(file, "    type: %s\n", tunnel->tunnel_type[0] == '\0' ? "ipsec" : tunnel->tunnel_type);
             fprintf(file, "    local_endpoint: %s\n", tunnel->local_endpoint);
             fprintf(file, "    remote_endpoint: %s\n", tunnel->remote_endpoint);
             fprintf(file, "    local_ts: %s\n", tunnel->local_traffic_selector);
             fprintf(file, "    remote_ts: %s\n", tunnel->remote_traffic_selector);
+            if (strcmp(tunnel->tunnel_type, "gre_over_ipsec") == 0) {
+                fprintf(file, "    gre_interface: %s\n", tunnel->gre_interface);
+                fprintf(file, "    gre_local_address: %s\n", tunnel->gre_local_address);
+                fprintf(file, "    gre_remote_address: %s\n", tunnel->gre_remote_address);
+                if (tunnel->gre_mtu > 0) fprintf(file, "    gre_mtu: %d\n", tunnel->gre_mtu);
+            }
         }
     }
     fclose(file);
@@ -425,6 +513,7 @@ static int write_vpp_route_plan(const char *filename, const en_yaml_config_t *co
     fprintf(file, "printf 'VPP route plan for path: %s\\n'\n", path->path_id);
     fprintf(file, "printf 'source_prefix: %s\\n'\n", source_prefix);
     fprintf(file, "printf 'destination_prefix: %s\\n'\n\n", destination_prefix);
+    if (path_has_gre_tunnel(config, path)) write_vpp_gre_setup(file, config, path);
 
     if (path->routes_explicit) {
         for (size_t i = 0; i < path->route_count; i++) {
@@ -458,9 +547,17 @@ static int write_vpp_route_plan(const char *filename, const en_yaml_config_t *co
         fprintf(file, "run_vpp ip route add %s via %s\n", destination_prefix, path->route_next_hop);
     } else if (path->segment_count == 1) {
         fprintf(file, "printf '# node %s: destination route\\n'\n", path->source);
-        fprintf(file, "run_vpp ip route add %s via %s\n", destination_prefix, first_tunnel->remote_endpoint);
-        fprintf(file, "printf '# node %s: source return route\\n'\n", path->destination);
-        fprintf(file, "run_vpp ip route add %s via %s\n", source_prefix, first_tunnel->local_endpoint);
+        if (strcmp(first_tunnel->tunnel_type, "gre_over_ipsec") == 0) {
+            fprintf(file, "run_vpp ip route add %s via %s %s\n", destination_prefix, first_tunnel->gre_remote_address, first_tunnel->gre_interface);
+            if (source_prefix[0] != '\0') {
+                fprintf(file, "printf '# node %s: source return route\\n'\n", path->destination);
+                fprintf(file, "run_vpp ip route add %s via %s %s\n", source_prefix, first_tunnel->gre_local_address, first_tunnel->gre_interface);
+            }
+        } else {
+            fprintf(file, "run_vpp ip route add %s via %s\n", destination_prefix, first_tunnel->remote_endpoint);
+            fprintf(file, "printf '# node %s: source return route\\n'\n", path->destination);
+            fprintf(file, "run_vpp ip route add %s via %s\n", source_prefix, first_tunnel->local_endpoint);
+        }
     } else {
         fprintf(file, "printf '# node %s: destination route to first waypoint\\n'\n", path->source);
         fprintf(file, "run_vpp ip route add %s via %s\n", destination_prefix, first_tunnel->remote_endpoint);
@@ -572,6 +669,7 @@ static int write_vpp_netns_route_plan(const char *filename, const en_yaml_config
     fprintf(file, "printf 'VPP netns route plan for path: %s\\n'\n", path->path_id);
     fprintf(file, "printf 'source_prefix: %s via %s %s\\n'\n", source_prefix, path->source, source_vpp_interface);
     fprintf(file, "printf 'destination_prefix: %s via %s %s\\n'\n\n", destination_prefix, path->destination, destination_vpp_interface);
+    if (path_has_gre_tunnel(config, path)) write_vpp_gre_setup(file, config, path);
     if (intent->traffic.has_vlan_id) {
         if (path->routes_explicit) {
             for (size_t i = 0; i < path->route_count; i++) {
@@ -658,7 +756,10 @@ static int write_vpp_netns_route_plan(const char *filename, const en_yaml_config
                 path->route_next_hop, source_vpp_interface);
         }
     } else {
-        if (intent->traffic.has_vlan_id) {
+        const en_tunnel_t *gre_tunnel = first_tunnel != NULL && strcmp(first_tunnel->tunnel_type, "gre_over_ipsec") == 0 ? first_tunnel : NULL;
+        if (gre_tunnel != NULL) {
+            fprintf(file, "run_vpp ip route add %s via %s %s\n", destination_prefix, gre_tunnel->gre_remote_address, gre_tunnel->gre_interface);
+        } else if (intent->traffic.has_vlan_id) {
             fprintf(file, "run_vpp ip route add %s via %s %s.%d\n", source_prefix, source_next_hop, source_vpp_interface, intent->traffic.vlan_id);
             fprintf(file, "run_vpp ip route add %s via %s %s.%d\n", destination_prefix, destination_next_hop, destination_vpp_interface, intent->traffic.vlan_id);
         } else {
@@ -812,12 +913,14 @@ selected:
     char summary[256] = {0};
     char vpp_plan[256] = {0};
     char vpp_netns_plan[256] = {0};
+    char swanctl_plan[256] = {0};
     snprintf(apply_script, sizeof(apply_script), "%s/apply-selected.sh", out_dir);
     snprintf(integrated_script, sizeof(integrated_script), "%s/apply-integrated.sh", out_dir);
     snprintf(rollback_script, sizeof(rollback_script), "%s/rollback-selected.sh", out_dir);
     snprintf(summary, sizeof(summary), "%s/selected-path.txt", out_dir);
     snprintf(vpp_plan, sizeof(vpp_plan), "%s/vpp-route-plan.sh", out_dir);
     snprintf(vpp_netns_plan, sizeof(vpp_netns_plan), "%s/vpp-netns-route-plan.sh", out_dir);
+    snprintf(swanctl_plan, sizeof(swanctl_plan), "%s/gre-swanctl.conf", out_dir);
 
     if (ensure_directory_tree(out_dir) != 0) {
         fprintf(stderr, "failed to create output directory: %s\n", out_dir);
@@ -832,7 +935,7 @@ selected:
         fprintf(stderr, "failed to write %s\n", integrated_script);
         return 1;
     }
-    if (write_rollback_script(rollback_script, kind) != 0) {
+    if (write_rollback_script(rollback_script, &config, selected_path, kind) != 0) {
         fprintf(stderr, "failed to write %s\n", rollback_script);
         return 1;
     }
@@ -848,6 +951,10 @@ selected:
         fprintf(stderr, "failed to write %s\n", vpp_netns_plan);
         return 1;
     }
+    if (path_has_gre_tunnel(&config, selected_path) && write_swanctl_plan(swanctl_plan, &config, intent, selected_path) != 0) {
+        fprintf(stderr, "failed to write %s\n", swanctl_plan);
+        return 1;
+    }
 
     printf("intent: %s\n", intent->intent_id);
     printf("selected_path: %s\n", selected_path->path_id);
@@ -859,6 +966,7 @@ selected:
     printf("wrote: %s\n", summary);
     printf("wrote: %s\n", vpp_plan);
     printf("wrote: %s\n", vpp_netns_plan);
+    if (path_has_gre_tunnel(&config, selected_path)) printf("wrote: %s\n", swanctl_plan);
 
     return strcmp(kind, "unsupported") == 0 ? 2 : 0;
 }

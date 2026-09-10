@@ -207,6 +207,21 @@ en_error_code_t en_yaml_config_validate(const en_yaml_config_t *config, char *er
             set_error(error, error_len, 0, "tunnel identifier contains invalid characters");
             return EN_ERR_INVALID_ARGUMENT;
         }
+        if (tunnel->tunnel_type[0] != '\0' && strcmp(tunnel->tunnel_type, "ipsec") != 0 && strcmp(tunnel->tunnel_type, "gre_over_ipsec") != 0) {
+            set_error(error, error_len, 0, "tunnel type must be ipsec or gre_over_ipsec");
+            return EN_ERR_INVALID_ARGUMENT;
+        }
+        if (strcmp(tunnel->tunnel_type, "gre_over_ipsec") == 0) {
+            if (tunnel->gre_interface[0] == '\0' || tunnel->gre_local_address[0] == '\0' || tunnel->gre_remote_address[0] == '\0') {
+                set_error(error, error_len, 0, "gre_over_ipsec tunnel requires gre_interface, gre_local_address, and gre_remote_address");
+                return EN_ERR_INVALID_ARGUMENT;
+            }
+            if (!valid_config_token(tunnel->gre_interface) || !valid_config_token(tunnel->gre_local_address) || !valid_config_token(tunnel->gre_remote_address) ||
+                (tunnel->gre_instance < -1 || tunnel->gre_instance > 1048575 || tunnel->gre_mtu < 0 || tunnel->gre_mtu > 65535)) {
+                set_error(error, error_len, 0, "gre_over_ipsec tunnel has invalid GRE settings");
+                return EN_ERR_INVALID_ARGUMENT;
+            }
+        }
         if (config->node_count > 0 && (!yaml_has_node(config, tunnel->local_node) || !yaml_has_node(config, tunnel->remote_node))) {
             set_error(error, error_len, 0, "tunnel references unknown node");
             return EN_ERR_NOT_FOUND;
@@ -584,6 +599,8 @@ static en_error_code_t parse_line(en_yaml_config_t *config, yaml_parse_state_t *
             state->tunnel = &config->tunnels[config->tunnel_count++];
             memset(state->tunnel, 0, sizeof(*state->tunnel));
             copy_id(state->tunnel->protocol, sizeof(state->tunnel->protocol), "ipsec");
+            copy_id(state->tunnel->tunnel_type, sizeof(state->tunnel->tunnel_type), "ipsec");
+            state->tunnel->gre_instance = -1;
             copy_id(state->tunnel->auth_method, sizeof(state->tunnel->auth_method), "psk");
             state->tunnel->state = EN_TUNNEL_CONFIGURED;
             state->tunnel->health = EN_HEALTH_UNKNOWN;
@@ -904,6 +921,8 @@ static en_error_code_t parse_tunnel_kv(yaml_parse_state_t *state, const char *ke
     }
     if (strcmp(key, "id") == 0 || strcmp(key, "tunnel_id") == 0) {
         copy_id(state->tunnel->tunnel_id, sizeof(state->tunnel->tunnel_id), value);
+    } else if (strcmp(key, "type") == 0 || strcmp(key, "tunnel_type") == 0) {
+        copy_id(state->tunnel->tunnel_type, sizeof(state->tunnel->tunnel_type), value);
     } else if (strcmp(key, "local_node") == 0) {
         copy_id(state->tunnel->local_node, sizeof(state->tunnel->local_node), value);
     } else if (strcmp(key, "remote_node") == 0) {
@@ -930,6 +949,16 @@ static en_error_code_t parse_tunnel_kv(yaml_parse_state_t *state, const char *ke
         copy_id(state->tunnel->remote_traffic_selector, sizeof(state->tunnel->remote_traffic_selector), value);
     } else if (strcmp(key, "protocol") == 0) {
         copy_id(state->tunnel->protocol, sizeof(state->tunnel->protocol), value);
+    } else if (strcmp(key, "gre_interface") == 0) {
+        copy_id(state->tunnel->gre_interface, sizeof(state->tunnel->gre_interface), value);
+    } else if (strcmp(key, "gre_local_address") == 0) {
+        copy_id(state->tunnel->gre_local_address, sizeof(state->tunnel->gre_local_address), value);
+    } else if (strcmp(key, "gre_remote_address") == 0) {
+        copy_id(state->tunnel->gre_remote_address, sizeof(state->tunnel->gre_remote_address), value);
+    } else if (strcmp(key, "gre_instance") == 0) {
+        state->tunnel->gre_instance = atoi(value);
+    } else if (strcmp(key, "mtu") == 0 || strcmp(key, "gre_mtu") == 0) {
+        state->tunnel->gre_mtu = atoi(value);
     }
     return EN_ERR_NONE;
 }

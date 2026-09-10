@@ -24,6 +24,40 @@ nodes:
 
 `administrative_state`は`enabled`または`disabled`です。endpoint／capabilityの重複や不正文字、Node IDの重複はYAML loaderが拒否します。Node一覧を定義した場合、Tunnel・Path・Segment・route・waypointが未知のNodeを参照する設定も読み込み時に拒否します。Intentの`constraints.required_capabilities`（短縮形`capabilities`）を指定すると、Pathのsource・destinationと全Segmentの両端Nodeが指定能力を持つ場合だけ候補になります。
 
+## GRE over IPsec
+
+実験的な計画生成として、VPPのL3 GRE interfaceをstrongSwanのIPsecで保護する`gre_over_ipsec`を指定できます。これは論文提出までの正式Backendではなく、VPP Native IPsecとの組合せを未踏期間に検証するための境界です。Linux GREは標準Backendにしません。`local_endpoint`と`remote_endpoint`はGREの外側endpoint、`gre_local_address`と`gre_remote_address`はGRE内側のL3アドレスです。`gre_interface`はVPPで生成されるinterface名と一致させ、複数トンネルを固定する場合は`gre_instance`を指定します。`mtu`はGRE interfaceへ設定する任意のMTUです。
+
+GRE用のstrongSwan CHILD_SA計画は、GREプロトコルを`dynamic[gre]` selectorで保護するtransport modeとして生成します。現状は設定・計画生成の検証であり、VPP GREとLinux XFRMを接続した実データパスを保証しません。GREはL3カプセル化であり、GRETAP、VXLAN、EVPN、L2 bridgeによるL2延伸はこの指定に含まれません。BGP／OSPFによる動的経路交換とVPP Native IPsecは未踏期間の拡張です。
+
+```yaml
+tunnels:
+  - id: gre-a-b
+    type: gre_over_ipsec
+    local_node: site-a
+    remote_node: site-b
+    local_endpoint: 203.0.113.10
+    remote_endpoint: 203.0.113.20
+    gre_interface: gre0
+    gre_instance: 0
+    gre_local_address: 10.255.0.1/30
+    gre_remote_address: 10.255.0.2
+    mtu: 1400
+    psk: "change-me"
+
+paths:
+  - id: path-gre-a-b
+    source: site-a
+    destination: site-b
+    route_destination_prefix: 10.10.2.0/24
+    egress_tunnel_id: gre-a-b
+    segments:
+      - id: seg-gre-a-b
+        from: site-a
+        to: site-b
+        tunnel_id: gre-a-b
+```
+
 ## 1. 旧式の単一路由
 
 既存互換のため、Path直下に一つだけrouteを書く形式を維持しています。

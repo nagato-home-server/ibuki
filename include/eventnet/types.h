@@ -118,6 +118,7 @@ typedef struct {
 
 typedef struct {
     char tunnel_id[EN_MAX_ID_LEN];
+    char tunnel_type[EN_MAX_ID_LEN];
     char local_node[EN_MAX_ID_LEN];
     char remote_node[EN_MAX_ID_LEN];
     char local_endpoint[EN_MAX_ID_LEN];
@@ -130,6 +131,19 @@ typedef struct {
     char remote_cacerts[EN_MAX_ID_LEN];
     char local_traffic_selector[EN_MAX_ID_LEN];
     char remote_traffic_selector[EN_MAX_ID_LEN];
+    char gre_interface[EN_MAX_ID_LEN];
+    char gre_local_address[EN_MAX_ID_LEN];
+    char gre_remote_address[EN_MAX_ID_LEN];
+    int gre_instance;
+    int gre_mtu;
+    int vpp_local_sa_id;
+    int vpp_remote_sa_id;
+    int vpp_local_spi;
+    int vpp_remote_spi;
+    char vpp_crypto_algorithm[EN_MAX_ID_LEN];
+    char vpp_crypto_key[EN_MAX_ID_LEN];
+    char vpp_integrity_algorithm[EN_MAX_ID_LEN];
+    char vpp_integrity_key[EN_MAX_ID_LEN];
     char protocol[EN_MAX_ID_LEN];
     en_tunnel_state_t state;
     en_health_state_t health;

@@ -81,4 +81,48 @@ en_error_code_t en_render_vpp_route_delete_entry(
     size_t buf_len
 );
 
+en_error_code_t en_render_vpp_gre_create(
+    const en_tunnel_t *tunnel,
+    char *buf,
+    size_t buf_len
+);
+
+en_error_code_t en_render_vpp_gre_delete(
+    const en_tunnel_t *tunnel,
+    char *buf,
+    size_t buf_len
+);
+
+en_error_code_t en_render_vpp_gre_set_address(
+    const en_tunnel_t *tunnel,
+    char *buf,
+    size_t buf_len
+);
+
+en_error_code_t en_render_vpp_gre_set_mtu(
+    const en_tunnel_t *tunnel,
+    char *buf,
+    size_t buf_len
+);
+
+en_error_code_t en_render_vpp_gre_set_up(
+    const en_tunnel_t *tunnel,
+    char *buf,
+    size_t buf_len
+);
+
+en_error_code_t en_render_vpp_gre_route_replace(
+    const en_path_t *path,
+    const en_tunnel_t *tunnel,
+    char *buf,
+    size_t buf_len
+);
+
+en_error_code_t en_render_vpp_gre_route_delete(
+    const en_path_t *path,
+    const en_tunnel_t *tunnel,
+    char *buf,
+    size_t buf_len
+);
+
 #endif

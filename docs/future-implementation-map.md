@@ -234,8 +234,14 @@ int en_runtime_plan_generate_netns(
 
 VPP observerのCLIは`--table TABLE_ID`で対象VRFを明示でき、同一prefixが複数tableにあるFIB出力から指定tableのrouteだけをevent化します。生成eventには検出した`table_id`を任意フィールドとして含め、telemetry parserでも0以上の整数として検証します。
 
-未踏提出では、まず `vppctl` command adapterで十分です。
-VPP binary APIは後段です。
+論文前は、`vppctl` command adapterを用いてVPP FIB、VLAN、VRF、interfaceのBackendを実装・検証する。VPP binary APIは後段へ回し、SDKの版依存を論文前の必須条件にはしない。VPP GREの計画生成は実験的境界として保持できるが、実データパスは論文前の必須条件にしない。
+
+将来Backendとして整理する項目:
+
+- VPP GRE interfaceの生成・削除計画。
+- GRE内側IPと静的L3 routeの計画生成。
+- strongSwanのOS固有IPsec Backendとの差分整理。
+- VPP Native IPsec、GRE、SA同期、FIB、疎通を分けたValidateとRollback。
 
 ### 6.3 Health probe adapter
 
@@ -295,8 +301,10 @@ build-linux-cc/eventnetd samples/linux-vm-netns.yaml \
 2. Direct／Hub／Relay／VLANのVM評価とFailure／Recovery評価を再現可能にする。
 3. `eventnetd`の周期入力、reload、state復元、安全な入力境界を評価する。
 4. strongSwan／VPP CLI runtime、rollback、IPsec対象外遮断を評価する。
-5. 実装済み範囲とVICI／VPP Binary APIの未完了codec範囲を文書へ分離する。
-6. 論文用に同一telemetryへ異なる閾値を適用する比較手順を固定する。
+5. strongSwanのLinux XFRM依存をBackend境界へ閉じ込め、BSD PF_KEY等のOS差分をCapabilityとして整理する。
+6. 論文前のVPP GRE計画生成は実データパス未検証として明記し、論文用の合格条件から外す。
+7. 実装済み範囲とVICI／VPP Binary APIの未完了codec範囲を文書へ分離する。
+8. 論文用に同一telemetryへ異なる閾値を適用する比較手順を固定する。
 
 論文作成後から未踏期間:
 
@@ -304,9 +312,13 @@ build-linux-cc/eventnetd samples/linux-vm-netns.yaml \
 2. 閾値、hold-down、hysteresisを変え、切替時間・通信影響・切替頻度を測定する。
 3. VPPの対象SDK版を固定し、Binary APIのroute／VRF／VLAN codecを実装する。
 4. Graceful Transitionを実通信で評価し、Immediateとの差を定量化する。
-5. Linux namespace上でFRR／BGPの広告・withdrawalを接続する。
-6. Controller HAを追加し、停止後のActive Path維持と再reconcileを評価する。
-7. 余力があればFlow Preserveへ進み、長時間TCPで既存flow維持を測定する。
+5. VPP Native IPsecをstrongSwanとの責任分界、SA同期、観測、rollbackを含む独立Backendとして実装する。
+6. VPP GREとVPP Native IPsecを接続し、実データパスを確認する。
+7. VPP GRE over IPsecへFRR／BGPの広告・withdrawalを接続する。
+8. OSPFを接続し、マルチキャスト、隣接状態、経路収束を評価する。
+9. GRE over IPsecとVTIを同じPath Modelで比較し、MTU、収束時間、切替影響、障害観測を測定する。
+10. Controller HAを追加し、停止後のActive Path維持と再reconcileを評価する。
+11. 余力があればFlow Preserveへ進み、長時間TCPで既存flow維持を測定する。
 
 Node能力のYAML宣言、Path全端点の能力照合、disabled Node除外、未知Node検証は`vm-evaluate.sh node-capability`で再現できます。これは能力profileの宣言・選択境界の評価であり、実際のCloud VPN／FRR backend接続を完了したことを意味しません。
 
@@ -320,7 +332,7 @@ Node能力のYAML宣言、Path全端点の能力照合、disabled Node除外、�
 
 実装する場合は、Hub側VPPを独立instanceとして起動するか、VPPのVRF／分離tableと経路リークを含む設計へ変更し、forward／return双方のFIB、VLAN sub-interface、IPsec selectorを同一試験で確認します。
 
-未踏提出の第一段階では、以下は実装しなくてよいです。
+未踏期間の開始時点で、以下は未実装のままでもよいです。
 
 - GUI
 - FRRouting本統合

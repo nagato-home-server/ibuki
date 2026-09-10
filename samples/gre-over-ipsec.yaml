@@ -1,0 +1,37 @@
+tunnels:
+  - id: gre-a-b
+    type: gre_over_ipsec
+    local_node: site-a
+    remote_node: site-b
+    local_endpoint: 203.0.113.10
+    remote_endpoint: 203.0.113.20
+    local_id: site-a
+    remote_id: site-b
+    psk: "change-me"
+    gre_interface: gre0
+    gre_instance: 0
+    gre_local_address: 10.255.0.1/30
+    gre_remote_address: 10.255.0.2
+    mtu: 1400
+
+paths:
+  - id: path-gre-a-b
+    source: site-a
+    destination: site-b
+    route_destination_prefix: 10.10.2.0/24
+    egress_tunnel_id: gre-a-b
+    priority: 10
+    segments:
+      - id: seg-gre-a-b
+        from: site-a
+        to: site-b
+        tunnel_id: gre-a-b
+
+intents:
+  - id: intent-gre-a-b
+    traffic:
+      source: site-a
+      destination: site-b
+    path_selection:
+      mode: explicit
+      path_id: path-gre-a-b

@@ -6,11 +6,11 @@
 
 ## 論文執筆へ移行する現在地（2026-09-08）
 
-論文前に固定する実装範囲は完了しています。WSL上の非root基準validationで、C単体、scenario、全route YAML、Agent telemetry、閾値・安定性、イベント再選択、UNIX socket、設定reload、出力security、Shell構文がすべてpassしました。`event-reconcile`ではdirect障害時のhub fallback、回復時のdirect復帰、VLAN route／interface観測、XFRM遮断、共有socket batch、state保存まで確認しています。
+論文前のController基盤範囲は完了しています。WSL上の非root基準validationで、C単体、scenario、全route YAML、Agent telemetry、閾値・安定性、イベント再選択、UNIX socket、設定reload、出力security、Shell構文がすべてpassしました。`event-reconcile`ではdirect障害時のhub fallback、回復時のdirect復帰、VLAN route／interface観測、XFRM遮断、共有socket batch、state保存まで確認しています。論文提出までの正式BackendはstrongSwanを用いたIPsecとし、VPP GRE over IPsecは実験的計画生成として扱い、実データパスは未踏期間の検証対象へ移します。
 
-論文執筆前に必ず保存する成果物は、validationの`summary.csv`、各caseのログ、scenario Explain JSONL、生成されたselected path／runtime planです。rootが必要なVPP実適用、XFRM cleartext遮断、IPsec+VPP統合direct／fallbackはLinux VMで再実行できる追加実証ですが、今回の論文前C実装の完了条件には含めず、未実行時は`skip`、起動環境不整合時は`fail`として記録します。
+論文執筆前に必ず保存する成果物は、validationの`summary.csv`、各caseのログ、scenario Explain JSONL、生成されたselected path／runtime planです。rootが必要なVPP実適用、VPP GRE over IPsec runtime、XFRM cleartext遮断、IPsec+VPP統合direct／fallbackはLinux VMで再実行し、GRE Backendの実動作を確認します。root環境が未実行の場合は`skip`として記録し、実Backend runtimeを完了したとは主張しません。起動環境の不整合は`fail`として記録します。
 
-したがって、ここからの必須作業は論文の実験条件・結果・図表・考察の記述です。VPP Binary APIの版依存codec、strongSwanのrekey／DPD運用、FRR／BGP、HA、Graceful／Flow Preserve、実trunk分離、GUIは未踏期間以降の拡張であり、論文前に追加実装しません。
+したがって、ここからの必須作業はstrongSwan／Linux XFRMを用いた正式Backendの実環境検証と、論文の実験条件・結果・図表・考察の記述です。VPP Native IPsec、VPP GREとの実データパス、VPP Binary APIの版依存codec、strongSwanのrekey／DPD運用、FRR／BGP／OSPFによる動的経路交換、VTI比較、HA、Graceful／Flow Preserve、実trunk分離、GUIは未踏期間以降の拡張とします。
 
 ## 1. プロジェクト概要
 
@@ -464,23 +464,33 @@ VLAN Policyについては、IntentのVLAN IDとrequired waypointを選択結果
 `deny_unmatched_vlan: true`を指定した場合は、VPP親interfaceへのIPv4/IPv6 deny-all ACL生成とcommand backend適用まで実装済みです。`allowed_vlans`による一覧外VLANの生成時拒否と、VLANごとのFIB table設定も実装済みです。未タグdropの実パケット評価、実trunkの複数VLAN評価、VPP上の実パケット分離は未検証です。
 VPP edgeを含む経路はVPP-only runtimeとして生成でき、選択・統合apply scriptからVPP netns planへ接続します。IPsecとVPPを同一applyで組み合わせる運用は、引き続きLinux VMでの実測が必要です。
 
-### 8.4 Graceful Transitionの範囲
+### 8.5 Graceful Transitionの範囲
 
 Gracefulでは、旧Pathをdraining状態にして短いpause/drain期間を設け、新Pathへのforwarding切替後に旧Pathのrouteと専用tunnelを撤去します。切替失敗時は既存rollbackへ戻ります。TCPフローの識別・保持を行うFlow Preserveや、Gracefulの通信影響を定量測定する評価は未実装です。
 
-### 8.5 FRRoutingは未実装
+### 8.6 VPP GRE over IPsec Backendは未踏期間の実装候補
 
-初期実装ではFRRoutingは後段に置いています。BGP/OSPF/BFDなどと連携する場合は、第3段階の機能になります。
+現在のPrototypeにはVPP GREの計画生成とstrongSwanのGRE selector生成が存在しますが、VPP GREパケットをLinux XFRMへ接続する実データパスは検証済みではありません。論文提出までの正式Backendには含めず、論文後から未踏期間にVPP Native IPsecとの組合せ、strongSwanとの責任分界、SA同期を含めて再設計します。Linux GREは標準Backendにしません。
 
-### 8.6 Flow Preserveは未完成
+論文前の合格条件は、strongSwan IPsec SA、Linux XFRM policy、VPP route／VLAN／VRF、拠点間疎通を個別に確認でき、Prepare、Validate、Commit、Post Validation、Rollbackを再現できることです。GRE interface、VPP Native IPsec、BGP／OSPFによる動的経路交換、VPP Binary APIによる実操作、VTIとの比較は未踏期間へ回します。
+
+### 8.7 実データパス検証の現在地（2026-09-11）
+
+現ローカル環境では`vpp`、`vppctl`、`swanctl`が未導入で、非rootユーザのためnamespace／VPP runtimeも起動できませんでした。`scripts/vm-vpp-preflight.sh`は`vpp`と`vppctl`を`missing`、`ip`のみ`ok`と判定しました。このため、VPP GREとstrongSwan／Linux XFRMを同一packetで通過させる実データパス検証は`skip`として記録し、成功したとは扱いません。検証環境を用意した後、VPP導入、strongSwan／charon起動、XFRM policy・SA、VPP GRE、GRE内側route、双方向疎通、ESP counter、rollbackの順で再実行します。
+
+### 8.8 FRRoutingは未踏期間に実装
+
+論文前のGRE over IPsec初期実装では、静的L3 routeを使用します。未踏期間にVPP GRE over IPsecへFRRoutingを接続し、まずBGPのprefix広告・withdrawalと経路収束を実測します。その後、OSPFのマルチキャスト収容とBFDを追加し、GREとVTIを同じPath Modelで比較します。
+
+### 8.9 Flow Preserveは未完成
 
 Flow Preserveの概念は設計にありますが、実際のflow分類、既存flow維持、新規flow割当制御はまだ実装していません。
 
-### 8.7 同一packetのIPsec→VPP本番pipelineは未完成
+### 8.10 同一packetのIPsec→VPP本番pipelineは未完成
 
 現在の統合runtimeは、同じcontroller-generated planでIPsecとVPPを連続制御するものです。実運用gatewayとして、同一packetがIPsec tunnelとVPP forwarding pipelineを連続して通る構成は、次の設計課題です。
 
-### 8.8 GUIは未実装
+### 8.11 GUIは未実装
 
 GUIは後段です。現時点ではCLI、script、JSONL、text outputで実証しています。
 
@@ -523,7 +533,7 @@ GUIは後段です。現時点ではCLI、script、JSONL、text outputで実証�
 後回しでよいもの:
 
 - GUI
-- FRRouting本統合
+- FRRouting本統合（VPP GRE BackendへのBGP／OSPF接続）
 - VPP binary API
 - strongSwan VICI event購読
 - systemd unitの実環境検証（テンプレートは追加済み）

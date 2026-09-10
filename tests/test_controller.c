@@ -687,6 +687,44 @@ static void test_renderers_generate_swanctl_and_vppctl(void)
     ASSERT_STREQ(command, "vppctl ip route del 10.0.2.0/24 via 203.0.113.20");
 }
 
+static void test_renderers_generate_vpp_gre_over_ipsec(void)
+{
+    en_tunnel_t tunnel = {0};
+    snprintf(tunnel.tunnel_id, sizeof(tunnel.tunnel_id), "%s", "gre-a-b");
+    snprintf(tunnel.tunnel_type, sizeof(tunnel.tunnel_type), "%s", "gre_over_ipsec");
+    snprintf(tunnel.local_endpoint, sizeof(tunnel.local_endpoint), "%s", "203.0.113.10");
+    snprintf(tunnel.remote_endpoint, sizeof(tunnel.remote_endpoint), "%s", "203.0.113.20");
+    snprintf(tunnel.gre_interface, sizeof(tunnel.gre_interface), "%s", "gre0");
+    snprintf(tunnel.gre_local_address, sizeof(tunnel.gre_local_address), "%s", "10.255.0.1/30");
+    snprintf(tunnel.gre_remote_address, sizeof(tunnel.gre_remote_address), "%s", "10.255.0.2");
+    tunnel.gre_instance = 0;
+    tunnel.gre_mtu = 1400;
+
+    en_path_t path = {0};
+    snprintf(path.route_destination_prefix, sizeof(path.route_destination_prefix), "%s", "10.0.2.0/24");
+    char command[512] = {0};
+    ASSERT_TRUE(en_render_vpp_gre_create(&tunnel, command, sizeof(command)) == EN_ERR_NONE);
+    ASSERT_STREQ(command, "vppctl create gre tunnel src 203.0.113.10 dst 203.0.113.20 instance 0");
+    ASSERT_TRUE(en_render_vpp_gre_set_address(&tunnel, command, sizeof(command)) == EN_ERR_NONE);
+    ASSERT_STREQ(command, "vppctl set interface ip address gre0 10.255.0.1/30");
+    ASSERT_TRUE(en_render_vpp_gre_set_mtu(&tunnel, command, sizeof(command)) == EN_ERR_NONE);
+    ASSERT_STREQ(command, "vppctl set interface mtu gre0 1400");
+    ASSERT_TRUE(en_render_vpp_gre_set_up(&tunnel, command, sizeof(command)) == EN_ERR_NONE);
+    ASSERT_STREQ(command, "vppctl set interface state gre0 up");
+    ASSERT_TRUE(en_render_vpp_gre_route_replace(&path, &tunnel, command, sizeof(command)) == EN_ERR_NONE);
+    ASSERT_STREQ(command, "vppctl ip route add 10.0.2.0/24 via 10.255.0.2 gre0");
+    ASSERT_TRUE(en_render_swanctl_conf(&tunnel, command, sizeof(command)) == EN_ERR_NONE);
+    ASSERT_TRUE(strstr(command, "children.gre-a-b.mode=transport") != NULL);
+    ASSERT_TRUE(strstr(command, "local_ts=dynamic[gre]") != NULL);
+    ASSERT_TRUE(strstr(command, "remote_ts=dynamic[gre]") != NULL);
+    ASSERT_TRUE(en_render_vpp_gre_delete(&tunnel, command, sizeof(command)) == EN_ERR_NONE);
+    ASSERT_STREQ(command, "vppctl create gre tunnel src 203.0.113.10 dst 203.0.113.20 instance 0 del");
+
+    en_tunnel_t invalid = tunnel;
+    invalid.gre_interface[0] = '\0';
+    ASSERT_TRUE(en_render_vpp_gre_create(&invalid, command, sizeof(command)) == EN_ERR_INVALID_ARGUMENT);
+}
+
 static void test_path_events_parse_as_health_records(void)
 {
     en_path_health_t health = {0};
@@ -2015,6 +2053,7 @@ int main(void)
     test_applied_path_can_be_restored();
     test_forwarding_failure_reinstalls_previous_path();
     test_renderers_generate_swanctl_and_vppctl();
+    test_renderers_generate_vpp_gre_over_ipsec();
     test_path_events_parse_as_health_records();
     test_health_probe_ignores_out_of_order_records();
     test_vlan_health_requires_route_and_interface();

@@ -41,6 +41,10 @@ static bool vpp_edge_used_by_path(const en_vpp_edge_t *edge, const en_path_t *pa
 static int vpp_table_for_node(const en_path_t *path, const char *node_id);
 static en_error_code_t run_vpp_command(const en_vpp_command_ctx_t *ctx, const char *command);
 static en_error_code_t ensure_vpp_route_tables(const en_vpp_command_ctx_t *ctx, const en_path_t *path);
+static en_error_code_t ensure_vpp_gre_tunnels(const en_vpp_command_ctx_t *ctx, const en_path_t *path);
+static en_error_code_t remove_vpp_gre_tunnels(const en_vpp_command_ctx_t *ctx, const en_path_t *path);
+static en_error_code_t verify_vpp_gre_tunnels(const en_vpp_command_ctx_t *ctx, const en_path_t *path);
+static const en_tunnel_t *path_gre_tunnel(const en_vpp_command_ctx_t *ctx, const en_path_t *path);
 static bool valid_command_token(const char *value);
 static void expand_template(char *out, size_t out_len, const char *template_text, const en_tunnel_t *tunnel, const en_path_t *path, const char *traffic_key);
 static void replace_all(char *text, size_t text_len, const char *needle, const char *replacement);
@@ -176,6 +180,8 @@ static en_error_code_t vpp_install(void *ctx, const char *traffic_key, const en_
     if (command_ctx->install_path_command[0] != '\0') {
         err = run_template(command_ctx->install_path_command, command_ctx->dry_run, NULL, path, traffic_key);
     } else {
+        err = ensure_vpp_gre_tunnels(command_ctx, path);
+        if (err != EN_ERR_NONE) return err;
         err = ensure_vpp_vlan_interfaces(command_ctx, path);
         if (err != EN_ERR_NONE) return err;
         err = ensure_vpp_unmatched_vlan_acl(command_ctx, path);
@@ -188,7 +194,13 @@ static en_error_code_t vpp_install(void *ctx, const char *traffic_key, const en_
         if (err != EN_ERR_NONE) return err;
         for (size_t index = 0; index < path->route_count; index++) {
             char command[512] = {0};
-            err = en_render_vpp_route_replace_entry(&path->routes[index], command, sizeof(command));
+            en_route_t route = path->routes[index];
+            const en_tunnel_t *gre_tunnel = path_gre_tunnel(command_ctx, path);
+            if (gre_tunnel != NULL && route.interface_name[0] == '\0') {
+                snprintf(route.next_hop, sizeof(route.next_hop), "%s", gre_tunnel->gre_remote_address);
+                snprintf(route.interface_name, sizeof(route.interface_name), "%s", gre_tunnel->gre_interface);
+            }
+            err = en_render_vpp_route_replace_entry(&route, command, sizeof(command));
             if (err != EN_ERR_NONE) break;
             err = run_vpp_command(command_ctx, command);
             if (err != EN_ERR_NONE) break;
@@ -196,7 +208,11 @@ static en_error_code_t vpp_install(void *ctx, const char *traffic_key, const en_
     } else if (err == EN_ERR_NONE && command_ctx->install_path_command[0] == '\0') {
         const en_tunnel_t *egress_tunnel = find_ctx_tunnel(command_ctx, path->egress_tunnel_id);
         char command[512] = {0};
-        err = en_render_vpp_route_replace(path, egress_tunnel, command, sizeof(command));
+        if (egress_tunnel != NULL && strcmp(egress_tunnel->tunnel_type, "gre_over_ipsec") == 0) {
+            err = en_render_vpp_gre_route_replace(path, egress_tunnel, command, sizeof(command));
+        } else {
+            err = en_render_vpp_route_replace(path, egress_tunnel, command, sizeof(command));
+        }
         if (err == EN_ERR_NONE) {
             err = run_vpp_command(command_ctx, command);
         }
@@ -207,11 +223,23 @@ static en_error_code_t vpp_install(void *ctx, const char *traffic_key, const en_
     if (command_ctx->verify_route && !command_ctx->dry_run) {
         if (path->routes_explicit && path->route_count > 0) {
             for (size_t index = 0; index < path->route_count; index++) {
-                if (verify_vpp_route(command_ctx, path->routes[index].destination_prefix, path->routes[index].next_hop, path->routes[index].interface_name, path->routes[index].table_id) != EN_ERR_NONE) return EN_ERR_STATE_CONFLICT;
+                en_route_t route = path->routes[index];
+                const en_tunnel_t *gre_tunnel = path_gre_tunnel(command_ctx, path);
+                if (gre_tunnel != NULL && route.interface_name[0] == '\0') {
+                    snprintf(route.next_hop, sizeof(route.next_hop), "%s", gre_tunnel->gre_remote_address);
+                    snprintf(route.interface_name, sizeof(route.interface_name), "%s", gre_tunnel->gre_interface);
+                }
+                if (verify_vpp_route(command_ctx, route.destination_prefix, route.next_hop, route.interface_name, route.table_id) != EN_ERR_NONE) return EN_ERR_STATE_CONFLICT;
             }
-        } else if (verify_vpp_route(command_ctx, path->route_destination_prefix, path->route_next_hop, NULL, -1) != EN_ERR_NONE) {
-            return EN_ERR_STATE_CONFLICT;
+        } else {
+            const en_tunnel_t *gre_tunnel = path_gre_tunnel(command_ctx, path);
+            if (gre_tunnel != NULL) {
+                if (verify_vpp_route(command_ctx, path->route_destination_prefix, gre_tunnel->gre_remote_address, gre_tunnel->gre_interface, -1) != EN_ERR_NONE) return EN_ERR_STATE_CONFLICT;
+            } else if (verify_vpp_route(command_ctx, path->route_destination_prefix, path->route_next_hop, NULL, -1) != EN_ERR_NONE) {
+                return EN_ERR_STATE_CONFLICT;
+            }
         }
+        if (verify_vpp_gre_tunnels(command_ctx, path) != EN_ERR_NONE) return EN_ERR_STATE_CONFLICT;
         if (verify_vpp_vlan_interfaces(command_ctx, path) != EN_ERR_NONE) return EN_ERR_STATE_CONFLICT;
     }
     remember_active_path(command_ctx, traffic_key, path);
@@ -240,7 +268,13 @@ static en_error_code_t vpp_remove(void *ctx, const char *traffic_key, const en_p
     if (path->routes_explicit && path->route_count > 0) {
         for (size_t index = 0; index < path->route_count; index++) {
             char command[512] = {0};
-            err = en_render_vpp_route_delete_entry(&path->routes[index], command, sizeof(command));
+            en_route_t route = path->routes[index];
+            const en_tunnel_t *gre_tunnel = path_gre_tunnel(command_ctx, path);
+            if (gre_tunnel != NULL && route.interface_name[0] == '\0') {
+                snprintf(route.next_hop, sizeof(route.next_hop), "%s", gre_tunnel->gre_remote_address);
+                snprintf(route.interface_name, sizeof(route.interface_name), "%s", gre_tunnel->gre_interface);
+            }
+            err = en_render_vpp_route_delete_entry(&route, command, sizeof(command));
             if (err != EN_ERR_NONE) break;
             err = run_vpp_command(command_ctx, command);
             if (err != EN_ERR_NONE) break;
@@ -248,9 +282,14 @@ static en_error_code_t vpp_remove(void *ctx, const char *traffic_key, const en_p
     } else {
         char command[512] = {0};
         const en_tunnel_t *egress_tunnel = find_ctx_tunnel(command_ctx, path->egress_tunnel_id);
-        err = en_render_vpp_route_delete_with_tunnel(path, egress_tunnel, command, sizeof(command));
+        if (egress_tunnel != NULL && strcmp(egress_tunnel->tunnel_type, "gre_over_ipsec") == 0) {
+            err = en_render_vpp_gre_route_delete(path, egress_tunnel, command, sizeof(command));
+        } else {
+            err = en_render_vpp_route_delete_with_tunnel(path, egress_tunnel, command, sizeof(command));
+        }
         if (err == EN_ERR_NONE) err = run_vpp_command(command_ctx, command);
     }
+    if (err == EN_ERR_NONE && command_ctx->install_path_command[0] == '\0') err = remove_vpp_gre_tunnels(command_ctx, path);
     if (err == EN_ERR_NONE && command_ctx->deny_unmatched_vlan &&
         vpp_active_path(command_ctx, traffic_key) != NULL &&
         strcmp(vpp_active_path(command_ctx, traffic_key), path->path_id) == 0) {
@@ -481,6 +520,95 @@ static en_error_code_t run_vpp_command(const en_vpp_command_ctx_t *ctx, const ch
     char socket_command[512] = {0};
     if (format_command(socket_command, sizeof(socket_command), "vppctl -s %s %s", ctx->vppctl_socket, command + strlen(prefix)) != EN_ERR_NONE) return EN_ERR_INVALID_ARGUMENT;
     return run_exec_command(socket_command, ctx->dry_run);
+}
+
+static const en_tunnel_t *path_gre_tunnel(const en_vpp_command_ctx_t *ctx, const en_path_t *path)
+{
+    if (ctx == NULL || path == NULL) return NULL;
+    if (path->segment_count > 0) {
+        for (size_t index = 0; index < path->segment_count; index++) {
+            const en_tunnel_t *tunnel = find_ctx_tunnel(ctx, path->segments[index].tunnel_id);
+            if (tunnel != NULL && strcmp(tunnel->tunnel_type, "gre_over_ipsec") == 0) return tunnel;
+        }
+    }
+    const en_tunnel_t *tunnel = find_ctx_tunnel(ctx, path->egress_tunnel_id);
+    return tunnel != NULL && strcmp(tunnel->tunnel_type, "gre_over_ipsec") == 0 ? tunnel : NULL;
+}
+
+static en_error_code_t ensure_vpp_gre_tunnels(const en_vpp_command_ctx_t *ctx, const en_path_t *path)
+{
+    if (ctx == NULL || path == NULL) return EN_ERR_INVALID_ARGUMENT;
+    const en_tunnel_t *tunnels[EN_MAX_SEGMENTS] = {0};
+    size_t tunnel_count = 0;
+    if (path->segment_count > 0) {
+        for (size_t index = 0; index < path->segment_count; index++) {
+            const en_tunnel_t *tunnel = find_ctx_tunnel(ctx, path->segments[index].tunnel_id);
+            if (tunnel == NULL || strcmp(tunnel->tunnel_type, "gre_over_ipsec") != 0) continue;
+            bool duplicate = false;
+            for (size_t prior = 0; prior < tunnel_count; prior++) if (tunnels[prior] == tunnel) duplicate = true;
+            if (!duplicate && tunnel_count < EN_MAX_SEGMENTS) tunnels[tunnel_count++] = tunnel;
+        }
+    } else {
+        const en_tunnel_t *tunnel = find_ctx_tunnel(ctx, path->egress_tunnel_id);
+        if (tunnel != NULL && strcmp(tunnel->tunnel_type, "gre_over_ipsec") == 0) tunnels[tunnel_count++] = tunnel;
+    }
+    size_t created_count = 0;
+    for (size_t index = 0; index < tunnel_count; index++) {
+        char command[512] = {0};
+        if (en_render_vpp_gre_create(tunnels[index], command, sizeof(command)) != EN_ERR_NONE || run_vpp_command(ctx, command) != EN_ERR_NONE) goto rollback;
+        created_count++;
+        if (en_render_vpp_gre_set_address(tunnels[index], command, sizeof(command)) != EN_ERR_NONE || run_vpp_command(ctx, command) != EN_ERR_NONE) goto rollback;
+        if (tunnels[index]->gre_mtu > 0 && (en_render_vpp_gre_set_mtu(tunnels[index], command, sizeof(command)) != EN_ERR_NONE || run_vpp_command(ctx, command) != EN_ERR_NONE)) goto rollback;
+        if (en_render_vpp_gre_set_up(tunnels[index], command, sizeof(command)) != EN_ERR_NONE || run_vpp_command(ctx, command) != EN_ERR_NONE) goto rollback;
+    }
+    return EN_ERR_NONE;
+
+rollback:
+    while (created_count > 0) {
+        char delete_command[512] = {0};
+        created_count--;
+        if (en_render_vpp_gre_delete(tunnels[created_count], delete_command, sizeof(delete_command)) == EN_ERR_NONE) {
+            (void)run_vpp_command(ctx, delete_command);
+        }
+    }
+    return EN_ERR_FORWARDING_UPDATE_FAILED;
+}
+
+static en_error_code_t remove_vpp_gre_tunnels(const en_vpp_command_ctx_t *ctx, const en_path_t *path)
+{
+    if (ctx == NULL || path == NULL) return EN_ERR_INVALID_ARGUMENT;
+    const en_tunnel_t *tunnels[EN_MAX_SEGMENTS] = {0};
+    size_t tunnel_count = 0;
+    if (path->segment_count > 0) {
+        for (size_t index = 0; index < path->segment_count; index++) {
+            const en_tunnel_t *tunnel = find_ctx_tunnel(ctx, path->segments[index].tunnel_id);
+            if (tunnel == NULL || strcmp(tunnel->tunnel_type, "gre_over_ipsec") != 0) continue;
+            bool duplicate = false;
+            for (size_t prior = 0; prior < tunnel_count; prior++) if (tunnels[prior] == tunnel) duplicate = true;
+            if (!duplicate && tunnel_count < EN_MAX_SEGMENTS) tunnels[tunnel_count++] = tunnel;
+        }
+    } else {
+        const en_tunnel_t *tunnel = find_ctx_tunnel(ctx, path->egress_tunnel_id);
+        if (tunnel != NULL && strcmp(tunnel->tunnel_type, "gre_over_ipsec") == 0) tunnels[tunnel_count++] = tunnel;
+    }
+    for (size_t index = tunnel_count; index > 0; index--) {
+        char command[512] = {0};
+        if (en_render_vpp_gre_delete(tunnels[index - 1], command, sizeof(command)) != EN_ERR_NONE ||
+            run_vpp_command(ctx, command) != EN_ERR_NONE) return EN_ERR_FORWARDING_UPDATE_FAILED;
+    }
+    return EN_ERR_NONE;
+}
+
+static en_error_code_t verify_vpp_gre_tunnels(const en_vpp_command_ctx_t *ctx, const en_path_t *path)
+{
+    if (ctx == NULL || path == NULL || ctx->dry_run) return EN_ERR_NONE;
+    const en_tunnel_t *tunnel = path_gre_tunnel(ctx, path);
+    if (tunnel == NULL) return EN_ERR_NONE;
+    char output[65536] = {0};
+    if (capture_vpp_command(ctx, "show interface", output, sizeof(output)) != EN_ERR_NONE) return EN_ERR_STATE_CONFLICT;
+    en_vpp_interface_observation_t observation = {0};
+    if (en_vpp_parse_show_interface(output, tunnel->gre_interface, &observation, NULL, 0) != EN_ERR_NONE || !observation.up) return EN_ERR_STATE_CONFLICT;
+    return EN_ERR_NONE;
 }
 
 static en_error_code_t ensure_vpp_route_tables(const en_vpp_command_ctx_t *ctx, const en_path_t *path)

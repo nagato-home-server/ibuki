@@ -52,6 +52,7 @@ VPP_PREFIX=/opt/vpp EVENTNET_ENABLE_VPP_API=ON sh scripts/vm-build.sh
 | Empty segmentless path rejection | `ctest --test-dir build -R eventnet_yaml_empty_no_segment_rejected --output-on-failure` | route情報のないsegmentなしPathをYAML検証で拒否する |
 | Node capability | `sh scripts/vm-evaluate.sh node-capability samples/node-capabilities.yaml` | capability選択、disabled Node、未知Node検証がpass |
 | Backend adapter再利用 | `sh scripts/vm-evaluate.sh backend-reuse samples/linux-vm-netns.yaml` | strongSwan／VPP公開adapter契約、共通Path選択、swanctl／VPP plan生成がpass |
+| VPP GRE plan regression | `ctest --test-dir build -R eventnet_gre_over_ipsec_plan --output-on-failure` | 実験的なVPP GRE／strongSwan計画生成が壊れていないことを確認する。論文前の実データパス合格条件ではない |
 
 ## 3. Runtime接合
 
@@ -63,6 +64,18 @@ sudo MODE=fallback sh scripts/vm-controller-integrated-runtime-smoke.sh samples/
 ```
 
 合格条件は、LAN ping成功だけでなく、directではESP counter増加、fallbackではcontrollerが生成したHub planの適用、VPPでは生成routeによるforwarding成功です。
+
+GRE over IPsecの計画回帰確認では、次の生成順序を確認します。実データパス評価は未踏期間へ回します。
+
+```text
+VPP GRE interface生成
+  -> strongSwan IPsec SA確立
+  -> GRE内側IP／静的route適用
+  -> GRE経由のL3疎通
+  -> route切替とRollback
+```
+
+この評価では、GREをGRETAPやVXLANのようなL2延伸方式として扱いません。Linux GREは標準Backendにせず、VPPによるGRE操作を対象にします。FRRoutingによるBGP／OSPFの動的経路交換は未踏期間の評価対象です。
 
 VICIが利用できる場合は追加で実行します。
 
@@ -112,11 +125,11 @@ ctest --test-dir build --output-on-failure -R 'eventnet_state_wrong_(intent|path
 
 - eventnetdプロセス内部の無期限VICI購読はCLIとして実装済み。Linux VMで`DURATION_MS=0`の停止・再起動・権限運用を確認する。
 - VPP Binary APIのroute／VLAN／VRF実message codecと本番接続。
-- FRR／BGP、クラウド固有VPN API、複数Controller federation。
+- FRR／BGP／OSPFによる動的経路交換、クラウド固有VPN API、複数Controller federation。
 - Flow Preserve戦略と長時間高負荷評価。
 - 実trunk上のVLAN間分離。
 
-これらはcontrollerのPath選択・telemetry・runtime plan生成の検証結果と混同せず、将来実装として報告します。
+動的経路交換、VTI比較、クラウド固有VPN API、複数Controller federation、VPP GRE over IPsecの実データパスはcontrollerのPath選択・telemetry・runtime plan生成の検証結果と混同せず、未踏期間の実装・評価として報告します。
 
 ## 7. 論文執筆へ移る判定
 
@@ -128,7 +141,7 @@ BUILD_DIR=build-paper-baseline sh scripts/vm-paper-validation.sh samples/linux-v
 
 root不要範囲で確認する項目は、C単体、全Path選択方式、route YAML網羅、Agent／telemetry、閾値・安定性、event reconcile、socket、reload、status／plan security、Shell構文です。2026-09-08時点でこれらは全件passしています。
 
-rootが必要な次の項目は、Linux VMの依存とsudoが利用できるときだけ追加実行します。
+rootが必要な次の項目は、Linux VMの依存とsudoが利用できるときだけ追加実行します。strongSwan／Linux XFRMとVPP forwardingの実runtimeを確認し、VPP GRE over IPsecの実データパスは未踏期間の別評価として記録します。
 
 ```sh
 sudo BUILD_DIR=build-paper-baseline RUN_RUNTIME=1 sh scripts/vm-paper-validation.sh samples/linux-vm-netns.yaml

@@ -1,3 +1,12 @@
+#if !defined(_WIN32)
+#if !defined(_GNU_SOURCE)
+#define _GNU_SOURCE
+#endif
+#if !defined(_POSIX_C_SOURCE)
+#define _POSIX_C_SOURCE 200809L
+#endif
+#endif
+
 #include "eventnet/apply_plan.h"
 #include "eventnet/render_commands.h"
 

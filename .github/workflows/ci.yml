@@ -8,7 +8,7 @@ jobs:
   linux-core:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Configure
         run: cmake -S . -B build-ci -DCMAKE_BUILD_TYPE=Debug
       - name: Build
@@ -29,7 +29,7 @@ jobs:
   linux-sanitizers:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Configure Sanitizers
         run: >-
           cmake -S . -B build-sanitizers -DCMAKE_BUILD_TYPE=Debug
@@ -46,7 +46,7 @@ jobs:
   windows-core:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Configure
         run: cmake -S . -B build-ci
       - name: Build

@@ -136,7 +136,7 @@ Ibukiは，Intent（要求記述） API，Policy Engine，Path Selection Engine�
 
 今回の設計で特に重視するのは，Ibukiを単なる経路遷移実験用toolとして閉じないことである．最終像としてのIbukiは，IPsec/IKEv2を中心とする標準VPN技術とSoftware Gatewayを利用し，GUIからTopology，Path，Policy，Health，Transition履歴を管理できる，オープンなSD-WAN的制御基盤である．ただし，本稿で実装済みまたは評価対象とする範囲は，この最終像全体ではない．本稿の中心は，Pathを第一級の制御対象として定義し，Path SelectionとPath Transitionを下位実装から分離して扱うことである．GUI，Cloud VPN連携，複数Controller Federation，Service Chaining等は，この基盤の上に置かれる将来拡張として位置付ける．
 
-また，初期実装の対象はIPsec/IKEv2とstrongSwanを中心に置く．WireGuard，GRE，VXLAN，Cloud VPN等を現時点で同等に実装済みであるとは主張しない．これらは，Adapter/Plugin機構を通じて将来的に追加されるBackend候補である．ただし，L2延伸Backendの第一候補としてVXLANを採用する方針を決定した．標準転送はL3のままとし，同一サブネットやVLAN延伸などL2が必要なIntentに限ってVXLAN over IPsecを選択する．したがって提案手法の要点は，「すべてのTunnel実装を既に扱える」ことではなく，「下位実装差をAdapterとCapability（能力情報）へ押し出し，上位のPath ModelとTransition Modelを再利用可能にする構造を定める」ことにある．
+また，初期実装の対象はIPsec/IKEv2とstrongSwanを中心に置く．WireGuard，GRE，VXLAN，Cloud VPN等を現時点で同等に実装済みであるとは主張しない．これらは，Adapter/Plugin機構を通じた将来の拡張可能性を示すBackend候補である．ただし，本研究および未踏期間の実装範囲はL3制御に限定し，L2延伸やL2フレームのカプセル化は対象外とする．したがって提案手法の要点は，「すべてのTunnel実装を既に扱える」ことではなく，「下位実装差をAdapterとCapability（能力情報）へ押し出し，上位のPath ModelとTransition Modelを再利用可能にする構造を定める」ことにある．
 
 \begin{table}[h]
 \centering

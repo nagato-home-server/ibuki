@@ -297,11 +297,6 @@ Intentの`traffic.vlan_id`が一覧にない場合、Controllerはsub-interface�
 
 VLAN間を別FIBへ分離する場合は、VLANごとにIntent／Pathを分け、各Pathの全routeへ異なる`table`を指定します。例えば`samples/vlan-vrf-isolation.yaml`ではVLAN 100をtable 100、VLAN 200をtable 200へ割り当てます。これにより同じsource／destinationでも、VPP route投入先とtelemetryのtraffic keyがVLANごとに分離されます。runtime planとcommand backendはtableを先に作成し、VLAN sub-interfaceをupにした後で`set interface ip table`を適用し、最後にrouteを投入します。同じnodeのPath内で複数の明示table（table 0を含む）が混在する場合は、interfaceの所属を一意に決められないためruntime plan生成とcommand backendの両方で適用を拒否します。これはVRFのroute分離であり、実trunk上のVLAN tag付与やVPP interface間のL2分離そのものではないため、Linux VMでは各sub-interfaceとFIBを実環境で確認します。
 
-## L2延伸方式の採用方針
-
-Ibukiの標準転送方式は引き続きL3 route制御とする。一方、同一サブネットの維持、VLANの拠点間延伸、L2依存クラスタ、RoCEv1などが必要な場合のL2延伸方式として、VXLANを採用する。実装形態はVPPまたはLinux bridgeでL2フレームをVXLANへ収容し、VXLANの外側をL3として転送し、必要に応じてIPsecで暗号化する`VXLAN over IPsec`を基本とする。
-
-Agentはフレームのカプセル化を担当せず、測定・状態収集・Controllerへの制御要求を担当する。ControllerはPath、VTEP、VNI、VLAN、MTU、QoS、IPsecの関係を検証した上で、データプレーンへ設定を反映する。VXLAN、bridge、VTEP、VNIの実設定と実トラフィック検証は未踏期間の実装対象であり、現行のVLAN sub-interface／VRF機能をL2延伸実装済みとは扱わない。
 
 親interface上の未タグIPv4/IPv6通信を拒否する場合は、Intent直下に次を指定します。
 

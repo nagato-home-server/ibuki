@@ -4,7 +4,7 @@ set -eu
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 BUILD_DIR="${BUILD_DIR:-$ROOT_DIR/build-linux-cc}"
 CC="${CC:-cc}"
-CFLAGS="${CFLAGS:--std=c11 -Wall -Wextra -Wpedantic -O2 -g -fstack-protector-strong -D_FORTIFY_SOURCE=2 -D_GNU_SOURCE -D_POSIX_C_SOURCE=200809L}"
+CFLAGS="${CFLAGS:--std=c17 -Wall -Wextra -Wpedantic -O2 -g -fstack-protector-strong -D_FORTIFY_SOURCE=2 -D_POSIX_C_SOURCE=200809L}"
 LDLIBS="${LDLIBS:--lm}"
 
 mkdir -p "$BUILD_DIR"
@@ -35,11 +35,25 @@ src/yaml_config.c
 
 cd "$ROOT_DIR"
 
+COMMON_OBJECTS=""
+object_index=0
+for source in $COMMON_SRCS; do
+    object="$BUILD_DIR/common-${object_index}.o"
+    if [ ! -f "$object" ] || [ "$ROOT_DIR/$source" -nt "$object" ]; then
+        printf '[build] compiling common object %s\n' "$source"
+        $CC $CFLAGS -Iinclude -Ithird_party/yyjson -c "$source" -o "$object"
+    else
+        printf '[build] reusing common object %s\n' "$source"
+    fi
+    COMMON_OBJECTS="$COMMON_OBJECTS $object"
+    object_index=$((object_index + 1))
+done
+
 compile_target() {
     target=$1
     source=$2
-    printf '[build] compiling %s\n' "$target"
-    $CC $CFLAGS -Iinclude -Ithird_party/yyjson $COMMON_SRCS "$source" -o "$BUILD_DIR/$target" $LDLIBS
+    printf '[build] linking %s\n' "$target"
+    $CC $CFLAGS -Iinclude -Ithird_party/yyjson "$source" $COMMON_OBJECTS -o "$BUILD_DIR/$target" $LDLIBS
     printf '[build] completed %s\n' "$target"
 }
 

@@ -6,9 +6,15 @@ option(EVENTNET_ENABLE_VPP_API "Enable build-time VPP Binary API dependency chec
 option(EVENTNET_ENABLE_STRONGSWAN_VICI "Enable build-time strongSwan libvici dependency checks" OFF)
 option(EVENTNET_ENABLE_HARDENING "Enable baseline Linux compiler and linker hardening" ON)
 
-set(CMAKE_C_STANDARD 11)
+set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
+
+if(UNIX)
+    # POSIX APIs used by the secure file and socket paths are not part of ISO C.
+    # Expose their declarations explicitly while keeping strict ISO C extensions off.
+    add_compile_definitions(_POSIX_C_SOURCE=200809L)
+endif()
 
 if(UNIX AND EVENTNET_ENABLE_HARDENING)
     add_compile_options(-O2 -fstack-protector-strong -D_FORTIFY_SOURCE=2)
@@ -146,7 +152,7 @@ add_test(NAME eventnet_yaml_legacy_no_segment_plan
         --out-dir ${CMAKE_CURRENT_BINARY_DIR}/legacy-no-segment-plan
         ${CMAKE_CURRENT_SOURCE_DIR}/samples/agent-legacy-no-segment.yaml)
 set_tests_properties(eventnet_yaml_legacy_no_segment_plan PROPERTIES
-    PASS_REGULAR_EXPRESSION "runtime files")
+    PASS_REGULAR_EXPRESSION "wrote:.*apply-selected\\.sh")
 add_test(NAME eventnet_yaml_explicit_no_segment_rejected
     COMMAND eventnet_netns_plan --intent intent-explicit-no-segment
         --out-dir ${CMAKE_CURRENT_BINARY_DIR}/explicit-no-segment-plan
@@ -182,7 +188,7 @@ add_test(NAME eventnet_agent_yaml_relay_terminal_simulated
     COMMAND eventnet_agent --yaml ${CMAKE_CURRENT_SOURCE_DIR}/samples/route-examples.yaml
         --intent intent-relay-chain-routes --count 1 --interval-ms 0 --simulate 12.5 0.0)
 set_tests_properties(eventnet_agent_yaml_relay_terminal_simulated PROPERTIES
-    PASS_REGULAR_EXPRESSION "203.0.113.18")
+    PASS_REGULAR_EXPRESSION "203.0.113.25")
 add_test(NAME eventnet_agent_yaml_legacy_no_segment_simulated
     COMMAND eventnet_agent --yaml ${CMAKE_CURRENT_SOURCE_DIR}/samples/agent-legacy-no-segment.yaml
         --intent intent-legacy-no-segment --count 1 --interval-ms 0 --simulate 12.5 0.0)

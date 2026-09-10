@@ -4,6 +4,35 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <errno.h>
+
+#if defined(_WIN32)
+#include <direct.h>
+#else
+#include <sys/stat.h>
+#endif
+
+static int ensure_directory_tree(const char *path)
+{
+    if (path == NULL || path[0] == '\0') return 1;
+    char copy[512] = {0};
+    if (snprintf(copy, sizeof(copy), "%s", path) >= (int)sizeof(copy)) return 1;
+    for (char *cursor = copy + 1; *cursor != '\0'; cursor++) {
+        if (*cursor != '/') continue;
+        *cursor = '\0';
+#if defined(_WIN32)
+        if (_mkdir(copy) != 0 && errno != EEXIST) return 1;
+#else
+        if (mkdir(copy, 0755) != 0 && errno != EEXIST) return 1;
+#endif
+        *cursor = '/';
+    }
+#if defined(_WIN32)
+    return _mkdir(copy) != 0 && errno != EEXIST;
+#else
+    return mkdir(copy, 0755) != 0 && errno != EEXIST;
+#endif
+}
 
 static const en_path_t *find_path(const en_yaml_config_t *config, const char *path_id)
 {
@@ -544,6 +573,18 @@ static int write_vpp_netns_route_plan(const char *filename, const en_yaml_config
     fprintf(file, "printf 'source_prefix: %s via %s %s\\n'\n", source_prefix, path->source, source_vpp_interface);
     fprintf(file, "printf 'destination_prefix: %s via %s %s\\n'\n\n", destination_prefix, path->destination, destination_vpp_interface);
     if (intent->traffic.has_vlan_id) {
+        if (path->routes_explicit) {
+            for (size_t i = 0; i < path->route_count; i++) {
+                const en_route_t *route = &path->routes[i];
+                if (route->table_id > 0) {
+                    bool already_emitted = false;
+                    for (size_t j = 0; j < i; j++) {
+                        if (path->routes[j].table_id == route->table_id) already_emitted = true;
+                    }
+                    if (!already_emitted) fprintf(file, "ensure_vpp_table %d\n", route->table_id);
+                }
+            }
+        }
         fprintf(file, "printf 'VLAN policy: vlan_id=%d\\n'\n", intent->traffic.vlan_id);
         for (size_t index = 0; index < config->vpp_edge_count; index++) {
             const en_vpp_edge_t *edge = &config->vpp_edges[index];
@@ -571,7 +612,7 @@ static int write_vpp_netns_route_plan(const char *filename, const en_yaml_config
                 for (size_t j = 0; j < i; j++) {
                     if (path->routes[j].table_id == route->table_id) already_emitted = true;
                 }
-                if (!already_emitted) fprintf(file, "ensure_vpp_table %d\n", route->table_id);
+                if (!already_emitted && !intent->traffic.has_vlan_id) fprintf(file, "ensure_vpp_table %d\n", route->table_id);
             }
         }
         for (size_t i = 0; i < path->route_count; i++) {
@@ -598,7 +639,7 @@ static int write_vpp_netns_route_plan(const char *filename, const en_yaml_config
             fprintf(file, "printf '# explicit netns route %s on node %s via %s\\n'\n", route->route_id, route->node_id, edge->vpp_interface);
             fprintf(file, "run_vpp ip route add %s", route->destination_prefix);
             if (route->table_id >= 0) fprintf(file, " table %d", route->table_id);
-            fprintf(file, " via %s", edge->next_hop);
+            fprintf(file, " via %s", route->next_hop);
             if (edge->vpp_interface[0] != '\0') {
                 if (intent->traffic.has_vlan_id) fprintf(file, " %s.%d", edge->vpp_interface, intent->traffic.vlan_id);
                 else fprintf(file, " %s", edge->vpp_interface);
@@ -777,6 +818,11 @@ selected:
     snprintf(summary, sizeof(summary), "%s/selected-path.txt", out_dir);
     snprintf(vpp_plan, sizeof(vpp_plan), "%s/vpp-route-plan.sh", out_dir);
     snprintf(vpp_netns_plan, sizeof(vpp_netns_plan), "%s/vpp-netns-route-plan.sh", out_dir);
+
+    if (ensure_directory_tree(out_dir) != 0) {
+        fprintf(stderr, "failed to create output directory: %s\n", out_dir);
+        return 1;
+    }
 
     if (write_apply_script(apply_script, &config, intent, selected_path, kind) != 0) {
         fprintf(stderr, "failed to write %s\n", apply_script);

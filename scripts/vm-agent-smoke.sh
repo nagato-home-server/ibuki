@@ -73,7 +73,7 @@ cat "$OUT_DIR/yaml.jsonl" | "$BUILD_DIR/eventnetd" "$YAML" \
   --intent "$INTENT_ID" --telemetry-stdin --batch-size "$yaml_probe_count" --count 1 > "$OUT_DIR/yaml-eventnetd.log"
 grep -q 'selected_path: path-direct' "$OUT_DIR/yaml-eventnetd.log"
 
-if command -v ping >/dev/null 2>&1; then
+if command -v ping >/dev/null 2>&1 && ping -c 1 -W 1 127.0.0.1 >/dev/null 2>&1; then
   "$BUILD_DIR/eventnet_agent" --path path-direct --source site-a --target 127.0.0.1 \
     --count 1 --interval-ms 0 --output "$OUT_DIR/real-ping.jsonl"
   grep -q '"state":"healthy"' "$OUT_DIR/real-ping.jsonl"

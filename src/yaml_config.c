@@ -221,6 +221,11 @@ en_error_code_t en_yaml_config_validate(const en_yaml_config_t *config, char *er
                 set_error(error, error_len, 0, "gre_over_ipsec tunnel has invalid GRE settings");
                 return EN_ERR_INVALID_ARGUMENT;
             }
+            if ((tunnel->gre_outer_local_endpoint[0] != '\0' && !valid_config_token(tunnel->gre_outer_local_endpoint)) ||
+                (tunnel->gre_outer_remote_endpoint[0] != '\0' && !valid_config_token(tunnel->gre_outer_remote_endpoint))) {
+                set_error(error, error_len, 0, "gre_over_ipsec tunnel has invalid outer endpoint");
+                return EN_ERR_INVALID_ARGUMENT;
+            }
         }
         if (config->node_count > 0 && (!yaml_has_node(config, tunnel->local_node) || !yaml_has_node(config, tunnel->remote_node))) {
             set_error(error, error_len, 0, "tunnel references unknown node");
@@ -951,6 +956,10 @@ static en_error_code_t parse_tunnel_kv(yaml_parse_state_t *state, const char *ke
         copy_id(state->tunnel->protocol, sizeof(state->tunnel->protocol), value);
     } else if (strcmp(key, "gre_interface") == 0) {
         copy_id(state->tunnel->gre_interface, sizeof(state->tunnel->gre_interface), value);
+    } else if (strcmp(key, "gre_outer_local_endpoint") == 0) {
+        copy_id(state->tunnel->gre_outer_local_endpoint, sizeof(state->tunnel->gre_outer_local_endpoint), value);
+    } else if (strcmp(key, "gre_outer_remote_endpoint") == 0) {
+        copy_id(state->tunnel->gre_outer_remote_endpoint, sizeof(state->tunnel->gre_outer_remote_endpoint), value);
     } else if (strcmp(key, "gre_local_address") == 0) {
         copy_id(state->tunnel->gre_local_address, sizeof(state->tunnel->gre_local_address), value);
     } else if (strcmp(key, "gre_remote_address") == 0) {

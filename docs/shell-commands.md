@@ -154,7 +154,7 @@ sudo sh scripts/vm-netns-ipsec.sh hub clean
 
 | script | 実行例 | 引数 | 主な環境変数 | 内容 |
 | --- | --- | --- | --- | --- |
-| `scripts/vm-netns-ipsec.sh` | `sudo sh scripts/vm-netns-ipsec.sh hub status` | `<direct\|hub> <generate\|start\|status\|logs\|smoke\|stop\|clean>` | `RUN_BASE`, `SWANCTL_WORK_BASE` | direct/hub IPsec操作の共通入口。 |
+| `scripts/vm-netns-ipsec.sh` | `sudo sh scripts/vm-netns-ipsec.sh hub status` / `sudo env GRE_OUT_DIR=out/gre-runtime sh scripts/vm-netns-ipsec.sh gre start` | `<direct\|hub> <generate\|start\|status\|logs\|smoke\|stop\|clean>`、GREは`start/status/logs/stop/clean` | `RUN_BASE`, `SWANCTL_WORK_BASE`, `GRE_*` | direct/hub/GRE IPsec操作の共通入口。個別shellは互換用の内部実装として直接実行できる。 |
 | `scripts/vm-netns-ipsec-direct-generate.sh` | `sh scripts/vm-netns-ipsec-direct-generate.sh` | なし | `OUT_DIR`, `PSK` | direct用 `swanctl.conf` を生成する。通常は `vm-netns-ipsec.sh direct generate` 経由で使う。 |
 | `scripts/vm-netns-ipsec-direct-start.sh` | `sudo sh scripts/vm-netns-ipsec-direct-start.sh` | なし | `OUT_DIR`, `RUN_BASE`, `SWANCTL_WORK_BASE`, `CHARON` | direct IPsec用charonをnamespace内で起動し、接続をload/initiateする。通常は `vm-netns-ipsec.sh direct start` 経由。 |
 | `scripts/vm-netns-ipsec-direct-smoke.sh` | `sudo sh scripts/vm-netns-ipsec-direct-smoke.sh` | なし | `RUN_BASE` | direct IPsecのpingとESP counter増加を確認する。通常は `vm-netns-ipsec.sh direct smoke` 経由。 |
@@ -163,6 +163,8 @@ sudo sh scripts/vm-netns-ipsec.sh hub clean
 | `scripts/vm-netns-ipsec-hub-start.sh` | `sudo sh scripts/vm-netns-ipsec-hub-start.sh` | なし | `OUT_DIR`, `RUN_BASE`, `SWANCTL_WORK_BASE`, `DIRECT_RUN_BASE`, `CHARON` | hub IPsec用charonとXFRM interfaceを起動する。通常は `vm-netns-ipsec.sh hub start` 経由。 |
 | `scripts/vm-netns-ipsec-hub-smoke.sh` | `sudo sh scripts/vm-netns-ipsec-hub-smoke.sh` | なし | `RUN_BASE` | hub IPsecのpingとESP counter増加を確認する。通常は `vm-netns-ipsec.sh hub smoke` 経由。 |
 | `scripts/vm-netns-ipsec-hub-stop.sh` | `sudo sh scripts/vm-netns-ipsec-hub-stop.sh` | なし | `RUN_BASE`, `SWANCTL_WORK_BASE` | hub IPsec用charon停止、route/XFRM掃除。通常は `vm-netns-ipsec.sh hub stop` 経由。 |
+| `scripts/vm-netns-ipsec-gre-start.sh` | `sudo env GRE_OUT_DIR=out/gre-runtime sh scripts/vm-netns-ipsec.sh gre start` | `[out-dir]` | `GRE_OUT_DIR`, `GRE_RUN_BASE`, `GRE_SWANCTL_WORK_BASE`, `GRE_*`, `CHARON` | GRE計画からnamespace内charonを起動し、site-a/site-bのVICI設定ロードとGRE CHILD_SA開始を行う。通常は共通入口経由。 |
+| `scripts/vm-netns-ipsec-gre-stop.sh` | `sudo sh scripts/vm-netns-ipsec.sh gre stop` | なし | `GRE_RUN_BASE` | GRE用charon停止とXFRM掃除。通常は共通入口経由。 |
 
 ## 6. VPP
 

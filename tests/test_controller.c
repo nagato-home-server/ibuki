@@ -708,7 +708,7 @@ static void test_renderers_generate_vpp_gre_over_ipsec(void)
     ASSERT_TRUE(en_render_vpp_gre_set_address(&tunnel, command, sizeof(command)) == EN_ERR_NONE);
     ASSERT_STREQ(command, "vppctl set interface ip address gre0 10.255.0.1/30");
     ASSERT_TRUE(en_render_vpp_gre_set_mtu(&tunnel, command, sizeof(command)) == EN_ERR_NONE);
-    ASSERT_STREQ(command, "vppctl set interface mtu gre0 1400");
+    ASSERT_STREQ(command, "vppctl set interface mtu 1400 gre0");
     ASSERT_TRUE(en_render_vpp_gre_set_up(&tunnel, command, sizeof(command)) == EN_ERR_NONE);
     ASSERT_STREQ(command, "vppctl set interface state gre0 up");
     ASSERT_TRUE(en_render_vpp_gre_route_replace(&path, &tunnel, command, sizeof(command)) == EN_ERR_NONE);

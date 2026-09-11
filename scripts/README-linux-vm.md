@@ -14,7 +14,7 @@
 | 一発デモ | `demo-mitou.sh` |
 | scenario実験 | `vm-eventnet-scenario-smoke.sh` |
 | netns underlay | `vm-netns-setup.sh`, `vm-netns-smoke.sh`, `vm-netns-clean.sh` |
-| IPsec direct/hub | `vm-netns-ipsec.sh direct|hub <action>` |
+| IPsec direct/hub/GRE | `vm-netns-ipsec.sh direct|hub <action>` / `sudo env GRE_OUT_DIR=out/gre-runtime sh scripts/vm-netns-ipsec.sh gre start` |
 | VPP準備 | `vm-vpp-preflight.sh`, `vm-install-vpp-fdio.sh` |
 | VPP netns | `vm-vpp-netns-*.sh`, `vm-vpp-controller-netns-smoke.sh` |
 | controller netns | `vm-netns-controller-smoke.sh` |

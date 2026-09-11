@@ -28,7 +28,7 @@ nodes:
 
 実験的な計画生成として、VPPのL3 GRE interfaceをstrongSwanのIPsecで保護する`gre_over_ipsec`を指定できます。これは論文提出までの正式Backendではなく、VPP Native IPsecとの組合せを未踏期間に検証するための境界です。Linux GREは標準Backendにしません。`local_endpoint`と`remote_endpoint`はGREの外側endpoint、`gre_local_address`と`gre_remote_address`はGRE内側のL3アドレスです。`gre_interface`はVPPで生成されるinterface名と一致させ、複数トンネルを固定する場合は`gre_instance`を指定します。`mtu`はGRE interfaceへ設定する任意のMTUです。
 
-GRE用のstrongSwan CHILD_SA計画は、GREプロトコルを`dynamic[gre]` selectorで保護するtransport modeとして生成します。現状は設定・計画生成の検証であり、VPP GREとLinux XFRMを接続した実データパスを保証しません。GREはL3カプセル化であり、GRETAP、VXLAN、EVPN、L2 bridgeによるL2延伸はこの指定に含まれません。BGP／OSPFによる動的経路交換とVPP Native IPsecは未踏期間の拡張です。
+GRE用のstrongSwan CHILD_SA計画は、GREプロトコルを`dynamic[gre]` selectorで保護するtransport modeとして生成します。`local_endpoint`／`remote_endpoint`はstrongSwanのIKE endpoint、`gre_outer_local_endpoint`／`gre_outer_remote_endpoint`はVPP GRE outer endpointとして分離できます。統合runtimeではnamespace内のcharonを起動してVICIから設定をロードし、SA確立後にVPP GREと経路を適用します。GREはL3カプセル化であり、GRETAP、VXLAN、EVPN、L2 bridgeによるL2延伸はこの指定に含まれません。BGP／OSPFによる動的経路交換とVPP Native IPsecは未踏期間の拡張です。
 
 ```yaml
 tunnels:
@@ -37,9 +37,11 @@ tunnels:
     local_node: site-a
     remote_node: site-b
     local_endpoint: 203.0.113.10
-    remote_endpoint: 203.0.113.20
+    remote_endpoint: 203.0.113.9
     gre_interface: gre0
     gre_instance: 0
+    gre_outer_local_endpoint: 172.16.1.1
+    gre_outer_remote_endpoint: 172.16.2.1
     gre_local_address: 10.255.0.1/30
     gre_remote_address: 10.255.0.2
     mtu: 1400

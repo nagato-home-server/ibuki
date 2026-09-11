@@ -17,6 +17,8 @@ static int valid_gre_tunnel(const en_tunnel_t *tunnel)
 {
     return tunnel != NULL && strcmp(tunnel->tunnel_type, "gre_over_ipsec") == 0 &&
         valid_command_token(tunnel->local_endpoint) && valid_command_token(tunnel->remote_endpoint) &&
+        (tunnel->gre_outer_local_endpoint[0] == '\0' || valid_command_token(tunnel->gre_outer_local_endpoint)) &&
+        (tunnel->gre_outer_remote_endpoint[0] == '\0' || valid_command_token(tunnel->gre_outer_remote_endpoint)) &&
         valid_command_token(tunnel->gre_interface) && valid_command_token(tunnel->gre_local_address) &&
         valid_command_token(tunnel->gre_remote_address) && tunnel->gre_instance >= -1 && tunnel->gre_instance <= 1048575 &&
         tunnel->gre_mtu >= 0 && tunnel->gre_mtu <= 65535;
@@ -285,10 +287,12 @@ en_error_code_t en_render_vpp_route_delete_entry(
 en_error_code_t en_render_vpp_gre_create(const en_tunnel_t *tunnel, char *buf, size_t buf_len)
 {
     if (!valid_gre_tunnel(tunnel) || buf == NULL || buf_len == 0) return EN_ERR_INVALID_ARGUMENT;
+    const char *local_endpoint = tunnel->gre_outer_local_endpoint[0] == '\0' ? tunnel->local_endpoint : tunnel->gre_outer_local_endpoint;
+    const char *remote_endpoint = tunnel->gre_outer_remote_endpoint[0] == '\0' ? tunnel->remote_endpoint : tunnel->gre_outer_remote_endpoint;
     if (tunnel->gre_instance >= 0) {
-        FORMAT_COMMAND(buf, buf_len, "vppctl create gre tunnel src %s dst %s instance %d", tunnel->local_endpoint, tunnel->remote_endpoint, tunnel->gre_instance);
+        FORMAT_COMMAND(buf, buf_len, "vppctl create gre tunnel src %s dst %s instance %d", local_endpoint, remote_endpoint, tunnel->gre_instance);
     } else {
-        FORMAT_COMMAND(buf, buf_len, "vppctl create gre tunnel src %s dst %s", tunnel->local_endpoint, tunnel->remote_endpoint);
+        FORMAT_COMMAND(buf, buf_len, "vppctl create gre tunnel src %s dst %s", local_endpoint, remote_endpoint);
     }
     return EN_ERR_NONE;
 }
@@ -296,10 +300,12 @@ en_error_code_t en_render_vpp_gre_create(const en_tunnel_t *tunnel, char *buf, s
 en_error_code_t en_render_vpp_gre_delete(const en_tunnel_t *tunnel, char *buf, size_t buf_len)
 {
     if (!valid_gre_tunnel(tunnel) || buf == NULL || buf_len == 0) return EN_ERR_INVALID_ARGUMENT;
+    const char *local_endpoint = tunnel->gre_outer_local_endpoint[0] == '\0' ? tunnel->local_endpoint : tunnel->gre_outer_local_endpoint;
+    const char *remote_endpoint = tunnel->gre_outer_remote_endpoint[0] == '\0' ? tunnel->remote_endpoint : tunnel->gre_outer_remote_endpoint;
     if (tunnel->gre_instance >= 0) {
-        FORMAT_COMMAND(buf, buf_len, "vppctl create gre tunnel src %s dst %s instance %d del", tunnel->local_endpoint, tunnel->remote_endpoint, tunnel->gre_instance);
+        FORMAT_COMMAND(buf, buf_len, "vppctl create gre tunnel src %s dst %s instance %d del", local_endpoint, remote_endpoint, tunnel->gre_instance);
     } else {
-        FORMAT_COMMAND(buf, buf_len, "vppctl create gre tunnel src %s dst %s del", tunnel->local_endpoint, tunnel->remote_endpoint);
+        FORMAT_COMMAND(buf, buf_len, "vppctl create gre tunnel src %s dst %s del", local_endpoint, remote_endpoint);
     }
     return EN_ERR_NONE;
 }
@@ -314,7 +320,7 @@ en_error_code_t en_render_vpp_gre_set_address(const en_tunnel_t *tunnel, char *b
 en_error_code_t en_render_vpp_gre_set_mtu(const en_tunnel_t *tunnel, char *buf, size_t buf_len)
 {
     if (!valid_gre_tunnel(tunnel) || buf == NULL || buf_len == 0 || tunnel->gre_mtu <= 0) return EN_ERR_INVALID_ARGUMENT;
-    FORMAT_COMMAND(buf, buf_len, "vppctl set interface mtu %s %d", tunnel->gre_interface, tunnel->gre_mtu);
+    FORMAT_COMMAND(buf, buf_len, "vppctl set interface mtu %d %s", tunnel->gre_mtu, tunnel->gre_interface);
     return EN_ERR_NONE;
 }
 

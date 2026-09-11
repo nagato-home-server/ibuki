@@ -132,6 +132,8 @@ typedef struct {
     char local_traffic_selector[EN_MAX_ID_LEN];
     char remote_traffic_selector[EN_MAX_ID_LEN];
     char gre_interface[EN_MAX_ID_LEN];
+    char gre_outer_local_endpoint[EN_MAX_ID_LEN];
+    char gre_outer_remote_endpoint[EN_MAX_ID_LEN];
     char gre_local_address[EN_MAX_ID_LEN];
     char gre_remote_address[EN_MAX_ID_LEN];
     int gre_instance;

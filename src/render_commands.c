@@ -165,19 +165,13 @@ en_error_code_t en_render_vpp_route_replace(
     if (path == NULL || egress_tunnel == NULL || buf == NULL || buf_len == 0) {
         return EN_ERR_INVALID_ARGUMENT;
     }
-    const char *next_hop = path->route_next_hop[0] == '\0' ? egress_tunnel->remote_endpoint : path->route_next_hop;
-    if (path->route_destination_prefix[0] == '\0' || next_hop[0] == '\0' ||
-        !valid_command_token(path->route_destination_prefix) || !valid_command_token(next_hop)) {
-        return EN_ERR_INVALID_ARGUMENT;
-    }
-    FORMAT_COMMAND(
-        buf,
-        buf_len,
-        "vppctl ip route add %s via %s",
-        path->route_destination_prefix,
-        next_hop
-    );
-    return EN_ERR_NONE;
+    en_route_t route = {0};
+    route.table_id = -1;
+    route.metric = -1;
+    snprintf(route.destination_prefix, sizeof(route.destination_prefix), "%s", path->route_destination_prefix);
+    snprintf(route.next_hop, sizeof(route.next_hop), "%s", path->route_next_hop);
+    if (en_route_resolve_tunnel_egress(&route, egress_tunnel, &route) != EN_ERR_NONE) return EN_ERR_INVALID_ARGUMENT;
+    return en_render_vpp_route_replace_entry(&route, buf, buf_len);
 }
 
 en_error_code_t en_render_vpp_route_replace_entry(
@@ -227,6 +221,24 @@ en_error_code_t en_render_vpp_route_replace_entry(
     return EN_ERR_NONE;
 }
 
+en_error_code_t en_route_resolve_tunnel_egress(
+    const en_route_t *route,
+    const en_tunnel_t *tunnel,
+    en_route_t *resolved_route
+)
+{
+    if (route == NULL || tunnel == NULL || resolved_route == NULL) return EN_ERR_INVALID_ARGUMENT;
+    *resolved_route = *route;
+    if (resolved_route->next_hop[0] != '\0' && resolved_route->interface_name[0] != '\0') return EN_ERR_NONE;
+    if (strcmp(tunnel->tunnel_type, "gre_over_ipsec") == 0) {
+        if (resolved_route->next_hop[0] == '\0') snprintf(resolved_route->next_hop, sizeof(resolved_route->next_hop), "%s", tunnel->gre_remote_address);
+        if (resolved_route->interface_name[0] == '\0') snprintf(resolved_route->interface_name, sizeof(resolved_route->interface_name), "%s", tunnel->gre_interface);
+    } else if (resolved_route->next_hop[0] == '\0') {
+        snprintf(resolved_route->next_hop, sizeof(resolved_route->next_hop), "%s", tunnel->remote_endpoint);
+    }
+    return resolved_route->next_hop[0] == '\0' ? EN_ERR_INVALID_ARGUMENT : EN_ERR_NONE;
+}
+
 en_error_code_t en_render_vpp_route_delete(
     const en_path_t *path,
     char *buf,
@@ -248,13 +260,13 @@ en_error_code_t en_render_vpp_route_delete_with_tunnel(
     size_t buf_len
 )
 {
-    if (path == NULL || egress_tunnel == NULL || buf == NULL || buf_len == 0 ||
-        path->route_destination_prefix[0] == '\0' || egress_tunnel->remote_endpoint[0] == '\0' ||
-        !valid_command_token(path->route_destination_prefix) || !valid_command_token(egress_tunnel->remote_endpoint)) {
-        return EN_ERR_INVALID_ARGUMENT;
-    }
-    FORMAT_COMMAND(buf, buf_len, "vppctl ip route del %s via %s", path->route_destination_prefix, egress_tunnel->remote_endpoint);
-    return EN_ERR_NONE;
+    if (path == NULL || egress_tunnel == NULL || buf == NULL || buf_len == 0) return EN_ERR_INVALID_ARGUMENT;
+    en_route_t route = {0};
+    route.table_id = -1;
+    route.metric = -1;
+    snprintf(route.destination_prefix, sizeof(route.destination_prefix), "%s", path->route_destination_prefix);
+    if (en_route_resolve_tunnel_egress(&route, egress_tunnel, &route) != EN_ERR_NONE) return EN_ERR_INVALID_ARGUMENT;
+    return en_render_vpp_route_delete_entry(&route, buf, buf_len);
 }
 
 en_error_code_t en_render_vpp_route_delete_entry(

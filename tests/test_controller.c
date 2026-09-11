@@ -713,6 +713,15 @@ static void test_renderers_generate_vpp_gre_over_ipsec(void)
     ASSERT_STREQ(command, "vppctl set interface state gre0 up");
     ASSERT_TRUE(en_render_vpp_gre_route_replace(&path, &tunnel, command, sizeof(command)) == EN_ERR_NONE);
     ASSERT_STREQ(command, "vppctl ip route add 10.0.2.0/24 via 10.255.0.2 gre0");
+    en_route_t logical_route = {0};
+    logical_route.table_id = -1;
+    logical_route.metric = -1;
+    snprintf(logical_route.destination_prefix, sizeof(logical_route.destination_prefix), "%s", "10.0.2.0/24");
+    ASSERT_TRUE(en_route_resolve_tunnel_egress(&logical_route, &tunnel, &logical_route) == EN_ERR_NONE);
+    ASSERT_STREQ(logical_route.next_hop, "10.255.0.2");
+    ASSERT_STREQ(logical_route.interface_name, "gre0");
+    ASSERT_TRUE(en_render_vpp_route_replace_entry(&logical_route, command, sizeof(command)) == EN_ERR_NONE);
+    ASSERT_STREQ(command, "vppctl ip route add 10.0.2.0/24 via 10.255.0.2 gre0");
     ASSERT_TRUE(en_render_swanctl_conf(&tunnel, command, sizeof(command)) == EN_ERR_NONE);
     ASSERT_TRUE(strstr(command, "children.gre-a-b.mode=transport") != NULL);
     ASSERT_TRUE(strstr(command, "local_ts=dynamic[gre]") != NULL);

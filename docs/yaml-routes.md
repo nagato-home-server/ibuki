@@ -74,7 +74,49 @@ paths:
 
 これは内部的には、`source` nodeに対する1本のrouteとして扱われます。
 
-## 2. 明示的な単一route
+## 2. 論理L3 egress
+
+route適用時のnext-hopとinterfaceは、Tunnel Backendが提供する論理L3 egressから解決します。Path／routeの処理はBackendの種類を直接判定せず、解決済みの`next_hop`と`interface_name`を共通のVPP route rendererへ渡します。
+
+解決規則は次の通りです。
+
+| Tunnel | next-hop | interface |
+|---|---|---|
+| 通常のIPsec | routeに指定した値。未指定時は`remote_endpoint` | routeに指定した値。未指定なら省略 |
+| `gre_over_ipsec` | routeに指定した値。未指定時は`gre_remote_address` | routeに指定した値。未指定時は`gre_interface` |
+| 将来のVTI／VPP Native IPsec | Backendが提供する内側next-hop | Backendが提供する論理interface |
+
+routeに`interface_name`を明示した場合は、その値を優先します。Tunnel側の論理egressは不足している値だけを補完するため、VRFや複数portを指定する既存の明示routeとも併用できます。
+
+例えば、GREの次の設定は、外側endpointではなくGRE内側のnext-hopとinterfaceをrouteへ反映します。
+
+```yaml
+tunnels:
+  - id: gre-a-b
+    type: gre_over_ipsec
+    local_endpoint: 203.0.113.10
+    remote_endpoint: 203.0.113.20
+    gre_interface: gre0
+    gre_local_address: 10.255.0.1/30
+    gre_remote_address: 10.255.0.2
+
+paths:
+  - id: path-gre-a-b
+    source: site-a
+    destination: site-b
+    route_destination_prefix: 10.10.2.0/24
+    egress_tunnel_id: gre-a-b
+```
+
+この場合の生成結果は次のようになります。
+
+```text
+vppctl ip route add 10.10.2.0/24 via 10.255.0.2 gre0
+```
+
+`gre_over_ipsec`は現在、計画生成とroute egress解決の検証対象です。VPP GREとLinux XFRMを接続した実データパス、およびVPP Native IPsecは未踏期間の検証対象です。
+
+## 3. 明示的な単一route
 
 今後はこちらを基本形にします。
 

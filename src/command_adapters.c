@@ -45,6 +45,7 @@ static en_error_code_t ensure_vpp_gre_tunnels(const en_vpp_command_ctx_t *ctx, c
 static en_error_code_t remove_vpp_gre_tunnels(const en_vpp_command_ctx_t *ctx, const en_path_t *path);
 static en_error_code_t verify_vpp_gre_tunnels(const en_vpp_command_ctx_t *ctx, const en_path_t *path);
 static const en_tunnel_t *path_gre_tunnel(const en_vpp_command_ctx_t *ctx, const en_path_t *path);
+static const en_tunnel_t *path_route_tunnel(const en_vpp_command_ctx_t *ctx, const en_path_t *path);
 static bool valid_command_token(const char *value);
 static void expand_template(char *out, size_t out_len, const char *template_text, const en_tunnel_t *tunnel, const en_path_t *path, const char *traffic_key);
 static void replace_all(char *text, size_t text_len, const char *needle, const char *replacement);
@@ -195,11 +196,8 @@ static en_error_code_t vpp_install(void *ctx, const char *traffic_key, const en_
         for (size_t index = 0; index < path->route_count; index++) {
             char command[512] = {0};
             en_route_t route = path->routes[index];
-            const en_tunnel_t *gre_tunnel = path_gre_tunnel(command_ctx, path);
-            if (gre_tunnel != NULL && route.interface_name[0] == '\0') {
-                snprintf(route.next_hop, sizeof(route.next_hop), "%s", gre_tunnel->gre_remote_address);
-                snprintf(route.interface_name, sizeof(route.interface_name), "%s", gre_tunnel->gre_interface);
-            }
+            const en_tunnel_t *egress_tunnel = path_route_tunnel(command_ctx, path);
+            if (egress_tunnel != NULL && en_route_resolve_tunnel_egress(&route, egress_tunnel, &route) != EN_ERR_NONE) return EN_ERR_FORWARDING_UPDATE_FAILED;
             err = en_render_vpp_route_replace_entry(&route, command, sizeof(command));
             if (err != EN_ERR_NONE) break;
             err = run_vpp_command(command_ctx, command);
@@ -208,11 +206,7 @@ static en_error_code_t vpp_install(void *ctx, const char *traffic_key, const en_
     } else if (err == EN_ERR_NONE && command_ctx->install_path_command[0] == '\0') {
         const en_tunnel_t *egress_tunnel = find_ctx_tunnel(command_ctx, path->egress_tunnel_id);
         char command[512] = {0};
-        if (egress_tunnel != NULL && strcmp(egress_tunnel->tunnel_type, "gre_over_ipsec") == 0) {
-            err = en_render_vpp_gre_route_replace(path, egress_tunnel, command, sizeof(command));
-        } else {
-            err = en_render_vpp_route_replace(path, egress_tunnel, command, sizeof(command));
-        }
+        err = en_render_vpp_route_replace(path, egress_tunnel, command, sizeof(command));
         if (err == EN_ERR_NONE) {
             err = run_vpp_command(command_ctx, command);
         }
@@ -224,17 +218,17 @@ static en_error_code_t vpp_install(void *ctx, const char *traffic_key, const en_
         if (path->routes_explicit && path->route_count > 0) {
             for (size_t index = 0; index < path->route_count; index++) {
                 en_route_t route = path->routes[index];
-                const en_tunnel_t *gre_tunnel = path_gre_tunnel(command_ctx, path);
-                if (gre_tunnel != NULL && route.interface_name[0] == '\0') {
-                    snprintf(route.next_hop, sizeof(route.next_hop), "%s", gre_tunnel->gre_remote_address);
-                    snprintf(route.interface_name, sizeof(route.interface_name), "%s", gre_tunnel->gre_interface);
-                }
+                const en_tunnel_t *egress_tunnel = path_route_tunnel(command_ctx, path);
+                if (egress_tunnel != NULL && en_route_resolve_tunnel_egress(&route, egress_tunnel, &route) != EN_ERR_NONE) return EN_ERR_STATE_CONFLICT;
                 if (verify_vpp_route(command_ctx, route.destination_prefix, route.next_hop, route.interface_name, route.table_id) != EN_ERR_NONE) return EN_ERR_STATE_CONFLICT;
             }
         } else {
-            const en_tunnel_t *gre_tunnel = path_gre_tunnel(command_ctx, path);
-            if (gre_tunnel != NULL) {
-                if (verify_vpp_route(command_ctx, path->route_destination_prefix, gre_tunnel->gre_remote_address, gre_tunnel->gre_interface, -1) != EN_ERR_NONE) return EN_ERR_STATE_CONFLICT;
+            const en_tunnel_t *egress_tunnel = path_route_tunnel(command_ctx, path);
+            if (egress_tunnel != NULL) {
+                en_route_t route = {0};
+                snprintf(route.destination_prefix, sizeof(route.destination_prefix), "%s", path->route_destination_prefix);
+                if (en_route_resolve_tunnel_egress(&route, egress_tunnel, &route) != EN_ERR_NONE ||
+                    verify_vpp_route(command_ctx, route.destination_prefix, route.next_hop, route.interface_name, -1) != EN_ERR_NONE) return EN_ERR_STATE_CONFLICT;
             } else if (verify_vpp_route(command_ctx, path->route_destination_prefix, path->route_next_hop, NULL, -1) != EN_ERR_NONE) {
                 return EN_ERR_STATE_CONFLICT;
             }
@@ -269,11 +263,8 @@ static en_error_code_t vpp_remove(void *ctx, const char *traffic_key, const en_p
         for (size_t index = 0; index < path->route_count; index++) {
             char command[512] = {0};
             en_route_t route = path->routes[index];
-            const en_tunnel_t *gre_tunnel = path_gre_tunnel(command_ctx, path);
-            if (gre_tunnel != NULL && route.interface_name[0] == '\0') {
-                snprintf(route.next_hop, sizeof(route.next_hop), "%s", gre_tunnel->gre_remote_address);
-                snprintf(route.interface_name, sizeof(route.interface_name), "%s", gre_tunnel->gre_interface);
-            }
+            const en_tunnel_t *egress_tunnel = path_route_tunnel(command_ctx, path);
+            if (egress_tunnel != NULL && en_route_resolve_tunnel_egress(&route, egress_tunnel, &route) != EN_ERR_NONE) return EN_ERR_FORWARDING_UPDATE_FAILED;
             err = en_render_vpp_route_delete_entry(&route, command, sizeof(command));
             if (err != EN_ERR_NONE) break;
             err = run_vpp_command(command_ctx, command);
@@ -282,11 +273,7 @@ static en_error_code_t vpp_remove(void *ctx, const char *traffic_key, const en_p
     } else {
         char command[512] = {0};
         const en_tunnel_t *egress_tunnel = find_ctx_tunnel(command_ctx, path->egress_tunnel_id);
-        if (egress_tunnel != NULL && strcmp(egress_tunnel->tunnel_type, "gre_over_ipsec") == 0) {
-            err = en_render_vpp_gre_route_delete(path, egress_tunnel, command, sizeof(command));
-        } else {
-            err = en_render_vpp_route_delete_with_tunnel(path, egress_tunnel, command, sizeof(command));
-        }
+        err = en_render_vpp_route_delete_with_tunnel(path, egress_tunnel, command, sizeof(command));
         if (err == EN_ERR_NONE) err = run_vpp_command(command_ctx, command);
     }
     if (err == EN_ERR_NONE && command_ctx->install_path_command[0] == '\0') err = remove_vpp_gre_tunnels(command_ctx, path);
@@ -533,6 +520,13 @@ static const en_tunnel_t *path_gre_tunnel(const en_vpp_command_ctx_t *ctx, const
     }
     const en_tunnel_t *tunnel = find_ctx_tunnel(ctx, path->egress_tunnel_id);
     return tunnel != NULL && strcmp(tunnel->tunnel_type, "gre_over_ipsec") == 0 ? tunnel : NULL;
+}
+
+static const en_tunnel_t *path_route_tunnel(const en_vpp_command_ctx_t *ctx, const en_path_t *path)
+{
+    if (ctx == NULL || path == NULL) return NULL;
+    if (path->segment_count > 0) return find_ctx_tunnel(ctx, path->segments[0].tunnel_id);
+    return find_ctx_tunnel(ctx, path->egress_tunnel_id);
 }
 
 static en_error_code_t ensure_vpp_gre_tunnels(const en_vpp_command_ctx_t *ctx, const en_path_t *path)

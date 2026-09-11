@@ -197,10 +197,18 @@ fallback:
   - `swanctl --terminate --child ...` を生成する。
 - `en_render_vpp_route_replace`
   - `vppctl ip route add ... via ...` を生成する。
+- `en_route_resolve_tunnel_egress`
+  - Tunnel Backendから論理L3 egressのnext-hop／interfaceを解決し、GRE／VTI等をroute rendererから分離する。
 - `en_render_vpp_route_delete`
   - `vppctl ip route del ...` を生成する。
 - `en_apply_plan_from_config`
   - YAML config + selected pathから、swanctl conf / apply commands / rollback commandsを組み立てる。
+
+### 論理L3 egressの設定規則
+
+Pathのrouteは、外側endpointを直接参照するのではなく、Tunnelが提供する論理L3 egressへ解決してから適用します。通常のIPsecではrouteの`next_hop`を優先し、未指定時だけTunnelの`remote_endpoint`を使用します。`gre_over_ipsec`では未指定の`next_hop`を`gre_remote_address`、未指定の`interface_name`を`gre_interface`で補完します。明示されたroute値はBackendの既定値より優先されます。
+
+この境界により、将来VTIやVPP Native IPsecを追加しても、Path Selectionと共通のroute rendererを変更せず、Backend側のegress解決だけを追加できます。論文提出までの正式BackendはstrongSwan＋Linux XFRMであり、GREの実データパスは未踏期間の検証対象です。
 
 ### Netns runtime generator
 

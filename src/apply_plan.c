@@ -198,18 +198,15 @@ en_error_code_t en_apply_plan_from_config_with_file(
         for (size_t i = 0; i < selected_path->route_count; i++) {
             char vpp_command[EN_MAX_COMMAND_LEN] = {0};
             en_route_t route = selected_path->routes[i];
-            const en_tunnel_t *gre_tunnel = NULL;
+            const en_tunnel_t *egress_tunnel = NULL;
             for (size_t segment_index = 0; segment_index < selected_path->segment_count; segment_index++) {
                 const en_tunnel_t *candidate = find_tunnel(config, selected_path->segments[segment_index].tunnel_id);
                 if (candidate != NULL && strcmp(candidate->tunnel_type, "gre_over_ipsec") == 0) {
-                    gre_tunnel = candidate;
+                    egress_tunnel = candidate;
                     break;
                 }
             }
-            if (gre_tunnel != NULL && route.interface_name[0] == '\0') {
-                snprintf(route.next_hop, sizeof(route.next_hop), "%s", gre_tunnel->gre_remote_address);
-                snprintf(route.interface_name, sizeof(route.interface_name), "%s", gre_tunnel->gre_interface);
-            }
+            if (egress_tunnel != NULL && en_route_resolve_tunnel_egress(&route, egress_tunnel, &route) != EN_ERR_NONE) return EN_ERR_INVALID_ARGUMENT;
             err = en_render_vpp_route_replace_entry(&route, vpp_command, sizeof(vpp_command));
             if (err != EN_ERR_NONE) {
                 return err;
@@ -221,11 +218,7 @@ en_error_code_t en_apply_plan_from_config_with_file(
     } else {
         const en_tunnel_t *egress_tunnel = find_tunnel(config, selected_path->egress_tunnel_id);
         char vpp_command[EN_MAX_COMMAND_LEN] = {0};
-        if (egress_tunnel != NULL && strcmp(egress_tunnel->tunnel_type, "gre_over_ipsec") == 0) {
-            err = en_render_vpp_gre_route_replace(selected_path, egress_tunnel, vpp_command, sizeof(vpp_command));
-        } else {
-            err = en_render_vpp_route_replace(selected_path, egress_tunnel, vpp_command, sizeof(vpp_command));
-        }
+        err = en_render_vpp_route_replace(selected_path, egress_tunnel, vpp_command, sizeof(vpp_command));
         if (err != EN_ERR_NONE) {
             return err;
         }
@@ -240,18 +233,15 @@ en_error_code_t en_apply_plan_from_config_with_file(
         for (size_t i = selected_path->route_count; i > 0; i--) {
             char delete_route_command[EN_MAX_COMMAND_LEN] = {0};
             en_route_t route = selected_path->routes[i - 1];
-            const en_tunnel_t *gre_tunnel = NULL;
+            const en_tunnel_t *egress_tunnel = NULL;
             for (size_t segment_index = 0; segment_index < selected_path->segment_count; segment_index++) {
                 const en_tunnel_t *candidate = find_tunnel(config, selected_path->segments[segment_index].tunnel_id);
                 if (candidate != NULL && strcmp(candidate->tunnel_type, "gre_over_ipsec") == 0) {
-                    gre_tunnel = candidate;
+                    egress_tunnel = candidate;
                     break;
                 }
             }
-            if (gre_tunnel != NULL && route.interface_name[0] == '\0') {
-                snprintf(route.next_hop, sizeof(route.next_hop), "%s", gre_tunnel->gre_remote_address);
-                snprintf(route.interface_name, sizeof(route.interface_name), "%s", gre_tunnel->gre_interface);
-            }
+            if (egress_tunnel != NULL && en_route_resolve_tunnel_egress(&route, egress_tunnel, &route) != EN_ERR_NONE) return EN_ERR_INVALID_ARGUMENT;
             err = en_render_vpp_route_delete_entry(&route, delete_route_command, sizeof(delete_route_command));
             if (err == EN_ERR_NONE) {
                 if (!append_rollback_command(plan, delete_route_command)) return EN_ERR_INVALID_ARGUMENT;
@@ -261,7 +251,7 @@ en_error_code_t en_apply_plan_from_config_with_file(
         char delete_route_command[EN_MAX_COMMAND_LEN] = {0};
         const en_tunnel_t *egress_tunnel = find_tunnel(config, selected_path->egress_tunnel_id);
         if (egress_tunnel != NULL && strcmp(egress_tunnel->tunnel_type, "gre_over_ipsec") == 0) {
-            err = en_render_vpp_gre_route_delete(selected_path, egress_tunnel, delete_route_command, sizeof(delete_route_command));
+            err = en_render_vpp_route_delete_with_tunnel(selected_path, egress_tunnel, delete_route_command, sizeof(delete_route_command));
         } else {
             err = en_render_vpp_route_delete(selected_path, delete_route_command, sizeof(delete_route_command));
         }

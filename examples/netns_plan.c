@@ -35,6 +35,16 @@ static int ensure_directory_tree(const char *path)
 #endif
 }
 
+static int make_script_executable(const char *filename)
+{
+#if defined(_WIN32)
+    (void)filename;
+    return 0;
+#else
+    return filename != NULL && chmod(filename, 0755) == 0 ? 0 : 1;
+#endif
+}
+
 static const en_path_t *find_path(const en_yaml_config_t *config, const char *path_id)
 {
     for (size_t i = 0; i < config->path_count; i++) {
@@ -927,15 +937,15 @@ selected:
         return 1;
     }
 
-    if (write_apply_script(apply_script, &config, intent, selected_path, kind) != 0) {
+    if (write_apply_script(apply_script, &config, intent, selected_path, kind) != 0 || make_script_executable(apply_script) != 0) {
         fprintf(stderr, "failed to write %s\n", apply_script);
         return 1;
     }
-    if (write_integrated_script(integrated_script, &config, intent, selected_path, kind) != 0) {
+    if (write_integrated_script(integrated_script, &config, intent, selected_path, kind) != 0 || make_script_executable(integrated_script) != 0) {
         fprintf(stderr, "failed to write %s\n", integrated_script);
         return 1;
     }
-    if (write_rollback_script(rollback_script, &config, selected_path, kind) != 0) {
+    if (write_rollback_script(rollback_script, &config, selected_path, kind) != 0 || make_script_executable(rollback_script) != 0) {
         fprintf(stderr, "failed to write %s\n", rollback_script);
         return 1;
     }
@@ -943,11 +953,11 @@ selected:
         fprintf(stderr, "failed to write %s\n", summary);
         return 1;
     }
-    if (write_vpp_route_plan(vpp_plan, &config, selected_path) != 0) {
+    if (write_vpp_route_plan(vpp_plan, &config, selected_path) != 0 || make_script_executable(vpp_plan) != 0) {
         fprintf(stderr, "failed to write %s\n", vpp_plan);
         return 1;
     }
-    if (write_vpp_netns_route_plan(vpp_netns_plan, &config, intent, selected_path) != 0) {
+    if (write_vpp_netns_route_plan(vpp_netns_plan, &config, intent, selected_path) != 0 || make_script_executable(vpp_netns_plan) != 0) {
         fprintf(stderr, "failed to write %s\n", vpp_netns_plan);
         return 1;
     }

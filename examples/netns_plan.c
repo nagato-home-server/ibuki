@@ -564,7 +564,7 @@ static int write_vpp_route_plan(const char *filename, const en_yaml_config_t *co
     fprintf(file, "  if [ \"$DRY_RUN\" = \"1\" ]; then\n");
     fprintf(file, "    if [ -n \"$VPPCTL_SOCKET\" ]; then printf '[dry-run] %%s -s %%s %%s\\n' \"$VPPCTL\" \"$VPPCTL_SOCKET\" \"$*\"; else printf '[dry-run] %%s %%s\\n' \"$VPPCTL\" \"$*\"; fi\n");
     fprintf(file, "  else\n");
-    fprintf(file, "    if [ -n \"$VPPCTL_SOCKET\" ]; then \"$VPPCTL\" -s \"$VPPCTL_SOCKET\" \"$@\"; else \"$VPPCTL\" \"$@\"; fi\n");
+    fprintf(file, "    if [ -n \"$VPPCTL_SOCKET\" ]; then \"$VPPCTL\" -s \"$VPPCTL_SOCKET\" \"$*\"; else \"$VPPCTL\" \"$*\"; fi\n");
     fprintf(file, "  fi\n");
     fprintf(file, "}\n\n");
     write_vpp_node_dispatch(file, config);
@@ -699,7 +699,7 @@ static int write_vpp_netns_route_plan(const char *filename, const en_yaml_config
     fprintf(file, "  if [ \"$DRY_RUN\" = \"1\" ]; then\n");
     fprintf(file, "    if [ -n \"$VPPCTL_SOCKET\" ]; then printf '[dry-run] %%s -s %%s %%s\\n' \"$VPPCTL\" \"$VPPCTL_SOCKET\" \"$*\"; else printf '[dry-run] %%s %%s\\n' \"$VPPCTL\" \"$*\"; fi\n");
     fprintf(file, "  else\n");
-    fprintf(file, "    if [ -n \"$VPPCTL_SOCKET\" ]; then \"$VPPCTL\" -s \"$VPPCTL_SOCKET\" \"$@\"; else \"$VPPCTL\" \"$@\"; fi\n");
+    fprintf(file, "    if [ -n \"$VPPCTL_SOCKET\" ]; then \"$VPPCTL\" -s \"$VPPCTL_SOCKET\" \"$*\"; else \"$VPPCTL\" \"$*\"; fi\n");
     fprintf(file, "  fi\n");
     fprintf(file, "}\n\n");
     write_vpp_node_dispatch(file, config);

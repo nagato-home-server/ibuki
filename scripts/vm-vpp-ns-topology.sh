@@ -14,7 +14,7 @@ fi
 vpp() {
   ns="$1"
   shift
-  "$VPPCTL" -s "$RUN_BASE/$ns/cli.sock" "$@"
+  "$VPPCTL" -s "$RUN_BASE/$ns/cli.sock" "$*"
 }
 
 link_pair() {

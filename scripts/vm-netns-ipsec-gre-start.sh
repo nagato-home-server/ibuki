@@ -84,6 +84,14 @@ sed \
   "$CONFIG" > "$SWANCTL_WORK_BASE/site-b/swanctl.conf"
 chmod 600 "$SWANCTL_WORK_BASE/site-a/swanctl.conf" "$SWANCTL_WORK_BASE/site-b/swanctl.conf"
 
+if [ "${GRE_DYNAMIC_TS:-0}" = "1" ]; then
+  sed -i \
+    -e 's/^        local_ts = .*/        local_ts = dynamic[gre]/' \
+    -e 's/^        remote_ts = .*/        remote_ts = dynamic[gre]/' \
+    "$SWANCTL_WORK_BASE/site-a/swanctl.conf" "$SWANCTL_WORK_BASE/site-b/swanctl.conf"
+  printf 'Using dynamic GRE transport selectors for VPP-owned outer addresses.\n'
+fi
+
 start_node site-a
 start_node site-b
 swanctl --load-conns --uri "unix://$RUN_BASE/site-a/charon.vici" --file "$SWANCTL_WORK_BASE/site-a/swanctl.conf"

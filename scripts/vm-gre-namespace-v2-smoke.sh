@@ -19,7 +19,7 @@ if ! ip netns exec site-a true >/dev/null 2>&1 || ! ip netns exec site-b true >/
 if [ ! -x "$BUILD_DIR/eventnet_netns_plan" ]; then BUILD_DIR="$BUILD_DIR" sh scripts/vm-build-cc.sh; fi
 sh scripts/vm-vpp-ns-topology.sh setup
 BUILD_DIR="$BUILD_DIR" OUT_DIR="$OUT_DIR" sh scripts/vm-generate-netns-runtime.sh "$YAML" --intent intent-gre-namespace-v2
-GRE_CHILD=gre-namespace-v2 GRE_OUTER_LOCAL_ENDPOINT=198.18.1.1 GRE_OUTER_REMOTE_ENDPOINT=198.18.2.1 RUN_BASE="$RUN_BASE" sh scripts/vm-netns-ipsec-gre-start.sh "$OUT_DIR"
+GRE_CHILD=gre-namespace-v2 GRE_DYNAMIC_TS=1 GRE_OUTER_LOCAL_ENDPOINT=198.18.1.1 GRE_OUTER_REMOTE_ENDPOINT=198.18.2.1 RUN_BASE="$RUN_BASE" sh scripts/vm-netns-ipsec-gre-start.sh "$OUT_DIR"
 DRY_RUN=0 VPPCTL_SOCKET=/run/ibuki-vpp-ns/site-a/cli.sock sh "$OUT_DIR/vpp-netns-route-plan.sh"
 printf '== namespaced GRE over IPsec: site-a -> site-b ==\n'
 ip netns exec site-a ping -c 3 -W 2 -I 10.10.1.1 10.10.2.1

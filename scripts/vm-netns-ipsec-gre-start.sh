@@ -90,6 +90,8 @@ swanctl --load-conns --uri "unix://$RUN_BASE/site-a/charon.vici" --file "$SWANCT
 swanctl --load-creds --uri "unix://$RUN_BASE/site-a/charon.vici" --file "$SWANCTL_WORK_BASE/site-a/swanctl.conf"
 swanctl --load-conns --uri "unix://$RUN_BASE/site-b/charon.vici" --file "$SWANCTL_WORK_BASE/site-b/swanctl.conf"
 swanctl --load-creds --uri "unix://$RUN_BASE/site-b/charon.vici" --file "$SWANCTL_WORK_BASE/site-b/swanctl.conf"
+swanctl --list-conns --uri "unix://$RUN_BASE/site-a/charon.vici" >&2
+swanctl --list-conns --uri "unix://$RUN_BASE/site-b/charon.vici" >&2
 swanctl --initiate --uri "unix://$RUN_BASE/site-a/charon.vici" --child "$child_id"
 
 printf 'GRE over IPsec CHILD_SA established.\n'

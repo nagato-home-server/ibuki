@@ -24,7 +24,7 @@ VPPをサイト単位に分けることで、VPPのGRE outer endpoint、Linux ke
 
 ## 共通ランタイム
 
-`scripts/vm-vpp-ns-runtime.sh` は、サイト名前空間ごとにVPPを起動・停止・状態確認する。各インスタンスには個別のCLI socket、API socket、PID、ログ、API segment prefixを割り当てる。
+`scripts/vm-vpp-ns-runtime.sh` は、サイト名前空間ごとにVPPを起動・停止・状態確認する。各インスタンスには個別のCLI socket、API socket、統計用`stats.sock`、PID、ログ、API segment prefixを割り当てる。統計ソケットも分離することで、複数VPPが共有`/run/vpp/stats.sock`をbindして起動に失敗することを防ぐ。
 
 ```sh
 sudo sh scripts/vm-vpp-ns-runtime.sh start

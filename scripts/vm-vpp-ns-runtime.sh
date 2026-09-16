@@ -39,6 +39,9 @@ api-segment {
 socksvr {
   socket-name $dir/api.sock
 }
+statseg {
+  socket-name $dir/stats.sock
+}
 logging {
   default-log-level notice
 }
@@ -66,7 +69,7 @@ start_node() {
     printf '%s VPP already running: %s\n' "$ns" "$(cat "$RUN_BASE/$ns/vpp.pid")"
     return
   fi
-  rm -f "$RUN_BASE/$ns/cli.sock" "$RUN_BASE/$ns/api.sock" "$RUN_BASE/$ns/vpp.pid"
+  rm -f "$RUN_BASE/$ns/cli.sock" "$RUN_BASE/$ns/api.sock" "$RUN_BASE/$ns/stats.sock" "$RUN_BASE/$ns/vpp.pid"
   : > "$RUN_BASE/$ns/vpp.stdout.log"
   : > "$RUN_BASE/$ns/vpp.stderr.log"
   printf 'Starting VPP in namespace %s...\n' "$ns"
@@ -108,7 +111,7 @@ stop_node() {
     done
     kill -KILL "$pid" 2>/dev/null || true
   fi
-  rm -f "$RUN_BASE/$ns/cli.sock" "$RUN_BASE/$ns/api.sock" "$RUN_BASE/$ns/vpp.pid"
+  rm -f "$RUN_BASE/$ns/cli.sock" "$RUN_BASE/$ns/api.sock" "$RUN_BASE/$ns/stats.sock" "$RUN_BASE/$ns/vpp.pid"
 }
 
 status_node() {

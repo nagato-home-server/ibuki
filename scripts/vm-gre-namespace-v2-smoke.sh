@@ -16,7 +16,10 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 if ! ip netns exec site-a true >/dev/null 2>&1 || ! ip netns exec site-b true >/dev/null 2>&1; then sh scripts/vm-netns-setup.sh; fi
-if [ ! -x "$BUILD_DIR/eventnet_netns_plan" ]; then BUILD_DIR="$BUILD_DIR" sh scripts/vm-build-cc.sh; fi
+if [ "${SKIP_BUILD:-0}" != "1" ]; then
+  printf 'Building the controller before generating the namespace plan...\n'
+  BUILD_DIR="$BUILD_DIR" sh scripts/vm-build-cc.sh
+fi
 sh scripts/vm-vpp-ns-topology.sh setup
 BUILD_DIR="$BUILD_DIR" OUT_DIR="$OUT_DIR" sh scripts/vm-generate-netns-runtime.sh "$YAML" --intent intent-gre-namespace-v2
 GRE_CHILD=gre-namespace-v2 GRE_DYNAMIC_TS=1 GRE_OUTER_LOCAL_ENDPOINT=198.18.1.1 GRE_OUTER_REMOTE_ENDPOINT=198.18.2.1 RUN_BASE="$RUN_BASE" sh scripts/vm-netns-ipsec-gre-start.sh "$OUT_DIR"

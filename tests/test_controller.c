@@ -20,7 +20,14 @@
 #endif
 
 #define ASSERT_TRUE(expr) do { if (!(expr)) { fprintf(stderr, "assert failed: %s:%d: %s\n", __FILE__, __LINE__, #expr); exit(1); } } while (0)
-#define ASSERT_STREQ(left, right) ASSERT_TRUE(strcmp((left), (right)) == 0)
+#define ASSERT_STREQ(left, right) do { \
+    const char *actual_value = (left); \
+    const char *expected_value = (right); \
+    if (actual_value == NULL || expected_value == NULL || strcmp(actual_value, expected_value) != 0) { \
+        fprintf(stderr, "string assertion failed: %s:%d: actual='%s' expected='%s'\\n", __FILE__, __LINE__, actual_value == NULL ? "(null)" : actual_value, expected_value == NULL ? "(null)" : expected_value); \
+        exit(1); \
+    } \
+} while (0)
 
 static void make_test_file_private(const char *filename)
 {

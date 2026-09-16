@@ -67,18 +67,31 @@ start_node() {
     return
   fi
   rm -f "$RUN_BASE/$ns/cli.sock" "$RUN_BASE/$ns/api.sock" "$RUN_BASE/$ns/vpp.pid"
+  : > "$RUN_BASE/$ns/vpp.stdout.log"
+  : > "$RUN_BASE/$ns/vpp.stderr.log"
   printf 'Starting VPP in namespace %s...\n' "$ns"
-  ip netns exec "$ns" "$VPP" -c "$RUN_BASE/$ns/startup.conf" >/dev/null 2>&1 &
+  ip netns exec "$ns" "$VPP" -c "$RUN_BASE/$ns/startup.conf" \
+    >"$RUN_BASE/$ns/vpp.stdout.log" 2>"$RUN_BASE/$ns/vpp.stderr.log" &
   echo "$!" > "$RUN_BASE/$ns/vpp.pid"
   for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
     if [ -S "$RUN_BASE/$ns/cli.sock" ] && "$VPPCTL" -s "$RUN_BASE/$ns/cli.sock" show version >/dev/null 2>&1; then
       printf '%s VPP ready: %s\n' "$ns" "$RUN_BASE/$ns/cli.sock"
       return
     fi
+    if ! is_running "$ns"; then
+      break
+    fi
+    printf 'Waiting for VPP in %s...\n' "$ns"
     sleep 0.5
   done
   printf 'VPP did not become ready in %s. Log follows:\n' "$ns" >&2
   cat "$RUN_BASE/$ns/vpp.log" >&2 2>/dev/null || true
+  printf '%s stdout:\n' "$ns" >&2
+  cat "$RUN_BASE/$ns/vpp.stdout.log" >&2 2>/dev/null || true
+  printf '%s stderr:\n' "$ns" >&2
+  cat "$RUN_BASE/$ns/vpp.stderr.log" >&2 2>/dev/null || true
+  printf '%s startup.conf:\n' "$ns" >&2
+  cat "$RUN_BASE/$ns/startup.conf" >&2 2>/dev/null || true
   exit 1
 }
 

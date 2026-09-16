@@ -254,6 +254,7 @@ typedef struct {
     char namespace_interface[EN_MAX_ID_LEN];
     char namespace_address[EN_MAX_ID_LEN];
     char vpp_address[EN_MAX_ID_LEN];
+    char vpp_socket[EN_MAX_ID_LEN];
     char next_hop[EN_MAX_ID_LEN];
     int allowed_vlans[EN_MAX_ALLOWED_VLANS];
     size_t allowed_vlan_count;

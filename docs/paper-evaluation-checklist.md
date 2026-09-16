@@ -133,6 +133,15 @@ ctest --test-dir build --output-on-failure -R 'eventnet_state_wrong_(intent|path
 
 ## 7. 論文執筆へ移る判定
 
+提出前に必要な成果物の一覧とPythonによる図生成方法は、`docs/paper-submission-minimum.md`に集約する。評価CSVから図を生成する例は次のとおりである。
+
+```sh
+python3 scripts/generate-paper-graphs.py \
+  --summary-csv out/evaluation/YYYYMMDD-HHMMSS/summary.csv \
+  --metrics-csv out/paper-metrics.csv \
+  --out-dir out/paper-figures
+```
+
 root不要の論文前validationは、次の一括実行で全caseがpassすることを基準にします。
 
 ```sh

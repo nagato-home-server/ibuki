@@ -29,6 +29,7 @@ local_id="${GRE_LOCAL_ID:-$(awk '$1 == "id" { print $3; exit }' "$CONFIG")}"
 remote_id="${GRE_REMOTE_ID:-$(awk '$1 == "id" { count++; if (count == 2) { print $3; exit } }' "$CONFIG")}"
 outer_local="${GRE_OUTER_LOCAL_ENDPOINT:-172.16.1.1}"
 outer_remote="${GRE_OUTER_REMOTE_ENDPOINT:-172.16.2.1}"
+child_id="${GRE_CHILD:-gre-a-b}"
 
 ip netns exec site-a sysctl -w net.ipv4.ip_forward=1 >/dev/null
 ip netns exec site-b sysctl -w net.ipv4.ip_forward=1 >/dev/null
@@ -72,6 +73,8 @@ cp "$CONFIG" "$SWANCTL_WORK_BASE/site-a/swanctl.conf"
 sed \
   -e "s/^    local_addrs = .*/    local_addrs = $remote_endpoint/" \
   -e "s/^    remote_addrs = .*/    remote_addrs = $local_endpoint/" \
+  -e "s/^        local_ts = .*/        local_ts = $outer_remote\/32[gre]/" \
+  -e "s/^        remote_ts = .*/        remote_ts = $outer_local\/32[gre]/" \
   -e "s/^      id = $local_id$/      id = __IBUKI_LOCAL_ID__/" \
   -e "s/^      id = $remote_id$/      id = $local_id/" \
   -e "s/^      id = __IBUKI_LOCAL_ID__$/      id = $remote_id/" \
@@ -87,6 +90,6 @@ swanctl --load-conns --uri "unix://$RUN_BASE/site-a/charon.vici" --file "$SWANCT
 swanctl --load-creds --uri "unix://$RUN_BASE/site-a/charon.vici" --file "$SWANCTL_WORK_BASE/site-a/swanctl.conf"
 swanctl --load-conns --uri "unix://$RUN_BASE/site-b/charon.vici" --file "$SWANCTL_WORK_BASE/site-b/swanctl.conf"
 swanctl --load-creds --uri "unix://$RUN_BASE/site-b/charon.vici" --file "$SWANCTL_WORK_BASE/site-b/swanctl.conf"
-swanctl --initiate --uri "unix://$RUN_BASE/site-a/charon.vici" --child gre-a-b
+swanctl --initiate --uri "unix://$RUN_BASE/site-a/charon.vici" --child "$child_id"
 
 printf 'GRE over IPsec CHILD_SA established.\n'

@@ -50,7 +50,7 @@
 
 本稿では，IPsecを中心とする標準VPN技術と各拠点のSoftware Gatewayを基盤とし，通信Pathを第一級の制御対象として扱うネットワーク制御基盤「Ibuki」を提案する．Ibukiは，セキュリティ，管理ポリシー，可用性，通信品質に基づいてPathを選択し，Path間の変更を状態遷移として管理する．最終的にはGUIを主要な運用インターフェースとし，OSSとして公開されたAdapter/Plugin機構を通じてCloud VPN等の異なる実装へ拡張可能な，オープンなSD-WAN的制御基盤を目指す．ただし，本稿の研究範囲はその全体構想のうち，Path中心の制御モデルと，Path変更を明示的な状態遷移として扱う仕組みに限定する．
 
-C言語による試作実装では，YAMLからNode，Tunnel，経路，Intent（要求記述）を読み込み，Path Selection，障害時Fallback判断，Explain JSONL出力，strongSwan/VPP向けruntime plan生成を実装した．Linux VM上のnetwork namespace環境では，Direct PathおよびDirect障害時のHub Fallbackについて，IPsec runtime起動，ESP counter確認，VPP forwarding設定，LAN疎通確認までの統合基本疎通試験を確認した．一方，Graceful，Flow Preserve，runtime rollback機構，Observed State復元，複数管理Domain間連携は今後の実装対象である．
+C言語による試作実装では，YAMLからNode，Tunnel，経路，Intent（要求記述）を読み込み，Path Selection，障害時Fallback判断，Explain JSONL出力，strongSwan/VPP向けruntime plan生成を実装した．Linux VM上のnetwork namespace環境では，Direct PathおよびDirect障害時のHub Fallbackについて，IPsec runtime起動，ESP counter確認，VPP forwarding設定，LAN疎通確認までの統合基本疎通試験を確認した．また，Gracefulの状態遷移，drain，cleanup，失敗時rollbackをC層で実装・テストしたが，実環境でのGraceful切替は未検証である．Flow Preserve，Controller HA，Observed State復元の本番運用，複数管理Domain間連携は今後の実装対象である．
 \end{abstract}
 
 \noindent\textbf{キーワード:} IPsec，strongSwan，FD.io VPP，Tunnel抽象化，Path Transition，イベント駆動型ネットワーク制御
@@ -73,7 +73,7 @@ C言語による試作実装では，YAMLからNode，Tunnel，経路，Intent�
 \item Path変更を最終設定の更新ではなく，Prepare，Validate，Commit，Post Validation，Rollbackを持つTransitionとして扱い，Immediate，Graceful，Flow Preserve等のStrategyを同一状態モデル上で比較可能にする．
 \end{enumerate}
 
-現時点の試作実装は，YAMLに基づくPath定義，Intent（要求記述）に対するPath Selection，障害イベントに基づくFallback判断，Explain出力，strongSwan/VPP向けruntime plan生成，Linux VM上でのDirect/Hub統合基本疎通試験を対象とする．daemon化，Observed Stateに基づくReconciliation，Graceful/Flow Preserve 遷移，runtime rollback機構，複数Domain Controller間協調は今後の実装対象である．
+現時点の試作実装は，YAMLに基づくPath定義，Intent（要求記述）に対するPath Selection，障害イベントに基づくFallback判断，Explain出力，strongSwan/VPP向けruntime plan生成，Linux VM上でのDirect/Hub統合基本疎通試験を対象とする．Graceful遷移とRollbackの制御ロジックは実装済みであるが，実環境での切替・復旧は追加検証段階である．Flow Preserve，Controller HA，複数Domain Controller間協調は今後の実装対象である．
 
 本稿は，ネットワーク分野を専門とする研究者だけでなく，ネットワーク制御を学び始めた学生，隣接分野の研究者，実務でネットワークを扱う技術者が読むことも想定する．そのため，専門用語を必要以上に省略せず，初出時には意味や役割を文章で説明する．一方，IPsec，IKEv2，strongSwan，VPP，FRRなど，規格名・製品名・ソフトウェア名として定着している固有名詞は原表記を用いる．また，Intent，Capabilityなど実装上の概念名については，初出時に日本語による説明を付し，以後は文脈に応じて原語を併記する．本稿でいう「経路」は利用者通信が端点間で実際に通過する一連の通信路を，「Path Transition」は現在利用中の経路から別の経路へ移行する一連の手続きを意味する．
 
@@ -585,7 +585,7 @@ Path変更を単なるroute更新やTunnel起動の列として扱うだけで�
 \subsection{限界と今後の課題}
 本稿の評価は基本疎通試験中心であり，統計的な定量評価は未完了である．今後は，切替中のpacket loss数，最大通信断時間，RTT変化，TCP session continuity，packet reordering，Fallback plan生成時間の平均・中央値・最大・標準偏差，integrated runtimeの工程別時間，CPU/メモリ使用量を測定する必要がある．特に，integrated-directおよびintegrated-fallbackの時間を，YAML parse，Path Selection，plan生成，IPsec config生成，charon起動，swanctl load，CHILD SA initiate，ESP counter確認，VPP setup，route apply，ping verificationへ分解することが重要である．
 
-また，Graceful，runtime rollback機構，Observed State復元，Control Plane障害時のActive Path維持，複数管理Domain間連携は未実装である．Flow Preserveはflow識別，flow table，timeout管理，Forwarding rule分岐を必要とするため，初期評価ではGracefulとRollbackを優先し，Flow Preserveは拡張評価として扱うのが現実的である．
+また，Gracefulとruntime rollback機構の制御ロジックおよびmock試験は実装済みであるが，実strongSwan／VPP環境での切替・復旧試験は未完了である．Observed State復元の本番運用，Control Plane障害時のActive Path維持，複数管理Domain間連携も追加課題である．Flow Preserveはflow識別，flow table，timeout管理，Forwarding rule分岐を必要とするため，初期評価ではGracefulとRollbackを優先し，Flow Preserveは拡張評価として扱うのが現実的である．
 
 \section{制約と今後の展望}
 Ibukiは，Path変更時の完全なpacket loss zeroを保証するものではない．また，異なるTunnelをまたいだ完全なpacket orderingも保証しない．これは，独自のpacket duplication，独自sequence number，受信側reordering protocolを導入しないためである．本研究はVPNプロトコルそのものを改良するのではなく，既存Tunnelをどの順序でPrepareし，検証し，切り替え，失敗時に戻すかを扱う制御基盤である．したがって，通信影響をゼロにすることではなく，通信影響を測定可能かつ説明可能にし，要求に応じたTransition Strategyを選べるようにすることを目標とする．
@@ -605,7 +605,7 @@ Adapter/Capabilityに関しては，Local strongSwan Adapterを基準に，Cloud
 \section{結論}
 本稿では，標準Tunnelを共通制御リソースとして扱い，複数Tunnelから構成される経路の選択と状態遷移をイベント駆動で制御する基盤Ibukiを提案した．Ibukiは，新しいVPNプロトコルや独自Data Planeを導入せず，IPsec，strongSwan，VPP，FRR，Linux networking等の既存技術を活用する．本研究の中心的な提案は二点に限定される．第一は，Tunnel実装差をAdapterとCapability（能力情報）へ局所化し，機器やVPN実装への依存を上位制御論理から切り離すTunnel Resource抽象化である．第二は，Path変更をPrepare，Validate，Commit，Post Validation，Rollbackを持つ独立したTransitionとして扱い，通信影響と失敗時復旧を明示的に管理するExplicit Path Transition Modelである．
 
-C言語試作実装では，YAMLに基づくPath Selection，Fallback判断，Explain出力，strongSwan/VPP向けruntime plan生成，Direct/Hub統合基本疎通試験までを確認した．これにより，標準TunnelをPath Resourceとして扱い，上位のPath Selection論理からstrongSwan/VPP操作へ接続できることを初期的に示した．今後は，Graceful，runtime rollback機構，Observed State復元，Control Plane障害試験，異なるTunnel Backend，複数管理Domain協調を実装・評価し，Ibukiの有効性を定量的に検証する．
+C言語試作実装では，YAMLに基づくPath Selection，Fallback判断，Explain出力，strongSwan/VPP向けruntime plan生成，Direct/Hub統合基本疎通試験，Graceful／Rollbackの制御ロジック試験までを確認した．これにより，標準TunnelをPath Resourceとして扱い，上位のPath Selection論理からstrongSwan/VPP操作へ接続できることを初期的に示した．今後は，Graceful／Rollbackの実runtime試験，VLAN／VRF実パケット試験，反復測定，Observed State復元，Control Plane障害試験，異なるTunnel Backend，複数管理Domain協調を評価し，Ibukiの有効性を定量的に検証する．
 
 \begin{thebibliography}{99}
 \bibitem{rfc4301} S. Kent and K. Seo, ``Security Architecture for the Internet Protocol,'' RFC 4301, Internet Engineering Task Force, Dec. 2005. \url{https://www.rfc-editor.org/rfc/rfc4301}

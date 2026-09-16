@@ -104,13 +104,16 @@ static void write_vpp_gre_setup(FILE *file, const en_yaml_config_t *config, cons
         fprintf(file, "printf '# GRE over IPsec: %s (%s -> %s)\\n'\n", tunnel->tunnel_id, tunnel->local_endpoint, tunnel->remote_endpoint);
         const char *gre_local_endpoint = tunnel->gre_outer_local_endpoint[0] == '\0' ? tunnel->local_endpoint : tunnel->gre_outer_local_endpoint;
         const char *gre_remote_endpoint = tunnel->gre_outer_remote_endpoint[0] == '\0' ? tunnel->remote_endpoint : tunnel->gre_outer_remote_endpoint;
-        if (tunnel->gre_instance >= 0) fprintf(file, "run_vpp create gre tunnel src %s dst %s instance %d del 2>/dev/null || true\n", gre_local_endpoint, gre_remote_endpoint, tunnel->gre_instance);
-        else fprintf(file, "run_vpp create gre tunnel src %s dst %s del 2>/dev/null || true\n", gre_local_endpoint, gre_remote_endpoint);
-        if (tunnel->gre_instance >= 0) fprintf(file, "run_vpp create gre tunnel src %s dst %s instance %d\n", gre_local_endpoint, gre_remote_endpoint, tunnel->gre_instance);
-        else fprintf(file, "run_vpp create gre tunnel src %s dst %s\n", gre_local_endpoint, gre_remote_endpoint);
-        fprintf(file, "run_vpp set interface ip address %s %s\n", tunnel->gre_interface, tunnel->gre_local_address);
-        if (tunnel->gre_mtu > 0) fprintf(file, "run_vpp set interface mtu %d %s\n", tunnel->gre_mtu, tunnel->gre_interface);
-        fprintf(file, "run_vpp set interface state %s up\n", tunnel->gre_interface);
+        if (tunnel->gre_instance >= 0) fprintf(file, "run_vpp_node %s create gre tunnel src %s dst %s instance %d del 2>/dev/null || true\n", tunnel->local_node, gre_local_endpoint, gre_remote_endpoint, tunnel->gre_instance);
+        else fprintf(file, "run_vpp_node %s create gre tunnel src %s dst %s del 2>/dev/null || true\n", tunnel->local_node, gre_local_endpoint, gre_remote_endpoint);
+        if (tunnel->gre_instance >= 0) fprintf(file, "run_vpp_node %s create gre tunnel src %s dst %s instance %d\n", tunnel->local_node, gre_local_endpoint, gre_remote_endpoint, tunnel->gre_instance);
+        else fprintf(file, "run_vpp_node %s create gre tunnel src %s dst %s\n", tunnel->local_node, gre_local_endpoint, gre_remote_endpoint);
+        fprintf(file, "run_vpp_node %s set interface ip address %s %s\n", tunnel->local_node, tunnel->gre_interface, tunnel->gre_local_address);
+        if (tunnel->gre_mtu > 0) {
+            fprintf(file, "if [ \"$DRY_RUN\" = \"1\" ]; then run_vpp_node %s set interface mtu %d %s; elif run_vpp_node %s set interface mtu %d %s 2>/dev/null; then :; else run_vpp_node %s set interface mtu %s %d; fi\n",
+                tunnel->local_node, tunnel->gre_mtu, tunnel->gre_interface, tunnel->local_node, tunnel->gre_mtu, tunnel->gre_interface, tunnel->local_node, tunnel->gre_interface, tunnel->gre_mtu);
+        }
+        fprintf(file, "run_vpp_node %s set interface state %s up\n", tunnel->local_node, tunnel->gre_interface);
     }
     if (path->segment_count == 0) {
         const en_tunnel_t *tunnel = find_tunnel(config, path->egress_tunnel_id);
@@ -123,10 +126,29 @@ static void write_vpp_gre_setup(FILE *file, const en_yaml_config_t *config, cons
             if (tunnel->gre_instance >= 0) fprintf(file, "run_vpp create gre tunnel src %s dst %s instance %d\n", gre_local_endpoint, gre_remote_endpoint, tunnel->gre_instance);
             else fprintf(file, "run_vpp create gre tunnel src %s dst %s\n", gre_local_endpoint, gre_remote_endpoint);
             fprintf(file, "run_vpp set interface ip address %s %s\n", tunnel->gre_interface, tunnel->gre_local_address);
-            if (tunnel->gre_mtu > 0) fprintf(file, "run_vpp set interface mtu %d %s\n", tunnel->gre_mtu, tunnel->gre_interface);
+            if (tunnel->gre_mtu > 0) {
+                fprintf(file, "if [ \"$DRY_RUN\" = \"1\" ]; then run_vpp set interface mtu %d %s; elif run_vpp set interface mtu %d %s 2>/dev/null; then :; else run_vpp set interface mtu %s %d; fi\n",
+                    tunnel->gre_mtu, tunnel->gre_interface, tunnel->gre_mtu, tunnel->gre_interface, tunnel->gre_interface, tunnel->gre_mtu);
+            }
             fprintf(file, "run_vpp set interface state %s up\n", tunnel->gre_interface);
         }
     }
+}
+
+static void write_vpp_node_dispatch(FILE *file, const en_yaml_config_t *config)
+{
+    fprintf(file, "run_vpp_node() {\n");
+    fprintf(file, "  node=\"$1\"; shift\n");
+    fprintf(file, "  socket=\"\"\n");
+    fprintf(file, "  case \"$node\" in\n");
+    for (size_t index = 0; index < config->vpp_edge_count; index++) {
+        const en_vpp_edge_t *edge = &config->vpp_edges[index];
+        if (edge->vpp_socket[0] == '\0') continue;
+        fprintf(file, "    %s) socket='%s' ;;\n", edge->node_id, edge->vpp_socket);
+    }
+    fprintf(file, "  esac\n");
+    fprintf(file, "  if [ -n \"$socket\" ]; then VPPCTL_SOCKET=\"$socket\" run_vpp \"$@\"; else run_vpp \"$@\"; fi\n");
+    fprintf(file, "}\n\n");
 }
 
 static const en_intent_t *find_intent(const en_yaml_config_t *config, const char *intent_id)
@@ -529,6 +551,7 @@ static int write_vpp_route_plan(const char *filename, const en_yaml_config_t *co
     fprintf(file, "    if [ -n \"$VPPCTL_SOCKET\" ]; then \"$VPPCTL\" -s \"$VPPCTL_SOCKET\" \"$@\"; else \"$VPPCTL\" \"$@\"; fi\n");
     fprintf(file, "  fi\n");
     fprintf(file, "}\n\n");
+    write_vpp_node_dispatch(file, config);
     fprintf(file, "ensure_vpp_table() {\n");
     fprintf(file, "  table=\"$1\"\n");
     fprintf(file, "  if [ \"$DRY_RUN\" = \"1\" ]; then\n");
@@ -555,7 +578,7 @@ static int write_vpp_route_plan(const char *filename, const en_yaml_config_t *co
         for (size_t i = 0; i < path->route_count; i++) {
             const en_route_t *route = &path->routes[i];
             fprintf(file, "printf '# explicit route %s on node %s\\n'\n", route->route_id, route->node_id);
-            fprintf(file, "run_vpp ip route add %s", route->destination_prefix);
+            fprintf(file, "run_vpp_node %s ip route add %s", route->node_id, route->destination_prefix);
             if (route->table_id >= 0) {
                 fprintf(file, " table %d", route->table_id);
             }
@@ -570,19 +593,19 @@ static int write_vpp_route_plan(const char *filename, const en_yaml_config_t *co
         }
     } else if (path->segment_count == 0) {
         fprintf(file, "printf '# node %s: legacy destination route\n'\n", path->source);
-        fprintf(file, "run_vpp ip route add %s via %s\n", destination_prefix, path->route_next_hop);
+        fprintf(file, "run_vpp_node %s ip route add %s via %s\n", path->source, destination_prefix, path->route_next_hop);
     } else if (path->segment_count == 1) {
         fprintf(file, "printf '# node %s: destination route\\n'\n", path->source);
         if (strcmp(first_tunnel->tunnel_type, "gre_over_ipsec") == 0) {
-            fprintf(file, "run_vpp ip route add %s via %s %s\n", destination_prefix, first_tunnel->gre_remote_address, first_tunnel->gre_interface);
+            fprintf(file, "run_vpp_node %s ip route add %s via %s %s\n", path->source, destination_prefix, first_tunnel->gre_remote_address, first_tunnel->gre_interface);
             if (source_prefix[0] != '\0') {
                 fprintf(file, "printf '# node %s: source return route\\n'\n", path->destination);
-                fprintf(file, "run_vpp ip route add %s via %s %s\n", source_prefix, first_tunnel->gre_local_address, first_tunnel->gre_interface);
+                fprintf(file, "run_vpp_node %s ip route add %s via %s %s\n", path->destination, source_prefix, first_tunnel->gre_local_address, first_tunnel->gre_interface);
             }
         } else {
-            fprintf(file, "run_vpp ip route add %s via %s\n", destination_prefix, first_tunnel->remote_endpoint);
+            fprintf(file, "run_vpp_node %s ip route add %s via %s\n", path->source, destination_prefix, first_tunnel->remote_endpoint);
             fprintf(file, "printf '# node %s: source return route\\n'\n", path->destination);
-            fprintf(file, "run_vpp ip route add %s via %s\n", source_prefix, first_tunnel->local_endpoint);
+            fprintf(file, "run_vpp_node %s ip route add %s via %s\n", path->destination, source_prefix, first_tunnel->local_endpoint);
         }
     } else {
         fprintf(file, "printf '# node %s: destination route to first waypoint\\n'\n", path->source);
@@ -663,6 +686,7 @@ static int write_vpp_netns_route_plan(const char *filename, const en_yaml_config
     fprintf(file, "    if [ -n \"$VPPCTL_SOCKET\" ]; then \"$VPPCTL\" -s \"$VPPCTL_SOCKET\" \"$@\"; else \"$VPPCTL\" \"$@\"; fi\n");
     fprintf(file, "  fi\n");
     fprintf(file, "}\n\n");
+    write_vpp_node_dispatch(file, config);
     fprintf(file, "ensure_vpp_table() {\n");
     fprintf(file, "  table=\"$1\"\n");
     fprintf(file, "  if [ \"$DRY_RUN\" = \"1\" ]; then\n");
@@ -701,8 +725,8 @@ static int write_vpp_netns_route_plan(const char *filename, const en_yaml_config
             const char *gre_remote_endpoint = gre_tunnel->gre_outer_remote_endpoint[0] == '\0' ? gre_tunnel->remote_endpoint : gre_tunnel->gre_outer_remote_endpoint;
             const char *gre_local_endpoint = gre_tunnel->gre_outer_local_endpoint[0] == '\0' ? gre_tunnel->local_endpoint : gre_tunnel->gre_outer_local_endpoint;
             fprintf(file, "printf '# GRE underlay routes\\n'\n");
-            fprintf(file, "run_vpp ip route add %s/32 via %s %s\n", gre_remote_endpoint, source_next_hop, source_vpp_interface);
-            fprintf(file, "run_vpp ip route add %s/32 via %s %s\n", gre_local_endpoint, destination_next_hop, destination_vpp_interface);
+            fprintf(file, "run_vpp_node %s ip route add %s/32 via %s %s\n", path->source, gre_remote_endpoint, source_next_hop, source_vpp_interface);
+            fprintf(file, "run_vpp_node %s ip route add %s/32 via %s %s\n", path->destination, gre_local_endpoint, destination_next_hop, destination_vpp_interface);
         }
         write_vpp_gre_setup(file, config, path);
     }
@@ -771,7 +795,7 @@ static int write_vpp_netns_route_plan(const char *filename, const en_yaml_config
                 continue;
             }
             fprintf(file, "printf '# explicit netns route %s on node %s via %s\\n'\n", route->route_id, route->node_id, edge->vpp_interface);
-            fprintf(file, "run_vpp ip route add %s", route->destination_prefix);
+            fprintf(file, "run_vpp_node %s ip route add %s", route->node_id, route->destination_prefix);
             if (route->table_id >= 0) fprintf(file, " table %d", route->table_id);
             fprintf(file, " via %s", route->next_hop);
             if (edge->vpp_interface[0] != '\0') {
@@ -785,19 +809,19 @@ static int write_vpp_netns_route_plan(const char *filename, const en_yaml_config
         }
     } else if (path->segment_count == 0) {
         if (intent->traffic.has_vlan_id) {
-            fprintf(file, "run_vpp ip route add %s via %s %s.%d\n", destination_prefix,
+            fprintf(file, "run_vpp_node %s ip route add %s via %s %s.%d\n", path->source, destination_prefix,
                 path->route_next_hop, source_vpp_interface, intent->traffic.vlan_id);
         } else {
-            fprintf(file, "run_vpp ip route add %s via %s %s\n", destination_prefix,
+            fprintf(file, "run_vpp_node %s ip route add %s via %s %s\n", path->source, destination_prefix,
                 path->route_next_hop, source_vpp_interface);
         }
     } else {
         const en_tunnel_t *gre_tunnel = first_tunnel != NULL && strcmp(first_tunnel->tunnel_type, "gre_over_ipsec") == 0 ? first_tunnel : NULL;
         if (gre_tunnel != NULL) {
-            fprintf(file, "run_vpp ip route add %s via %s %s\n", destination_prefix, gre_tunnel->gre_remote_address, gre_tunnel->gre_interface);
+            fprintf(file, "run_vpp_node %s ip route add %s via %s %s\n", path->source, destination_prefix, gre_tunnel->gre_remote_address, gre_tunnel->gre_interface);
         } else if (intent->traffic.has_vlan_id) {
-            fprintf(file, "run_vpp ip route add %s via %s %s.%d\n", source_prefix, source_next_hop, source_vpp_interface, intent->traffic.vlan_id);
-            fprintf(file, "run_vpp ip route add %s via %s %s.%d\n", destination_prefix, destination_next_hop, destination_vpp_interface, intent->traffic.vlan_id);
+            fprintf(file, "run_vpp_node %s ip route add %s via %s %s.%d\n", path->source, source_prefix, source_next_hop, source_vpp_interface, intent->traffic.vlan_id);
+            fprintf(file, "run_vpp_node %s ip route add %s via %s %s.%d\n", path->destination, destination_prefix, destination_next_hop, destination_vpp_interface, intent->traffic.vlan_id);
         } else {
             fprintf(file, "run_vpp ip route add %s via %s\n", source_prefix, source_next_hop);
             fprintf(file, "run_vpp ip route add %s via %s\n", destination_prefix, destination_next_hop);

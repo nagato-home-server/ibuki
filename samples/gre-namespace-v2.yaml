@@ -1,0 +1,51 @@
+tunnels:
+  - id: gre-namespace-v2
+    type: gre_over_ipsec
+    local_node: site-a
+    remote_node: site-b
+    local_endpoint: 203.0.113.10
+    remote_endpoint: 203.0.113.9
+    local_id: site-a
+    remote_id: site-b
+    psk: "change-me"
+    gre_interface: gre0
+    gre_instance: 0
+    gre_outer_local_endpoint: 198.18.1.1
+    gre_outer_remote_endpoint: 198.18.2.1
+    gre_local_address: 10.255.0.1/30
+    gre_remote_address: 10.255.0.2
+    mtu: 1400
+
+vpp_edges:
+  - node_id: site-a
+    port_id: underlay
+    vpp_interface: host-ibuki-underlay-a
+    next_hop: 198.18.1.2
+    vpp_socket: /run/ibuki-vpp-ns/site-a/cli.sock
+  - node_id: site-b
+    port_id: underlay
+    vpp_interface: host-ibuki-underlay-b
+    next_hop: 198.18.2.2
+    vpp_socket: /run/ibuki-vpp-ns/site-b/cli.sock
+
+paths:
+  - id: path-gre-namespace-v2
+    source: site-a
+    destination: site-b
+    route_destination_prefix: 10.10.2.0/24
+    egress_tunnel_id: gre-namespace-v2
+    priority: 10
+    segments:
+      - id: seg-gre-namespace-v2
+        from: site-a
+        to: site-b
+        tunnel_id: gre-namespace-v2
+
+intents:
+  - id: intent-gre-namespace-v2
+    traffic:
+      source: site-a
+      destination: site-b
+    path_selection:
+      mode: explicit
+      path_id: path-gre-namespace-v2

@@ -261,7 +261,12 @@ add_test(NAME eventnet_gre_over_ipsec_plan
     COMMAND ${CMAKE_COMMAND}
         -DEVENTNET_NETNS_PLAN=$<TARGET_FILE:eventnet_netns_plan>
         -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/check-gre-over-ipsec-plan.cmake)
+    -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/check-gre-over-ipsec-plan.cmake)
+add_test(NAME eventnet_namespace_runtime_plan
+    COMMAND ${CMAKE_COMMAND}
+        -DEVENTNET_NETNS_PLAN=$<TARGET_FILE:eventnet_netns_plan>
+        -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/check-namespace-runtime.cmake)
 
 install(TARGETS eventnetd
     RUNTIME DESTINATION libexec/ibuki

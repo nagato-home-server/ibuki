@@ -480,6 +480,10 @@ en_error_code_t en_yaml_config_validate(const en_yaml_config_t *config, char *er
             set_error(error, error_len, 0, "vpp edge requires node_id, vpp_interface, and next_hop");
             return EN_ERR_INVALID_ARGUMENT;
         }
+        if (edge->vpp_socket[0] != '\0' && !valid_config_token(edge->vpp_socket)) {
+            set_error(error, error_len, 0, "vpp edge has invalid vpp_socket");
+            return EN_ERR_INVALID_ARGUMENT;
+        }
         for (size_t j = i + 1; j < config->vpp_edge_count; j++) {
             bool same_node = strcmp(edge->node_id, config->vpp_edges[j].node_id) == 0;
             bool same_port = edge->port_id[0] == '\0' || config->vpp_edges[j].port_id[0] == '\0' ||
@@ -910,6 +914,8 @@ static en_error_code_t parse_vpp_edge_kv(yaml_parse_state_t *state, const char *
         copy_id(state->vpp_edge->namespace_address, sizeof(state->vpp_edge->namespace_address), value);
     } else if (strcmp(key, "vpp_address") == 0 || strcmp(key, "vpp_addr") == 0) {
         copy_id(state->vpp_edge->vpp_address, sizeof(state->vpp_edge->vpp_address), value);
+    } else if (strcmp(key, "vpp_socket") == 0 || strcmp(key, "vpp_api_socket") == 0 || strcmp(key, "vpp_cli_socket") == 0) {
+        copy_id(state->vpp_edge->vpp_socket, sizeof(state->vpp_edge->vpp_socket), value);
     } else if (strcmp(key, "next_hop") == 0) {
         copy_id(state->vpp_edge->next_hop, sizeof(state->vpp_edge->next_hop), value);
     } else if (strcmp(key, "allowed_vlans") == 0) {

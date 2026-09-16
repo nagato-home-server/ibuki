@@ -99,8 +99,18 @@ en_error_code_t en_render_swanctl_conf(
     const bool gre_over_ipsec = strcmp(tunnel->tunnel_type, "gre_over_ipsec") == 0;
     if ((!gre_over_ipsec && (!valid_command_token(tunnel->local_traffic_selector) || !valid_command_token(tunnel->remote_traffic_selector))) ||
         (gre_over_ipsec && (!valid_command_token(tunnel->gre_interface) || !valid_command_token(tunnel->gre_local_address) || !valid_command_token(tunnel->gre_remote_address)))) return EN_ERR_INVALID_ARGUMENT;
-    const char *local_ts = gre_over_ipsec ? "dynamic[gre]" : tunnel->local_traffic_selector;
-    const char *remote_ts = gre_over_ipsec ? "dynamic[gre]" : tunnel->remote_traffic_selector;
+    char local_ts_buffer[EN_MAX_ID_LEN + 16] = {0};
+    char remote_ts_buffer[EN_MAX_ID_LEN + 16] = {0};
+    const char *local_ts = tunnel->local_traffic_selector;
+    const char *remote_ts = tunnel->remote_traffic_selector;
+    if (gre_over_ipsec) {
+        const char *local_endpoint = tunnel->gre_outer_local_endpoint[0] == '\0' ? tunnel->local_endpoint : tunnel->gre_outer_local_endpoint;
+        const char *remote_endpoint = tunnel->gre_outer_remote_endpoint[0] == '\0' ? tunnel->remote_endpoint : tunnel->gre_outer_remote_endpoint;
+        if (snprintf(local_ts_buffer, sizeof(local_ts_buffer), "%s/32[gre]", local_endpoint) >= (int)sizeof(local_ts_buffer) ||
+            snprintf(remote_ts_buffer, sizeof(remote_ts_buffer), "%s/32[gre]", remote_endpoint) >= (int)sizeof(remote_ts_buffer)) return EN_ERR_INVALID_ARGUMENT;
+        local_ts = local_ts_buffer;
+        remote_ts = remote_ts_buffer;
+    }
     const char *mode = gre_over_ipsec ? " mode=transport" : "";
     FORMAT_COMMAND(
         buf,

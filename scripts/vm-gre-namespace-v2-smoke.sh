@@ -18,7 +18,7 @@ trap cleanup EXIT INT TERM
 if ! ip netns exec site-a true >/dev/null 2>&1 || ! ip netns exec site-b true >/dev/null 2>&1; then sh scripts/vm-netns-setup.sh; fi
 if [ "${SKIP_BUILD:-0}" != "1" ]; then
   printf 'Building the controller before generating the namespace plan...\n'
-  BUILD_DIR="$BUILD_DIR" sh scripts/vm-build-cc.sh
+  FORCE_REBUILD="${FORCE_REBUILD:-1}" BUILD_DIR="$BUILD_DIR" sh scripts/vm-build-cc.sh
 fi
 sh scripts/vm-vpp-ns-topology.sh setup
 BUILD_DIR="$BUILD_DIR" OUT_DIR="$OUT_DIR" sh scripts/vm-generate-netns-runtime.sh "$YAML" --intent intent-gre-namespace-v2

@@ -32,7 +32,7 @@ sudo sh scripts/vm-vpp-ns-runtime.sh status
 sudo sh scripts/vm-vpp-ns-runtime.sh stop
 ```
 
-`scripts/vm-vpp-ns-topology.sh` は各サイトnamespace内にLAN/underlay vethとVPP host-interfaceを作成し、VPPのunderlay経路と双方向GREを構成する。`scripts/vm-gre-namespace-v2-smoke.sh` は毎回Controllerを再ビルドしてから、このトポロジ、生成計画、namespace内strongSwanをまとめて起動する。古い生成器を明示的に再利用する場合だけ`SKIP_BUILD=1`を指定する。既存のroot VPPスクリプトは互換性確認用に残す。
+`scripts/vm-vpp-ns-topology.sh` は各サイトnamespace内にLAN/underlay vethとVPP host-interfaceを作成し、VPPのunderlay経路と双方向GREを構成する。`scripts/vm-gre-namespace-v2-smoke.sh` は毎回Controllerを強制再ビルドしてから、このトポロジ、生成計画、namespace内strongSwanをまとめて起動する。古い生成器を明示的に再利用する場合だけ`SKIP_BUILD=1`を指定する。通常のCビルドでも、Git切替後などに`FORCE_REBUILD=1 BUILD_DIR=build-ns-v2 sh scripts/vm-build-cc.sh`を使えば共通オブジェクトを全て作り直せる。既存のroot VPPスクリプトは互換性確認用に残す。
 
 ## 移行順
 

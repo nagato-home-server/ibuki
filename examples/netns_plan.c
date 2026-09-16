@@ -251,6 +251,15 @@ static const char *runtime_kind(const en_yaml_config_t *config, const en_path_t 
     return "unsupported";
 }
 
+static bool path_uses_namespaced_vpp(const en_yaml_config_t *config, const en_path_t *path)
+{
+    for (size_t index = 0; index < config->vpp_edge_count; index++) {
+        const en_vpp_edge_t *edge = &config->vpp_edges[index];
+        if (edge->vpp_socket[0] != '\0' && path_uses_node(path, edge->node_id)) return true;
+    }
+    return false;
+}
+
 static void write_xfrm_block_runtime(FILE *file, const en_yaml_config_t *config, const en_path_t *path)
 {
     for (size_t index = 0; index < path->segment_count; index++) {
@@ -301,8 +310,8 @@ static int write_apply_script(const char *filename, const char *out_dir, const e
         fprintf(file, "sudo sh scripts/vm-netns-ipsec-hub-start.sh\n");
         fprintf(file, "sudo sh scripts/vm-netns-ipsec-hub-smoke.sh\n");
     } else if (strcmp(kind, "vpp") == 0) {
-        fprintf(file, "sudo sh scripts/vm-vpp-netns-setup.sh\n");
-        fprintf(file, "DRY_RUN=0 sh %s/vpp-netns-route-plan.sh\n", out_dir);
+        fprintf(file, "sudo sh scripts/%s\n", path_uses_namespaced_vpp(config, path) ? "vm-vpp-ns-topology.sh setup" : "vm-vpp-netns-setup.sh");
+        fprintf(file, "%sDRY_RUN=0 sh %s/vpp-netns-route-plan.sh\n", path_uses_namespaced_vpp(config, path) ? "sudo " : "", out_dir);
     } else {
         fprintf(file, "echo 'unsupported path for current netns runtime: %s' >&2\n", path->path_id);
         fprintf(file, "exit 1\n");
@@ -375,19 +384,26 @@ static int write_integrated_script(const char *filename, const char *out_dir, co
         fprintf(file, "sh scripts/vm-netns-ipsec-hub-start.sh\n");
         fprintf(file, "sh scripts/vm-netns-ipsec-hub-smoke.sh\n");
     } else if (strcmp(kind, "vpp") == 0) {
-        fprintf(file, "sh scripts/vm-vpp-netns-setup.sh\n");
+        fprintf(file, "%s sh scripts/%s\n", path_uses_namespaced_vpp(config, path) ? "sudo" : "", path_uses_namespaced_vpp(config, path) ? "vm-vpp-ns-topology.sh setup" : "vm-vpp-netns-setup.sh");
         if (path_has_gre_tunnel(config, path)) {
             const en_tunnel_t *tunnel = find_first_gre_tunnel(config, path);
             if (tunnel != NULL) {
                 const char *outer_local = tunnel->gre_outer_local_endpoint[0] == '\0' ? tunnel->local_endpoint : tunnel->gre_outer_local_endpoint;
                 const char *outer_remote = tunnel->gre_outer_remote_endpoint[0] == '\0' ? tunnel->remote_endpoint : tunnel->gre_outer_remote_endpoint;
-                fprintf(file, "GRE_IKE_LOCAL_ENDPOINT=%s GRE_IKE_REMOTE_ENDPOINT=%s GRE_OUTER_LOCAL_ENDPOINT=%s GRE_OUTER_REMOTE_ENDPOINT=%s GRE_LOCAL_ID=%s GRE_REMOTE_ID=%s GRE_OUT_DIR=%s sh scripts/vm-netns-ipsec.sh gre start\n",
-                    tunnel->local_endpoint, tunnel->remote_endpoint, outer_local, outer_remote,
-                    tunnel->local_id[0] == '\0' ? tunnel->local_node : tunnel->local_id,
-                    tunnel->remote_id[0] == '\0' ? tunnel->remote_node : tunnel->remote_id, out_dir);
+                if (path_uses_namespaced_vpp(config, path)) {
+                    fprintf(file, "sudo GRE_CHILD=%s GRE_IKE_LOCAL_ENDPOINT=%s GRE_IKE_REMOTE_ENDPOINT=%s GRE_OUTER_LOCAL_ENDPOINT=%s GRE_OUTER_REMOTE_ENDPOINT=%s GRE_LOCAL_ID=%s GRE_REMOTE_ID=%s OUT_DIR=%s sh scripts/vm-netns-ipsec-gre-start.sh\n",
+                        tunnel->tunnel_id, tunnel->local_endpoint, tunnel->remote_endpoint, outer_local, outer_remote,
+                        tunnel->local_id[0] == '\0' ? tunnel->local_node : tunnel->local_id,
+                        tunnel->remote_id[0] == '\0' ? tunnel->remote_node : tunnel->remote_id, out_dir);
+                } else {
+                    fprintf(file, "GRE_IKE_LOCAL_ENDPOINT=%s GRE_IKE_REMOTE_ENDPOINT=%s GRE_OUTER_LOCAL_ENDPOINT=%s GRE_OUTER_REMOTE_ENDPOINT=%s GRE_LOCAL_ID=%s GRE_REMOTE_ID=%s GRE_OUT_DIR=%s sh scripts/vm-netns-ipsec.sh gre start\n",
+                        tunnel->local_endpoint, tunnel->remote_endpoint, outer_local, outer_remote,
+                        tunnel->local_id[0] == '\0' ? tunnel->local_node : tunnel->local_id,
+                        tunnel->remote_id[0] == '\0' ? tunnel->remote_node : tunnel->remote_id, out_dir);
+                }
             }
         }
-        fprintf(file, "DRY_RUN=0 sh %s/vpp-netns-route-plan.sh\n", out_dir);
+        fprintf(file, "%sDRY_RUN=0 sh %s/vpp-netns-route-plan.sh\n", path_uses_namespaced_vpp(config, path) ? "sudo " : "", out_dir);
     } else {
         fprintf(file, "echo 'unsupported path for current integrated runtime: %s' >&2\n", path->path_id);
         fprintf(file, "exit 1\n");

@@ -49,14 +49,14 @@ setup() {
     ip netns exec "$ns" true >/dev/null 2>&1 || { printf 'namespace missing: %s\n' "$ns" >&2; exit 1; }
   done
   sh "$ROOT_DIR/scripts/vm-vpp-ns-runtime.sh" start
-  configure_site site-a ibuki-lan-a ibuki-lan-linux-a 10.10.1.254/24 10.10.1.253/24 ibuki-underlay-a ibuki-underlay-linux-a 198.18.1.2/30 198.18.1.1/30
-  configure_site site-b ibuki-lan-b ibuki-lan-linux-b 10.10.2.254/24 10.10.2.253/24 ibuki-underlay-b ibuki-underlay-linux-b 198.18.2.2/30 198.18.2.1/30
-  ip netns exec site-a ip route replace 10.10.2.0/24 via 10.10.1.253 dev ibuki-lan-linux-a
-  ip netns exec site-b ip route replace 10.10.1.0/24 via 10.10.2.253 dev ibuki-lan-linux-b
+  configure_site site-a ib-lan-a ib-lan-a-peer 10.10.1.254/24 10.10.1.253/24 ib-ul-a ib-ul-a-peer 198.18.1.2/30 198.18.1.1/30
+  configure_site site-b ib-lan-b ib-lan-b-peer 10.10.2.254/24 10.10.2.253/24 ib-ul-b ib-ul-b-peer 198.18.2.2/30 198.18.2.1/30
+  ip netns exec site-a ip route replace 10.10.2.0/24 via 10.10.1.253 dev ib-lan-a-peer
+  ip netns exec site-b ip route replace 10.10.1.0/24 via 10.10.2.253 dev ib-lan-b-peer
   ip netns exec site-a ip route replace 198.18.2.1/32 via 203.0.113.9 dev a-direct
   ip netns exec site-b ip route replace 198.18.1.1/32 via 203.0.113.10 dev b-direct
-  vpp site-a ip route add 198.18.2.1/32 via 198.18.1.2 host-ibuki-underlay-a
-  vpp site-b ip route add 198.18.1.1/32 via 198.18.2.2 host-ibuki-underlay-b
+  vpp site-a ip route add 198.18.2.1/32 via 198.18.1.2 host-ib-ul-a
+  vpp site-b ip route add 198.18.1.1/32 via 198.18.2.2 host-ib-ul-b
   vpp site-a create gre tunnel src 198.18.1.1 dst 198.18.2.1 instance 0 del >/dev/null 2>&1 || true
   vpp site-b create gre tunnel src 198.18.2.1 dst 198.18.1.1 instance 0 del >/dev/null 2>&1 || true
   vpp site-a create gre tunnel src 198.18.1.1 dst 198.18.2.1 instance 0
@@ -72,14 +72,14 @@ setup() {
 
 clean() {
   for ns in site-a site-b; do
-    vpp "$ns" delete host-interface name ibuki-lan-a >/dev/null 2>&1 || true
-    vpp "$ns" delete host-interface name ibuki-lan-b >/dev/null 2>&1 || true
-    vpp "$ns" delete host-interface name ibuki-underlay-a >/dev/null 2>&1 || true
-    vpp "$ns" delete host-interface name ibuki-underlay-b >/dev/null 2>&1 || true
-    ip netns exec "$ns" ip link del ibuki-lan-a >/dev/null 2>&1 || true
-    ip netns exec "$ns" ip link del ibuki-lan-b >/dev/null 2>&1 || true
-    ip netns exec "$ns" ip link del ibuki-underlay-a >/dev/null 2>&1 || true
-    ip netns exec "$ns" ip link del ibuki-underlay-b >/dev/null 2>&1 || true
+    vpp "$ns" delete host-interface name ib-lan-a >/dev/null 2>&1 || true
+    vpp "$ns" delete host-interface name ib-lan-b >/dev/null 2>&1 || true
+    vpp "$ns" delete host-interface name ib-ul-a >/dev/null 2>&1 || true
+    vpp "$ns" delete host-interface name ib-ul-b >/dev/null 2>&1 || true
+    ip netns exec "$ns" ip link del ib-lan-a >/dev/null 2>&1 || true
+    ip netns exec "$ns" ip link del ib-lan-b >/dev/null 2>&1 || true
+    ip netns exec "$ns" ip link del ib-ul-a >/dev/null 2>&1 || true
+    ip netns exec "$ns" ip link del ib-ul-b >/dev/null 2>&1 || true
   done
   sh "$ROOT_DIR/scripts/vm-vpp-ns-runtime.sh" stop >/dev/null 2>&1 || true
 }

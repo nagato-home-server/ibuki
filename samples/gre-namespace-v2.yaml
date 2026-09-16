@@ -19,12 +19,12 @@ tunnels:
 vpp_edges:
   - node_id: site-a
     port_id: underlay
-    vpp_interface: host-ibuki-underlay-a
+    vpp_interface: host-ib-ul-a
     next_hop: 198.18.1.2
     vpp_socket: /run/ibuki-vpp-ns/site-a/cli.sock
   - node_id: site-b
     port_id: underlay
-    vpp_interface: host-ibuki-underlay-b
+    vpp_interface: host-ib-ul-b
     next_hop: 198.18.2.2
     vpp_socket: /run/ibuki-vpp-ns/site-b/cli.sock
 

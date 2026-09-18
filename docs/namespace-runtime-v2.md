@@ -108,7 +108,7 @@ sudo sh scripts/vm-vpp-ns-runtime.sh stop
 
 Native VPP IPsecでは、GREを生成せず、現行VPPの`create ipip tunnel`と`ipsec tunnel protect`を組み合わせます。GREを必要とする経路はstrongSwan/XFRM Backendで処理し、Native BackendはL3 IPIP/IPsecトンネルとして扱います。
 
-`samples/gre-namespace-v2-vpp-native.yaml` は、strongSwan/Linux XFRMを使わず、VPPのIPsec pluginでIPIP interfaceを保護する実験入力である。Tunnelへ `vpp_local_sa_id`、`vpp_remote_sa_id`、SPI、暗号鍵、認証鍵を指定すると、生成された `vpp-netns-route-plan.sh` がトンネルモードの`ipsec sa add`、`create ipip tunnel`、`ipsec tunnel protect`を出力する。Linux VMで次のように実行する。
+`samples/gre-namespace-v2-vpp-native.yaml` は、strongSwan/Linux XFRMを使わず、VPPのIPsec pluginでIPIP interfaceを保護する実験入力である。Tunnelへ `vpp_local_sa_id`、`vpp_remote_sa_id`、SPI、暗号鍵、認証鍵を指定すると、生成された `vpp-netns-route-plan.sh` がESP SA、`create ipip tunnel`、`ipsec tunnel protect`を出力する。Linux VMで次のように実行する。
 
 ```sh
 sudo sh scripts/vm-gre-namespace-v2-smoke.sh samples/gre-namespace-v2-vpp-native.yaml

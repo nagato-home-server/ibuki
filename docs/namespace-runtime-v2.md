@@ -111,8 +111,9 @@ Native IPsec-GREでは、通常の`gre0`ではなくVPPの`ipsec-gre0` interface
 `samples/gre-namespace-v2-vpp-native.yaml` は、strongSwan/Linux XFRMを使わず、VPPのIPsec pluginでGRE interfaceを保護する実験入力である。Tunnelへ `vpp_local_sa_id`、`vpp_remote_sa_id`、SPI、暗号鍵、認証鍵を指定すると、生成された `vpp-netns-route-plan.sh` が両方向の `ipsec sa add` と `create ipsec gre tunnel` を出力する。Linux VMで次のように実行する。
 
 ```sh
-VPP_NATIVE_IPSEC=1 INTENT_ID=intent-gre-namespace-v2-native \
-  sudo sh scripts/vm-gre-namespace-v2-smoke.sh samples/gre-namespace-v2-vpp-native.yaml
+sudo sh scripts/vm-gre-namespace-v2-smoke.sh samples/gre-namespace-v2-vpp-native.yaml
 ```
+
+Native用のVPP SA項目を含むYAMLでは、スクリプトがIntentとNative IPsecモードを自動選択する。`INTENT_ID`または`VPP_NATIVE_IPSEC=0`を指定した場合は明示設定を優先する。
 
 このBackendは静的SAを使う実験用であり、strongSwan VICIからVPP Binary APIへSAを同期する本番連携は未実装である。VPPのバージョンによって暗号アルゴリズム名やCLIの対応が異なるため、失敗時は生成された計画と `show ipsec all` を記録する。

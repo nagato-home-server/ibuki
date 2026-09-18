@@ -11,6 +11,8 @@ tunnels:
     gre_outer_remote_endpoint: 198.18.2.1
     gre_local_address: 10.255.0.1/30
     gre_remote_address: 10.255.0.2
+    local_ts: 10.10.1.0/24
+    remote_ts: 10.10.2.0/24
     vpp_local_sa_id: 100
     vpp_remote_sa_id: 200
     vpp_local_spi: 1000

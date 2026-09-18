@@ -45,7 +45,11 @@ stop_existing() {
   for pid_file in "$run_dir/charon.pid" "$run_dir/eventnet-wrapper.pid"; do
     if [ -s "$pid_file" ]; then kill "$(cat "$pid_file")" 2>/dev/null || true; fi
   done
-  for namespace_pid in $(ip netns pids "$ns" 2>/dev/null || true); do kill "$namespace_pid" 2>/dev/null || true; done
+  for namespace_pid in $(ip netns pids "$ns" 2>/dev/null || true); do
+    if [ -r "/proc/$namespace_pid/comm" ] && [ "$(cat "/proc/$namespace_pid/comm")" = "charon" ]; then
+      kill "$namespace_pid" 2>/dev/null || true
+    fi
+  done
   rm -f "$run_dir/charon.pid" "$run_dir/eventnet-wrapper.pid" "$run_dir/charon.vici" "$run_dir/charon.log"
 }
 

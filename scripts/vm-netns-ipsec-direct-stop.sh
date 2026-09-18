@@ -28,7 +28,9 @@ for ns in site-a site-b; do
     rm -f "$wrapper_pid_file"
   fi
   for namespace_pid in $(ip netns pids "$ns" 2>/dev/null || true); do
-    kill "$namespace_pid" 2>/dev/null || true
+    if [ -r "/proc/$namespace_pid/comm" ] && [ "$(cat "/proc/$namespace_pid/comm")" = "charon" ]; then
+      kill "$namespace_pid" 2>/dev/null || true
+    fi
   done
   rm -f "$RUN_BASE/$ns/charon.vici"
 done

@@ -44,6 +44,16 @@ sh scripts/vm-vpp-ns-topology.sh setup
 BUILD_DIR="$BUILD_DIR" OUT_DIR="$OUT_DIR" sh scripts/vm-generate-netns-runtime.sh "$YAML" --intent "$INTENT_ID"
 if [ "$VPP_NATIVE_IPSEC" = "1" ]; then
   printf 'Using VPP Native IPsec; strongSwan is not started for this smoke.\n'
+  for ns in site-a site-b; do
+    vpp_socket="/run/ibuki-vpp-ns/$ns/cli.sock"
+    native_probe=$(vppctl -s "$vpp_socket" show ipsec gre tunnel 2>&1 || true)
+    if printf '%s\n' "$native_probe" | grep -Eiq 'unknown input|unknown command|parse error'; then
+      printf 'VPP Native IPsec-GRE is unavailable in namespace %s.\n' "$ns" >&2
+      printf '%s\n' "$native_probe" >&2
+      printf 'Use a VPP build with the ipsec-gre feature, or run the strongSwan sample instead.\n' >&2
+      exit 2
+    fi
+  done
 else
   GRE_CHILD=gre-namespace-v2 GRE_OUTER_LOCAL_ENDPOINT=198.18.1.1 GRE_OUTER_REMOTE_ENDPOINT=198.18.2.1 RUN_BASE="$RUN_BASE" sh scripts/vm-netns-ipsec-gre-start.sh "$OUT_DIR"
 fi

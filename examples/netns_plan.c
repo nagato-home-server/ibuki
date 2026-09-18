@@ -112,7 +112,13 @@ static void write_vpp_gre_setup(FILE *file, const en_yaml_config_t *config, cons
                 tunnel->local_node, tunnel->vpp_local_sa_id, tunnel->vpp_local_spi, tunnel->vpp_crypto_key, tunnel->vpp_crypto_algorithm,
                 tunnel->vpp_integrity_key, tunnel->vpp_integrity_algorithm);
             fprintf(file, "run_vpp_node %s ipsec sa add %d spi %d esp crypto-key %s crypto-alg %s integ-key %s integ-alg %s use-anti-replay udp-encap\n",
+                tunnel->local_node, tunnel->vpp_remote_sa_id, tunnel->vpp_remote_spi, tunnel->vpp_crypto_key, tunnel->vpp_crypto_algorithm,
+                tunnel->vpp_integrity_key, tunnel->vpp_integrity_algorithm);
+            fprintf(file, "run_vpp_node %s ipsec sa add %d spi %d esp crypto-key %s crypto-alg %s integ-key %s integ-alg %s use-anti-replay udp-encap\n",
                 tunnel->remote_node, tunnel->vpp_remote_sa_id, tunnel->vpp_remote_spi, tunnel->vpp_crypto_key, tunnel->vpp_crypto_algorithm,
+                tunnel->vpp_integrity_key, tunnel->vpp_integrity_algorithm);
+            fprintf(file, "run_vpp_node %s ipsec sa add %d spi %d esp crypto-key %s crypto-alg %s integ-key %s integ-alg %s use-anti-replay udp-encap\n",
+                tunnel->remote_node, tunnel->vpp_local_sa_id, tunnel->vpp_local_spi, tunnel->vpp_crypto_key, tunnel->vpp_crypto_algorithm,
                 tunnel->vpp_integrity_key, tunnel->vpp_integrity_algorithm);
         }
         bool vpp_native = tunnel->vpp_local_sa_id >= 0 && tunnel->vpp_remote_sa_id >= 0 && tunnel->vpp_local_spi > 0 && tunnel->vpp_remote_spi > 0 &&
@@ -586,7 +592,9 @@ static int write_vpp_route_plan(const char *filename, const en_yaml_config_t *co
     fprintf(file, "  if [ \"$DRY_RUN\" = \"1\" ]; then\n");
     fprintf(file, "    if [ -n \"$VPPCTL_SOCKET\" ]; then printf '[dry-run] %%s -s %%s %%s\\n' \"$VPPCTL\" \"$VPPCTL_SOCKET\" \"$*\"; else printf '[dry-run] %%s %%s\\n' \"$VPPCTL\" \"$*\"; fi\n");
     fprintf(file, "  else\n");
-    fprintf(file, "    if [ -n \"$VPPCTL_SOCKET\" ]; then \"$VPPCTL\" -s \"$VPPCTL_SOCKET\" \"$*\"; else \"$VPPCTL\" \"$*\"; fi\n");
+    fprintf(file, "    if [ -n \"$VPPCTL_SOCKET\" ]; then if output=$(\"$VPPCTL\" -s \"$VPPCTL_SOCKET\" \"$*\" 2>&1); then status=0; else status=$?; fi; else if output=$(\"$VPPCTL\" \"$*\" 2>&1); then status=0; else status=$?; fi; fi\n");
+    fprintf(file, "    printf '%%s\\n' \"$output\"\n");
+    fprintf(file, "    if [ \"$status\" -ne 0 ] || printf '%%s\\n' \"$output\" | grep -Eiq 'unknown input|parse error|unknown interface|failed|error:'; then return 1; fi\n");
     fprintf(file, "  fi\n");
     fprintf(file, "}\n\n");
     write_vpp_node_dispatch(file, config);
@@ -721,7 +729,9 @@ static int write_vpp_netns_route_plan(const char *filename, const en_yaml_config
     fprintf(file, "  if [ \"$DRY_RUN\" = \"1\" ]; then\n");
     fprintf(file, "    if [ -n \"$VPPCTL_SOCKET\" ]; then printf '[dry-run] %%s -s %%s %%s\\n' \"$VPPCTL\" \"$VPPCTL_SOCKET\" \"$*\"; else printf '[dry-run] %%s %%s\\n' \"$VPPCTL\" \"$*\"; fi\n");
     fprintf(file, "  else\n");
-    fprintf(file, "    if [ -n \"$VPPCTL_SOCKET\" ]; then \"$VPPCTL\" -s \"$VPPCTL_SOCKET\" \"$*\"; else \"$VPPCTL\" \"$*\"; fi\n");
+    fprintf(file, "    if [ -n \"$VPPCTL_SOCKET\" ]; then if output=$(\"$VPPCTL\" -s \"$VPPCTL_SOCKET\" \"$*\" 2>&1); then status=0; else status=$?; fi; else if output=$(\"$VPPCTL\" \"$*\" 2>&1); then status=0; else status=$?; fi; fi\n");
+    fprintf(file, "    printf '%%s\\n' \"$output\"\n");
+    fprintf(file, "    if [ \"$status\" -ne 0 ] || printf '%%s\\n' \"$output\" | grep -Eiq 'unknown input|parse error|unknown interface|failed|error:'; then return 1; fi\n");
     fprintf(file, "  fi\n");
     fprintf(file, "}\n\n");
     write_vpp_node_dispatch(file, config);

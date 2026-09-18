@@ -115,26 +115,26 @@ static void write_vpp_gre_setup(FILE *file, const en_yaml_config_t *config, cons
                 tunnel->remote_node, tunnel->vpp_remote_sa_id, tunnel->vpp_remote_spi, tunnel->vpp_crypto_key, tunnel->vpp_crypto_algorithm,
                 tunnel->vpp_integrity_key, tunnel->vpp_integrity_algorithm);
         }
-        if (tunnel->gre_instance >= 0) fprintf(file, "run_vpp_node %s create gre tunnel src %s dst %s instance %d del 2>/dev/null || true\n", tunnel->local_node, gre_local_endpoint, gre_remote_endpoint, tunnel->gre_instance);
-        else fprintf(file, "run_vpp_node %s create gre tunnel src %s dst %s del 2>/dev/null || true\n", tunnel->local_node, gre_local_endpoint, gre_remote_endpoint);
-        if (tunnel->gre_instance >= 0) fprintf(file, "run_vpp_node %s create gre tunnel src %s dst %s instance %d\n", tunnel->local_node, gre_local_endpoint, gre_remote_endpoint, tunnel->gre_instance);
-        else fprintf(file, "run_vpp_node %s create gre tunnel src %s dst %s\n", tunnel->local_node, gre_local_endpoint, gre_remote_endpoint);
-        fprintf(file, "run_vpp_node %s set interface ip address %s %s\n", tunnel->local_node, tunnel->gre_interface, tunnel->gre_local_address);
-        if (tunnel->gre_mtu > 0) {
-            fprintf(file, "if [ \"$DRY_RUN\" = \"1\" ]; then run_vpp_node %s set interface mtu %d %s; elif run_vpp_node %s set interface mtu %d %s 2>/dev/null; then :; else run_vpp_node %s set interface mtu %s %d; fi\n",
-                tunnel->local_node, tunnel->gre_mtu, tunnel->gre_interface, tunnel->local_node, tunnel->gre_mtu, tunnel->gre_interface, tunnel->local_node, tunnel->gre_interface, tunnel->gre_mtu);
-        }
-        fprintf(file, "run_vpp_node %s set interface state %s up\n", tunnel->local_node, tunnel->gre_interface);
-        if (tunnel->vpp_local_sa_id >= 0 && tunnel->vpp_remote_sa_id >= 0) {
-            fprintf(file, "run_vpp_node %s ipsec tunnel protect %s sa-in %d sa-out %d\n", tunnel->local_node, tunnel->gre_interface, tunnel->vpp_remote_sa_id, tunnel->vpp_local_sa_id);
+        bool vpp_native = tunnel->vpp_local_sa_id >= 0 && tunnel->vpp_remote_sa_id >= 0 && tunnel->vpp_local_spi > 0 && tunnel->vpp_remote_spi > 0 &&
+            tunnel->vpp_crypto_algorithm[0] != '\0' && tunnel->vpp_crypto_key[0] != '\0' &&
+            tunnel->vpp_integrity_algorithm[0] != '\0' && tunnel->vpp_integrity_key[0] != '\0';
+        if (vpp_native) {
+            fprintf(file, "run_vpp_node %s create ipsec gre tunnel src %s dst %s local-sa %d remote-sa %d del 2>/dev/null || true\n", tunnel->local_node, gre_local_endpoint, gre_remote_endpoint, tunnel->vpp_local_sa_id, tunnel->vpp_remote_sa_id);
+            fprintf(file, "run_vpp_node %s create ipsec gre tunnel src %s dst %s local-sa %d remote-sa %d\n", tunnel->local_node, gre_local_endpoint, gre_remote_endpoint, tunnel->vpp_local_sa_id, tunnel->vpp_remote_sa_id);
+            fprintf(file, "run_vpp_node %s set interface ip address %s %s\n", tunnel->local_node, tunnel->gre_interface, tunnel->gre_local_address);
+            fprintf(file, "run_vpp_node %s set interface state %s up\n", tunnel->local_node, tunnel->gre_interface);
             if (tunnel->gre_instance >= 0) fprintf(file, "run_vpp_node %s create gre tunnel src %s dst %s instance %d del 2>/dev/null || true\n", tunnel->remote_node, gre_remote_endpoint, gre_local_endpoint, tunnel->gre_instance);
-            else fprintf(file, "run_vpp_node %s create gre tunnel src %s dst %s del 2>/dev/null || true\n", tunnel->remote_node, gre_remote_endpoint, gre_local_endpoint);
-            if (tunnel->gre_instance >= 0) fprintf(file, "run_vpp_node %s create gre tunnel src %s dst %s instance %d\n", tunnel->remote_node, gre_remote_endpoint, gre_local_endpoint, tunnel->gre_instance);
-            else fprintf(file, "run_vpp_node %s create gre tunnel src %s dst %s\n", tunnel->remote_node, gre_remote_endpoint, gre_local_endpoint);
+            fprintf(file, "run_vpp_node %s create ipsec gre tunnel src %s dst %s local-sa %d remote-sa %d\n", tunnel->remote_node, gre_remote_endpoint, gre_local_endpoint, tunnel->vpp_remote_sa_id, tunnel->vpp_local_sa_id);
             if (strchr(tunnel->gre_remote_address, '/') == NULL) fprintf(file, "run_vpp_node %s set interface ip address %s %s/30\n", tunnel->remote_node, tunnel->gre_interface, tunnel->gre_remote_address);
             else fprintf(file, "run_vpp_node %s set interface ip address %s %s\n", tunnel->remote_node, tunnel->gre_interface, tunnel->gre_remote_address);
             fprintf(file, "run_vpp_node %s set interface state %s up\n", tunnel->remote_node, tunnel->gre_interface);
-            fprintf(file, "run_vpp_node %s ipsec tunnel protect %s sa-in %d sa-out %d\n", tunnel->remote_node, tunnel->gre_interface, tunnel->vpp_local_sa_id, tunnel->vpp_remote_sa_id);
+        } else {
+            if (tunnel->gre_instance >= 0) fprintf(file, "run_vpp_node %s create gre tunnel src %s dst %s instance %d del 2>/dev/null || true\n", tunnel->local_node, gre_local_endpoint, gre_remote_endpoint, tunnel->gre_instance);
+            else fprintf(file, "run_vpp_node %s create gre tunnel src %s dst %s del 2>/dev/null || true\n", tunnel->local_node, gre_local_endpoint, gre_remote_endpoint);
+            if (tunnel->gre_instance >= 0) fprintf(file, "run_vpp_node %s create gre tunnel src %s dst %s instance %d\n", tunnel->local_node, gre_local_endpoint, gre_remote_endpoint, tunnel->gre_instance);
+            else fprintf(file, "run_vpp_node %s create gre tunnel src %s dst %s\n", tunnel->local_node, gre_local_endpoint, gre_remote_endpoint);
+            fprintf(file, "run_vpp_node %s set interface ip address %s %s\n", tunnel->local_node, tunnel->gre_interface, tunnel->gre_local_address);
+            fprintf(file, "run_vpp_node %s set interface state %s up\n", tunnel->local_node, tunnel->gre_interface);
         }
     }
     if (path->segment_count == 0) {

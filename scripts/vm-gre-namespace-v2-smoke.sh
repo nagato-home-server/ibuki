@@ -30,6 +30,16 @@ else
   GRE_CHILD=gre-namespace-v2 GRE_OUTER_LOCAL_ENDPOINT=198.18.1.1 GRE_OUTER_REMOTE_ENDPOINT=198.18.2.1 RUN_BASE="$RUN_BASE" sh scripts/vm-netns-ipsec-gre-start.sh "$OUT_DIR"
 fi
 DRY_RUN=0 sh "$OUT_DIR/vpp-netns-route-plan.sh"
+if [ "$VPP_NATIVE_IPSEC" = "1" ]; then
+  for ns in site-a site-b; do
+    printf '== VPP Native IPsec status: %s ==\n' "$ns"
+    vpp_socket="/run/ibuki-vpp-ns/$ns/cli.sock"
+    vppctl -s "$vpp_socket" show ipsec all 2>/dev/null || true
+    vppctl -s "$vpp_socket" show ipsec protect 2>/dev/null || true
+    vppctl -s "$vpp_socket" show interface 2>/dev/null || true
+    vppctl -s "$vpp_socket" show ip fib 2>/dev/null || true
+  done
+fi
 printf '== namespaced GRE over IPsec: site-a -> site-b ==\n'
 ip netns exec site-a ping -c 3 -W 2 -I 10.10.1.1 10.10.2.1
 printf '== namespaced GRE over IPsec: site-b -> site-a ==\n'

@@ -49,6 +49,7 @@ plugins {
   plugin default { disable }
   plugin af_packet_plugin.so { enable }
   plugin gre_plugin.so { enable }
+  plugin ipsec_plugin.so { enable }
 }
 EOF
 }

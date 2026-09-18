@@ -103,3 +103,14 @@ sudo sh scripts/vm-vpp-ns-runtime.sh stop
 - `samples/gre-namespace-v2.yaml`: v2実験の入力例
 
 実行時には `GRE_CHILD` でYAML内のCHILD名を指定する。v2サンプルでは `gre-namespace-v2`、従来サンプルでは既定値 `gre-a-b` を使う。
+
+## VPP Native IPsec実験
+
+`samples/gre-namespace-v2-vpp-native.yaml` は、strongSwan/Linux XFRMを使わず、VPPのIPsec pluginでGRE interfaceを保護する実験入力である。Tunnelへ `vpp_local_sa_id`、`vpp_remote_sa_id`、SPI、暗号鍵、認証鍵を指定すると、生成された `vpp-netns-route-plan.sh` が両方向の `ipsec sa add`、GRE生成、`ipsec tunnel protect` を出力する。Linux VMで次のように実行する。
+
+```sh
+VPP_NATIVE_IPSEC=1 INTENT_ID=intent-gre-namespace-v2-native \
+  sudo sh scripts/vm-gre-namespace-v2-smoke.sh samples/gre-namespace-v2-vpp-native.yaml
+```
+
+このBackendは静的SAを使う実験用であり、strongSwan VICIからVPP Binary APIへSAを同期する本番連携は未実装である。VPPのバージョンによって暗号アルゴリズム名やCLIの対応が異なるため、失敗時は生成された計画と `show ipsec all` を記録する。

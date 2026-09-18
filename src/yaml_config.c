@@ -610,6 +610,10 @@ static en_error_code_t parse_line(en_yaml_config_t *config, yaml_parse_state_t *
             copy_id(state->tunnel->protocol, sizeof(state->tunnel->protocol), "ipsec");
             copy_id(state->tunnel->tunnel_type, sizeof(state->tunnel->tunnel_type), "ipsec");
             state->tunnel->gre_instance = -1;
+            state->tunnel->vpp_local_sa_id = -1;
+            state->tunnel->vpp_remote_sa_id = -1;
+            state->tunnel->vpp_local_spi = -1;
+            state->tunnel->vpp_remote_spi = -1;
             copy_id(state->tunnel->auth_method, sizeof(state->tunnel->auth_method), "psk");
             state->tunnel->state = EN_TUNNEL_CONFIGURED;
             state->tunnel->health = EN_HEALTH_UNKNOWN;
@@ -974,6 +978,22 @@ static en_error_code_t parse_tunnel_kv(yaml_parse_state_t *state, const char *ke
         state->tunnel->gre_instance = atoi(value);
     } else if (strcmp(key, "mtu") == 0 || strcmp(key, "gre_mtu") == 0) {
         state->tunnel->gre_mtu = atoi(value);
+    } else if (strcmp(key, "vpp_local_sa_id") == 0) {
+        state->tunnel->vpp_local_sa_id = atoi(value);
+    } else if (strcmp(key, "vpp_remote_sa_id") == 0) {
+        state->tunnel->vpp_remote_sa_id = atoi(value);
+    } else if (strcmp(key, "vpp_local_spi") == 0) {
+        state->tunnel->vpp_local_spi = atoi(value);
+    } else if (strcmp(key, "vpp_remote_spi") == 0) {
+        state->tunnel->vpp_remote_spi = atoi(value);
+    } else if (strcmp(key, "vpp_crypto_algorithm") == 0) {
+        copy_id(state->tunnel->vpp_crypto_algorithm, sizeof(state->tunnel->vpp_crypto_algorithm), value);
+    } else if (strcmp(key, "vpp_crypto_key") == 0) {
+        copy_id(state->tunnel->vpp_crypto_key, sizeof(state->tunnel->vpp_crypto_key), value);
+    } else if (strcmp(key, "vpp_integrity_algorithm") == 0) {
+        copy_id(state->tunnel->vpp_integrity_algorithm, sizeof(state->tunnel->vpp_integrity_algorithm), value);
+    } else if (strcmp(key, "vpp_integrity_key") == 0) {
+        copy_id(state->tunnel->vpp_integrity_key, sizeof(state->tunnel->vpp_integrity_key), value);
     }
     return EN_ERR_NONE;
 }

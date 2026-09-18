@@ -1,0 +1,55 @@
+tunnels:
+  - id: gre-namespace-v2-native
+    type: gre_over_ipsec
+    local_node: site-a
+    remote_node: site-b
+    local_endpoint: 203.0.113.10
+    remote_endpoint: 203.0.113.9
+    gre_interface: gre0
+    gre_instance: 0
+    gre_outer_local_endpoint: 198.18.1.1
+    gre_outer_remote_endpoint: 198.18.2.1
+    gre_local_address: 10.255.0.1/30
+    gre_remote_address: 10.255.0.2
+    vpp_local_sa_id: 100
+    vpp_remote_sa_id: 200
+    vpp_local_spi: 1000
+    vpp_remote_spi: 2000
+    vpp_crypto_algorithm: aes-cbc-128
+    vpp_crypto_key: 01234567890123456789012345678901
+    vpp_integrity_algorithm: sha1-96
+    vpp_integrity_key: 01234567890123456789012345678901
+
+vpp_edges:
+  - node_id: site-a
+    port_id: underlay
+    vpp_interface: host-ib-ul-a
+    next_hop: 198.18.1.2
+    vpp_socket: /run/ibuki-vpp-ns/site-a/cli.sock
+  - node_id: site-b
+    port_id: underlay
+    vpp_interface: host-ib-ul-b
+    next_hop: 198.18.2.2
+    vpp_socket: /run/ibuki-vpp-ns/site-b/cli.sock
+
+paths:
+  - id: path-gre-namespace-v2-native
+    source: site-a
+    destination: site-b
+    route_destination_prefix: 10.10.2.0/24
+    egress_tunnel_id: gre-namespace-v2-native
+    priority: 10
+    segments:
+      - id: seg-gre-namespace-v2-native
+        from: site-a
+        to: site-b
+        tunnel_id: gre-namespace-v2-native
+
+intents:
+  - id: intent-gre-namespace-v2-native
+    traffic:
+      source: site-a
+      destination: site-b
+    path_selection:
+      mode: explicit
+      path_id: path-gre-namespace-v2-native

@@ -108,10 +108,10 @@ static void write_vpp_gre_setup(FILE *file, const en_yaml_config_t *config, cons
             tunnel->vpp_crypto_algorithm[0] != '\0' && tunnel->vpp_crypto_key[0] != '\0' &&
             tunnel->vpp_integrity_algorithm[0] != '\0' && tunnel->vpp_integrity_key[0] != '\0') {
             fprintf(file, "printf '# VPP Native IPsec protection: %s\\n'\n", tunnel->tunnel_id);
-            fprintf(file, "run_vpp_node %s ipsec sa add %d spi %d esp crypto-key %s crypto-alg %s integ-key %s integ-alg %s\n",
+            fprintf(file, "run_vpp_node %s ipsec sa add %d spi %d esp crypto-key %s crypto-alg %s integ-key %s integ-alg %s use-anti-replay udp-encap\n",
                 tunnel->local_node, tunnel->vpp_local_sa_id, tunnel->vpp_local_spi, tunnel->vpp_crypto_key, tunnel->vpp_crypto_algorithm,
                 tunnel->vpp_integrity_key, tunnel->vpp_integrity_algorithm);
-            fprintf(file, "run_vpp_node %s ipsec sa add %d spi %d esp crypto-key %s crypto-alg %s integ-key %s integ-alg %s\n",
+            fprintf(file, "run_vpp_node %s ipsec sa add %d spi %d esp crypto-key %s crypto-alg %s integ-key %s integ-alg %s use-anti-replay udp-encap\n",
                 tunnel->remote_node, tunnel->vpp_remote_sa_id, tunnel->vpp_remote_spi, tunnel->vpp_crypto_key, tunnel->vpp_crypto_algorithm,
                 tunnel->vpp_integrity_key, tunnel->vpp_integrity_algorithm);
         }

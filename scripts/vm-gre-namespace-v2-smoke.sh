@@ -8,16 +8,10 @@ OUT_DIR=${OUT_DIR:-$ROOT_DIR/out/gre-namespace-v2}
 RUN_BASE=${GRE_RUN_BASE:-/run/eventnet-netns-ipsec-gre-v2}
 INTENT_ID=${INTENT_ID:-}
 VPP_NATIVE_IPSEC=${VPP_NATIVE_IPSEC:-}
-KEEP_RUNTIME=${KEEP_RUNTIME:-0}
 
 if [ "$(id -u)" != "0" ]; then printf 'Please run as root: sudo %s [yaml]\n' "$0" >&2; exit 1; fi
 cd "$ROOT_DIR"
 cleanup() {
-  if [ "$KEEP_RUNTIME" = "1" ]; then
-    printf 'Keeping runtime namespaces and VPP processes for investigation.\n'
-    printf 'Run: sudo sh scripts/vm-vpp-ns-topology.sh clean\n'
-    return
-  fi
   OUT_DIR="$OUT_DIR" RUN_BASE="$RUN_BASE" sh scripts/vm-netns-ipsec-gre-stop.sh >/dev/null 2>&1 || true
   sh scripts/vm-vpp-ns-topology.sh clean >/dev/null 2>&1 || true
 }

@@ -116,7 +116,6 @@ sudo sh scripts/vm-gre-namespace-v2-smoke.sh samples/gre-namespace-v2-vpp-native
 
 Native用のVPP SA項目を含むYAMLでは、スクリプトがIntentとNative IPsecモードを自動選択する。`INTENT_ID`または`VPP_NATIVE_IPSEC=0`を指定した場合は明示設定を優先する。
 Nativeサンプルの`gre_interface: ipip0`は論理的な経路interface名として使用され、実際のVPPデータプレーンはIPIPである。
-失敗後にVPP状態を調査する場合は`KEEP_RUNTIME=1`を指定するとnamespaceとVPPソケットを残せる。調査後は`sudo sh scripts/vm-vpp-ns-topology.sh clean`で停止する。
 
 現行VPPでNative IPsec-GREが利用できない場合は、strongSwan/XFRM経路の実験を次で行う。
 

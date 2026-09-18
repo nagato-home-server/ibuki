@@ -5,7 +5,7 @@ tunnels:
     remote_node: site-b
     local_endpoint: 203.0.113.10
     remote_endpoint: 203.0.113.9
-    gre_interface: ipsec-gre0
+    gre_interface: ipip0
     gre_instance: 0
     gre_outer_local_endpoint: 198.18.1.1
     gre_outer_remote_endpoint: 198.18.2.1

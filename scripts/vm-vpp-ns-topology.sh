@@ -57,6 +57,7 @@ setup() {
   ip netns exec site-b ip route replace 198.18.1.1/32 via 203.0.113.10 dev b-direct
   vpp site-a ip route add 198.18.2.1/32 via 198.18.1.2 host-ib-ul-a
   vpp site-b ip route add 198.18.1.1/32 via 198.18.2.2 host-ib-ul-b
+  if [ "${SKIP_GRE:-0}" != "1" ]; then
   vpp site-a create gre tunnel src 198.18.1.1 dst 198.18.2.1 instance 0 del >/dev/null 2>&1 || true
   vpp site-b create gre tunnel src 198.18.2.1 dst 198.18.1.1 instance 0 del >/dev/null 2>&1 || true
   vpp site-a create gre tunnel src 198.18.1.1 dst 198.18.2.1 instance 0
@@ -67,7 +68,9 @@ setup() {
   vpp site-b set interface state gre0 up
   vpp site-a ip route add 10.10.2.0/24 via 10.255.0.2 gre0
   vpp site-b ip route add 10.10.1.0/24 via 10.255.0.1 gre0
-  printf 'Configured namespaced VPP topology: LAN, underlay, and bidirectional GRE.\n'
+  else
+    printf 'Configured namespaced VPP topology: LAN and underlay only.\n'
+  fi
 }
 
 clean() {

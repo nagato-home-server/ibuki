@@ -49,10 +49,10 @@ setup() {
     ip netns exec "$ns" true >/dev/null 2>&1 || { printf 'namespace missing: %s\n' "$ns" >&2; exit 1; }
   done
   sh "$ROOT_DIR/scripts/vm-vpp-ns-runtime.sh" start
-  configure_site site-a ib-lan-a ib-lan-a-peer 10.10.1.254/24 10.10.1.253/24 ib-ul-a ib-ul-a-peer 198.18.1.2/30 198.18.1.1/30
-  configure_site site-b ib-lan-b ib-lan-b-peer 10.10.2.254/24 10.10.2.253/24 ib-ul-b ib-ul-b-peer 198.18.2.2/30 198.18.2.1/30
-  ip netns exec site-a ip route replace 10.10.2.0/24 via 10.10.1.253 dev ib-lan-a-peer
-  ip netns exec site-b ip route replace 10.10.1.0/24 via 10.10.2.253 dev ib-lan-b-peer
+  configure_site site-a ib-lan-a ib-lan-a-peer 172.16.1.2/30 172.16.1.1/30 ib-ul-a ib-ul-a-peer 198.18.1.2/30 198.18.1.1/30
+  configure_site site-b ib-lan-b ib-lan-b-peer 172.16.2.2/30 172.16.2.1/30 ib-ul-b ib-ul-b-peer 198.18.2.2/30 198.18.2.1/30
+  ip netns exec site-a ip route replace 10.10.2.0/24 via 172.16.1.1 dev ib-lan-a-peer
+  ip netns exec site-b ip route replace 10.10.1.0/24 via 172.16.2.1 dev ib-lan-b-peer
   ip netns exec site-a ip route replace 198.18.2.1/32 via 203.0.113.9 dev a-direct
   ip netns exec site-b ip route replace 198.18.1.1/32 via 203.0.113.10 dev b-direct
   vpp site-a ip route add 198.18.2.1/32 via 198.18.1.2 host-ib-ul-a

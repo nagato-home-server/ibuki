@@ -1,32 +1,131 @@
 # Ibuki
 
-PathWeaver is an event-driven IPsec path controller written in C.
+Ibukiは、複数の拠点間通信経路を選択し、安全に切り替えるためのイベント駆動型ネットワークControllerです。C言語で実装されており、YAMLで記述されたIntent、Path、Tunnel、Nodeなどを読み込み、strongSwanとVPPを利用する実行計画を生成します。
 
-It reads YAML intents, selects a usable VPN path, and generates runtime plans for
-strongSwan and VPP.  The current prototype can reproduce direct IPsec, hub
-fallback, relay path selection, VPP forwarding, and integrated controller-driven
-runtime switching in a single Linux VM.
+本プロジェクトは、単に「最も速い経路を選ぶ」ことだけを目的としません。通信経路を状態を持つ`Path`として扱い、準備、検証、転送変更、切替後確認、安定化、Rollback、Fallbackまでを一つの制御モデルで扱うことを目的としています。
 
-## What Works Today
+現在は研究・実証用のPrototypeです。本番Networkへそのまま導入できる完成製品ではありません。
 
-- YAML-based `Intent` / `Path` / `Tunnel` / VPP edge parsing
-- Priority, fallback, and evaluated path selection
-- Explain JSONL output for selected paths, excluded paths, and health inputs
-- Agent telemetry JSONL with freshness, sequence, identity, and anti-flap handling
-- `eventnetd` periodic, stdin, Unix socket, reconnect, and finite parallel shared-batch control
-- Versioned JSONL contracts are documented in `docs/event-schemas.md`
-- strongSwan `swanctl.conf` and apply script generation
-- VPP route plan and VPP netns runtime generation
-- Linux network namespace smoke tests for direct, hub, and relay paths
-- Integrated IPsec + VPP runtime smoke driven by controller-generated plans
-- Scenario harness for direct failure, hub fallback, recovery, and relay-best cases
-- systemd service template for long-running `eventnetd` deployment (`docs/eventnetd-service.md`)
+## 1. Ibukiでできること
 
-## Quick Start
+現在の実装では、主に次の処理を行えます。
 
-### Linux VM Demo
+- YAMLから`Node`、`Intent`、`Path`、`Tunnel`、`VPP Edge`を読み込む。
+- 明示指定、優先度、Healthや性能値の評価によってPathを選択する。
+- 利用できないPathや条件を満たさないPathを候補から除外する。
+- AgentがRTT、Packet Loss、Jitterなどを測定し、Telemetry JSONLを生成する。
+- Telemetryや障害Eventを受けてPathを再評価する。
+- strongSwan用設定とVPP用Route Planを生成する。
+- 選択理由、除外理由、観測値、遷移結果をExplain JSONLへ記録する。
+- Direct Path、Hub Fallback、Relay PathなどのScenarioを再現する。
+- Linux Network Namespace上でIPsecとVPPを組み合わせた試験を行う。
 
-Use this first when running from the shared Linux VM folder.
+GUI、Cloud VPN連携、完全なController Federation、Active-Active転送、Graceful Transition、Flow Preserveは今後の実装対象です。
+
+## 2. 基本的な設計方針
+
+### 2.1 Pathを制御の中心に置く
+
+Ibukiでは、TunnelやRouteを個別に操作するだけでなく、通信に必要なTunnel、Segment、Waypoint、Routeをまとめた`Path`を制御対象とします。
+
+これにより、Controllerは「Tunnelが存在するか」だけでなく、「この通信要求に対して、どの経路が現在利用可能で、どの経路が実際に使用中か」を管理します。
+
+### 2.2 Path SelectionとPath Transitionを分ける
+
+Path Selectionは、どのPathを利用するかを決める処理です。Path Transitionは、選択されたPathへ実際の通信を移す処理です。
+
+新しいPathが選ばれても、Tunnelが未確立であったり、転送変更後にEnd-to-End通信が成立しなかったりする可能性があります。そのため、Ibukiでは「選んだこと」と「安全に切り替えられたこと」を同一視しません。
+
+### 2.3 Stableを疎通確認後の状態とする
+
+転送設定を変更しただけでは、そのPathを`Stable`とは扱いません。新しいPathを通るEnd-to-End通信を確認し、必要な安定条件を満たした後に`Stable`へ移行します。
+
+代表的な状態は次のとおりです。
+
+```text
+Proposed
+  -> Preparing
+  -> Validating
+  -> Ready
+  -> Commit Executing
+  -> Commit Applied
+  -> Post Validation
+  -> Stable
+```
+
+失敗時には`Rolling Back`、`Fallbacking`、`Failed`などへ移行します。
+
+### 2.4 RollbackとFallbackを分ける
+
+Rollbackは、切替前に利用していた最後の`Stable Path`へ戻す処理です。
+
+Fallbackは、元のPathも利用できない場合に、あらかじめ安全経路として許可されたHub Pathなどへ退避する処理です。
+
+この二つを分けることで、「変更を取り消すこと」と「障害から避難すること」を混同しないようにします。
+
+### 2.5 Security Policyを性能より優先する
+
+Pathの選択では、原則として次の順序で条件を扱います。
+
+1. Security Constraint
+2. 明示された管理者Policy
+3. AvailabilityとHealth
+4. RTT、Loss、Hop Countなどの性能条件
+
+例えば、VLAN 100の通信にSecurity Hubの経由が必要であれば、RTTが短くてもSecurity Hubを含まないDirect Pathは選択しません。
+
+### 2.6 Backendの違いをCapabilityとして公開する
+
+strongSwan、VPP、既存IPsec Router、Cloud VPNでは、事前確立、状態観測、経路変更、Rollbackなどの能力が異なります。
+
+Ibukiでは、これらの差を隠して同一機能に見せるのではなく、AdapterとCapabilityによってControllerへ公開します。
+
+Capabilityの例は次のとおりです。
+
+- `can_observe_state`
+- `can_pre_establish`
+- `can_keep_standby`
+- `can_rekey`
+- `can_measure_health`
+- `can_flow_preserve`
+- `can_atomic_forwarding_update`
+
+Controllerは、必要なCapabilityを持たないNodeやPathを候補から除外します。
+
+### 2.7 判断理由を記録する
+
+Controllerの判断は、Explain JSONLとして記録します。GUIは将来実装ですが、GUIが表示する判断根拠となるBackendはすでにExplain出力として用意されています。
+
+Explainには、少なくとも次の情報を残します。
+
+- 選択されたPath
+- 候補となったPath
+- 候補から除外した理由
+- 判断に利用したHealthと性能値
+- 遷移前後の状態
+- Commit、Validation、Rollback、Fallbackの結果
+
+### 2.8 障害時にも現在の通信を不用意に壊さない
+
+Controllerとの通信が失われても、Agentは現在のActive Pathを直ちに削除しません。Active Path自体が利用不能になった場合に限り、事前に許可されたEmergency Fallbackを利用する設計とします。
+
+## 3. 動作環境
+
+基本的なBuildとUnit TestはWindowsでも実行できます。strongSwan、VPP、Network Namespaceを利用する実通信試験はLinux VMを前提とします。
+
+主な依存関係は次のとおりです。
+
+- C Compiler
+- CMake
+- CTest
+- Linux VMでの実通信試験時: strongSwan、VPP、iproute2、Root権限
+- 任意機能: strongSwan libvici、VPP VAPI SDK
+
+## 4. 最初に試す方法
+
+### 4.1 Linux VM
+
+Repositoryの`controller`Directoryへ移動し、Shell Scriptの確認、Build、Scenario試験を順番に実行します。
 
 ```sh
 cd controller
@@ -36,19 +135,21 @@ sh scripts/vm-eventnet-scenario-smoke.sh samples/linux-vm-netns.yaml
 sh scripts/vm-evaluate.sh state-boundary samples/linux-vm-netns.yaml
 ```
 
-One-shot demo:
+最小Demoは次のCommandで実行できます。
 
 ```sh
 sh scripts/demo-mitou.sh samples/linux-vm-netns.yaml
 ```
 
-Full runtime demo with IPsec/VPP requires root and the runtime dependencies:
+strongSwanとVPPを含む実Runtimeを適用する場合はRoot権限が必要です。
 
 ```sh
 sudo RUN_RUNTIME=1 sh scripts/demo-mitou.sh samples/linux-vm-netns.yaml
 ```
 
-### Windows Build
+このCommandはNetwork設定を変更するため、専用のLinux VMまたは検証環境で実行してください。
+
+### 4.2 Windows
 
 ```powershell
 cd controller
@@ -57,26 +158,47 @@ cmake --build build
 ctest --test-dir build -C Debug --output-on-failure
 ```
 
-作業フォルダを移動した後や共有フォルダを切り替えた後は、既存の`build/`が古い絶対パスの`CMakeCache.txt`を持つことがあります。その場合は既存buildを再利用せず、`cmake -S . -B build-win-check`のように新しい検証用ディレクトリを構成してから、同じbuild・CTest手順を実行してください。
+作業Folderを移動した場合、既存の`build/`に古い絶対Pathを含む`CMakeCache.txt`が残ることがあります。その場合は既存Build Directoryを再利用せず、別のDirectoryを指定してください。
 
-## Basic Usage
+```powershell
+cmake -S . -B build-win-check
+cmake --build build-win-check
+ctest --test-dir build-win-check -C Debug --output-on-failure
+```
 
-Generate a controller-selected plan from YAML:
+## 5. 基本的な使い方
+
+### 5.1 YAMLを確認する
+
+最初は[`samples/linux-vm-netns.yaml`](samples/linux-vm-netns.yaml)を使用してください。このYAMLには、Direct、Hub、Relayの候補Pathと、それらを選択するIntentが含まれています。
+
+YAMLだけを検証する場合は次を実行します。
+
+```sh
+build-linux-cc/eventnet_yaml_demo --validate-only samples/linux-vm-netns.yaml
+```
+
+Ibukiの主な設定要素は次のとおりです。
+
+| 要素 | 役割 |
+| --- | --- |
+| `nodes` | 拠点、Hub、Relay、Capability、管理状態を定義する |
+| `tunnels` | Endpoint、Traffic Selector、認証情報などを定義する |
+| `vpp_edges` | VPP Interface、Address、Next Hop、Portを定義する |
+| `paths` | Source、Destination、Segment、Waypoint、Routeをまとめる |
+| `intents` | 対象通信、Path選択方式、制約、遷移、Fallbackを定義する |
+
+YAMLのRoute記法は[`docs/yaml-routes.md`](docs/yaml-routes.md)を参照してください。
+
+### 5.2 Pathを選択する
+
+YAMLからControllerが選択したPlanを生成します。
 
 ```sh
 sh scripts/vm-generate-plan.sh samples/linux-vm-netns.yaml
 ```
 
-For a node with multiple VPP ports, give each `vpp_edges` entry a unique
-`port_id` and select the port from an explicit route with `interface`. The
-Hub waypoint example is reproducible with:
-
-```sh
-sh scripts/vm-vpp-route-plan-smoke.sh samples/linux-vm-netns.yaml
-ctest --test-dir build -R eventnet_yaml_vlan_hub_waypoint --output-on-failure
-```
-
-Run scenario tests:
+障害時の選択を再現する場合はScenario Runnerを利用します。
 
 ```sh
 build-linux-cc/eventnet_scenario samples/linux-vm-netns.yaml \
@@ -85,442 +207,267 @@ build-linux-cc/eventnet_scenario samples/linux-vm-netns.yaml \
   --expect path-via-hub
 ```
 
-Run the Agent telemetry smoke test:
+この例では、使用中の`path-direct`を障害状態にし、`path-via-hub`が選択されることを確認します。
+
+### 5.3 AgentでHealthを測定する
+
+YAMLからIntentの候補Pathと測定先を読み取り、Telemetry JSONLを生成します。
 
 ```sh
-sh scripts/vm-agent-smoke.sh
-```
-
-Probe a real IPv4 endpoint from Linux and emit telemetry JSONL:
-
-```sh
-build-linux-cc/eventnet_agent --path path-direct --source site-a \
-  --target 203.0.113.9 --count 10 --interval-ms 1000 \
+build-linux-cc/eventnet_agent \
+  --yaml samples/linux-vm-netns.yaml \
+  --intent intent-a-b \
+  --count 10 \
+  --interval-ms 1000 \
   --output out/telemetry.jsonl
 ```
 
-Probe several candidate paths in each measurement round:
+AgentはPathごとに次の値を出力します。
+
+- `rtt_ms`
+- `packet_loss_percent`
+- `jitter_ms`
+- 連続成功回数
+- 連続失敗回数
+
+実NetworkへPingせず、値を指定して制御処理だけを確認することもできます。
 
 ```sh
-build-linux-cc/eventnet_agent --source site-a \
-  --probe path-direct 203.0.113.9 \
-  --probe path-via-hub 203.0.113.13 \
-  --probe path-via-relay-c 203.0.113.21 \
-  --count 10 --interval-ms 1000 --output out/telemetry.jsonl
+build-linux-cc/eventnet_agent \
+  --path path-direct \
+  --target 203.0.113.9 \
+  --count 1 \
+  --simulate 12.5 0
 ```
 
-Derive candidate paths and endpoints directly from the YAML:
+### 5.4 ControllerへTelemetryを渡す
 
-```sh
-build-linux-cc/eventnet_agent --yaml samples/linux-vm-netns.yaml \
-  --intent intent-a-b --count 10 --interval-ms 1000 \
-  --output out/telemetry.jsonl
-```
-
-The Agent emits `rtt_ms`, `packet_loss_percent`, and per-Path RTT-difference `jitter_ms` in each JSONL record.
-
-Feed Agent telemetry into the controller once:
+一回だけ評価する場合は次を実行します。
 
 ```sh
 build-linux-cc/eventnetd samples/linux-vm-netns.yaml \
-  --intent intent-a-b --telemetry out/telemetry.jsonl --once
+  --intent intent-a-b \
+  --telemetry out/telemetry.jsonl \
+  --once
 ```
 
-Store machine-readable decisions for evaluation:
+判断結果をJSONLへ保存する場合は`--status-jsonl`を指定します。
 
 ```sh
 build-linux-cc/eventnetd samples/linux-vm-netns.yaml \
-  --intent intent-a-b --telemetry out/telemetry.jsonl --count 10 \
+  --intent intent-a-b \
+  --telemetry out/telemetry.jsonl \
+  --count 10 \
   --status-jsonl out/status.jsonl
 ```
 
-Persist the applied Path across daemon restarts:
+Controller再起動後も適用済みPathを引き継ぐ場合はState Fileを指定します。
 
 ```sh
 build-linux-cc/eventnetd samples/linux-vm-netns.yaml \
-  --intent intent-a-b --telemetry out/telemetry.jsonl \
-  --state-file out/eventnetd.state --once
+  --intent intent-a-b \
+  --telemetry out/telemetry.jsonl \
+  --state-file out/eventnetd.state \
+  --once
 ```
 
-Show the strongSwan/VPP command backend without applying changes:
+### 5.5 AgentからControllerへ直接渡す
+
+Agentの標準出力をControllerの標準入力へ接続できます。
+
+```sh
+build-linux-cc/eventnet_agent \
+  --path path-direct \
+  --target 203.0.113.9 \
+  --count 10 \
+  --interval-ms 1000 \
+  | build-linux-cc/eventnetd samples/linux-vm-netns.yaml \
+      --intent intent-a-b \
+      --telemetry-stdin \
+      --count 10
+```
+
+LinuxではUnix Domain SocketからTelemetryを受け取ることもできます。
 
 ```sh
 build-linux-cc/eventnetd samples/linux-vm-netns.yaml \
-  --intent intent-a-b --telemetry out/telemetry.jsonl \
-  --backend command --once
+  --intent intent-a-b \
+  --telemetry-socket /run/ibuki/eventnetd.sock \
+  --count 10
 ```
 
-Target a namespace-specific strongSwan VICI socket:
+現在のSocket入力はLocal Agent用の境界です。認証済みのRemote APIとしてInternetへ公開しないでください。
+
+### 5.6 strongSwanとVPPの実行Planを生成する
+
+選択されたPathに対応するNetwork Namespace用Runtimeを生成します。
+
+```sh
+sh scripts/vm-generate-netns-runtime.sh samples/linux-vm-netns.yaml
+```
+
+主な生成物は`out/`以下に作成されます。
+
+| 生成物 | 内容 |
+| --- | --- |
+| `selected-path.txt` | 選択Path、理由、Route概要 |
+| `gre-swanctl.conf` | strongSwan設定 |
+| `vpp-route-plan.sh` | VPP Route計画 |
+| `vpp-netns-route-plan.sh` | Node別VPP計画 |
+| `apply-selected.sh` | 選択Pathの適用Script |
+| `apply-integrated.sh` | strongSwanとVPPの統合適用Script |
+| `rollback-selected.sh` | 失敗時のRollback Script |
+
+生成ScriptをRoot権限で実行する前に、必ず内容を確認してください。
+
+### 5.7 設定を再読み込みする
+
+FileからTelemetryを読む`eventnetd`は、LinuxでSIGHUPによる安全な設定再読込を行えます。
 
 ```sh
 build-linux-cc/eventnetd samples/linux-vm-netns.yaml \
-  --intent intent-a-b --telemetry out/telemetry.jsonl \
-  --backend command --swanctl-uri unix:///run/eventnet-netns-ipsec-direct/site-a/charon.vici --once
+  --intent intent-a-b \
+  --telemetry out/telemetry.jsonl \
+  --reload-config \
+  --reload-on-sighup \
+  --state-file out/eventnetd.state \
+  --count 0
 ```
 
-Target a VPP CLI socket as well:
+別Terminalから次を実行します。
 
 ```sh
-build-linux-cc/eventnetd samples/linux-vm-netns.yaml \
-  --intent intent-a-b --telemetry out/telemetry.jsonl --backend command \
-  --swanctl-uri unix:///run/eventnet-netns-ipsec-direct/site-a/charon.vici \
-  --vppctl-socket /run/vpp/cli.sock --once
-```
-
-Ask the command backend to verify the CHILD SA after initiation:
-
-```sh
-build-linux-cc/eventnetd samples/linux-vm-netns.yaml \
-  --intent intent-a-b --telemetry out/telemetry.jsonl --backend command \
-  --swanctl-uri unix:///run/eventnet-netns-ipsec-direct/site-a/charon.vici \
-  --verify-swanctl --once
-```
-
-When libvici is available, build the optional controller-level VICI probe:
-
-```sh
-cmake -S . -B build-vici -DEVENTNET_ENABLE_STRONGSWAN_VICI=ON
-cmake --build build-vici
-build-vici/eventnet_strongswan_vici_controller_probe \
-  unix:///run/strongswan/charon.vici samples/cert-auth.yaml intent-cert-a-b
-```
-
-This path uses the real strongSwan VICI socket through the controller adapter.
-The probe uses a mock VPP adapter, so VPP forwarding is verified separately by
-the integrated runtime and VPP netns smoke tests.
-
-Feed real strongSwan and VPP observations into one controller evaluation (Linux VM):
-
-```sh
-sudo sh scripts/vm-observer-eventnetd-runtime-smoke.sh samples/linux-vm-netns.yaml
-```
-
-For a VPP VRF, select the FIB table explicitly:
-
-```sh
-sudo INTENT_ID=intent-a-b VPP_TABLE_ID=100 sh scripts/vm-observer-eventnetd-runtime-smoke.sh samples/linux-vm-netns.yaml
-```
-
-The IPsec VICI socket and VPP CLI must already be running. The smoke stores raw observer input and eventnetd output under `out/observer-eventnetd-runtime/`.
-
-Test VLAN and VRF together on the Linux VM:
-
-```sh
-sudo VLAN_ID=100 VPP_TABLE_ID=100 sh scripts/vm-vpp-vlan-netns-smoke.sh
-```
-
-Repeat telemetry evaluation:
-
-```sh
-build-linux-cc/eventnetd samples/linux-vm-netns.yaml \
-  --intent intent-a-b --telemetry out/telemetry.jsonl \
-  --interval-ms 5000 --count 10
-```
-
-Run a reproducible periodic Agent-to-controller stream evaluation:
-
-```sh
-LONG_COUNT=10 LONG_INTERVAL_MS=1000 \
-  sh scripts/vm-evaluate.sh telemetry-long samples/linux-vm-netns.yaml
-```
-
-The evaluation records the number of reconciliations, status JSONL output, and the persisted state file.
-
-`state-boundary` verifies that state from another Intent or an out-of-scope Path is rejected. Linux builds enable baseline hardening by default; set `EVENTNET_ENABLE_HARDENING=OFF` only for diagnostic builds.
-
-Reload a file-backed configuration on demand (Linux):
-
-```sh
-build-linux-cc/eventnetd samples/linux-vm-netns.yaml \
-  --intent intent-a-b --telemetry out/telemetry.jsonl \
-  --reload-config --reload-on-sighup --state-file out/eventnetd.state --count 0
-# from another terminal:
 kill -HUP <eventnetd-pid>
 ```
 
-Evaluate every supported YAML route form:
+新しい設定が不正な場合は、直前に正常だった設定を維持します。
 
-```sh
-sh scripts/vm-evaluate.sh route-yaml samples/route-examples.yaml
+## 6. Path選択方式
+
+Intentでは主に次の選択方式を利用できます。
+
+| Mode | 用途 |
+| --- | --- |
+| `explicit` | 管理者がPath IDを明示する |
+| `priority` | 利用可能な候補のうちAdministrative Priorityを比較する |
+| `evaluated` | RTT、Loss、Hop Count、Priorityなどを指定順に比較する |
+
+ConstraintとしてRTTやPacket Lossの上限を指定できます。Node Capability、Administrative State、Health、Waypointなどの条件を満たさないPathは、性能比較を行う前に候補から除外します。
+
+同じ優先度の強制Policyが競合する場合、Controllerが暗黙に一方を選ぶのではなく、Intent Conflictとして扱い、Explainへ理由を残す方針です。
+
+## 7. 開発時の基本方針
+
+### 7.1 実装済みと設計段階を分ける
+
+文書、発表、Issueでは、次の状態を区別してください。
+
+- 実通信で確認済み
+- Unit TestまたはMockで確認済み
+- Plan生成まで実装済み
+- Adapter/API境界のみ実装済み
+- 設計済みだが未実装
+- 将来構想
+
+例えば、Explain JSONLのBackendは実装済みですが、GUI Frontendは未実装です。VPP CLI Adapterは利用できますが、VPP Binary APIの全機能が完成しているわけではありません。
+
+### 7.2 Backend固有処理をCoreへ入れない
+
+strongSwan、VPP、FRR、Cloud VPNなどの固有処理はAdapterへ配置します。Path SelectionやTransitionのCoreが、特定BackendのCommandやData Structureへ直接依存しないようにします。
+
+### 7.3 観測値と推測値を分ける
+
+Tunnel Segmentの状態からPath全体の利用可能性を予測することと、End-to-End通信が成功したことは別です。
+
+```text
+Segment Observation
+  -> Path Prediction
+  -> End-to-End Verification
 ```
 
-Stream one Agent record directly into the controller:
+`Stable`判定には可能な限りEnd-to-End Verificationを使用します。
+
+### 7.4 Network変更後に状態を確認する
+
+Commandの終了Codeだけで成功と判断しないでください。特に`vppctl`はCLI Errorが発生してもProcessの終了Codeだけでは検出できない場合があります。
+
+VPP変更後は、少なくとも次を確認します。
 
 ```sh
-build-linux-cc/eventnet_agent --path path-direct --target 203.0.113.9 --count 10 --interval-ms 1000 \
-  | build-linux-cc/eventnetd samples/linux-vm-netns.yaml --intent intent-a-b \
-    --telemetry-stdin --count 10
+show ipsec sa
+show ipsec protect
+show interface
+show ip fib
 ```
 
-For one multi-Path measurement round, batch records before selecting:
+strongSwan変更後は、CHILD SAの状態と実際のEnd-to-End通信を確認します。
 
-```sh
-build-linux-cc/eventnet_agent --source site-a \
-  --probe path-direct 203.0.113.9 --probe path-via-hub 203.0.113.13 \
-  --probe path-via-relay-c 203.0.113.21 --simulate 20 0 \
-  | build-linux-cc/eventnetd samples/linux-vm-netns.yaml \
-    --intent intent-a-b --telemetry-stdin --batch-size 3 --count 1
-```
+### 7.5 生成物をSourceとして編集しない
 
-On Linux, receive Agent JSONL over a Unix domain socket:
+`out/`と`build*/`以下は生成物です。必要に応じて再生成し、恒久的な変更は`src/`、`include/`、`examples/`、`scripts/`、`samples/`などのSource側へ反映してください。
 
-```sh
-build-linux-cc/eventnetd samples/linux-vm-netns.yaml --intent intent-a-b \
-  --telemetry-socket /run/ibuki/eventnetd.sock --count 10
-```
+### 7.6 検証は小さい範囲から行う
 
-The daemon can accept one or more local Unix-socket clients, with optional peer-UID checking and finite parallel shared batches. This remains a local telemetry boundary rather than a complete authenticated production API.
+変更後は、対象Unit Test、Scenario Test、Plan生成、Network Namespace試験、実strongSwan/VPP試験の順で確認します。Root権限が必要な試験を最初から実行せず、まず非特権で確認できる範囲を通してください。
 
-Generate netns runtime files for the selected path:
+### 7.7 秘密情報をRepositoryへ保存しない
 
-```sh
-sh scripts/vm-generate-netns-runtime.sh samples/linux-vm-netns.yaml
-```
+実運用のPSK、秘密鍵、証明書秘密鍵、Cloud CredentialをSample YAMLや生成物へCommitしないでください。Sampleでは検証専用の値を使い、本番Credentialは権限を制限した外部Storeから渡す方針です。
 
-## Repository Map
+## 8. Repository構成
 
-### Top-level directories
-
-| path | responsibility | how to use it |
-| --- | --- | --- |
-| `include/eventnet/` | Public C API, data model, and adapter contracts | Include these headers from applications or tests linking `eventnet_controller` |
-| `src/` | Controller core, parser, state machine, observers, and external adapters | Built as the `eventnet_controller` static library by CMake |
-| `examples/` | Executable entry points | Built into `eventnetd`, `eventnet_agent`, plan generators, observers, and probes |
-| `tests/` | Controller unit and integration-style C tests | Run through `ctest --test-dir build --output-on-failure` |
-| `cmake/` | Assertions for generated YAML/runtime plans | Invoked by CTest; normally not run directly |
-| `samples/` | Valid, invalid, replay, and fixture inputs | Pass a YAML or JSONL file to the matching executable or smoke test |
-| `scripts/` | Build, setup, evaluation, strongSwan, XFRM, and VPP orchestration | See `docs/shell-commands.md`; scripts changing networking require root |
-| `docs/` | Design, schema, operation, implementation status, and security documentation | Read `code-reference.md` for code and `shell-commands.md` for commands |
-| `deploy/` | Service-manager integration | Install `ibuki-eventnetd.service` through CMake install or copy it for packaging |
-| `third_party/yyjson/` | Vendored JSON parser | Compiled into the library; do not modify for Ibuki-specific behavior |
-| `story/`, `daily/`, `txt/` | Design history, daily notes, and proposal research | Reference material; not used by the build or runtime |
-| `out/`, `build*/` | Generated plans, logs, reports, and binaries | Regenerate as needed; these are not runtime source files |
-
-### Top-level files
-
-| file | responsibility |
+| Directory | 内容 |
 | --- | --- |
-| `CMakeLists.txt` | Builds the core library, executables, optional VICI/VAPI transports, CTest cases, and install targets |
-| `README.md` | Project overview, basic operation, repository map, and documentation entry point |
-| `LICENSE` | Project license terms |
-| `実装方針.md` | Current implementation policy and research-to-code decisions |
-| `研究内容.tex` | Research manuscript source; not part of the program build |
-| `ibuki-github-qr.png` | Presentation/document asset; not used at runtime |
+| `include/eventnet/` | 公開C API、Data Model、Adapter Contract |
+| `src/` | Controller Core、Parser、State、Adapter実装 |
+| `examples/` | `eventnetd`、Agent、Scenario、Plan Generator等のEntry Point |
+| `tests/` | Unit Testと統合寄りのTest |
+| `samples/` | YAML、Telemetry、Observer出力、異常系Fixture |
+| `scripts/` | Build、Demo、評価、strongSwan/VPP試験Script |
+| `docs/` | 設計、運用、Schema、研究比較、実装状況 |
+| `deploy/` | systemd等の配置用File |
+| `out/` | 生成されたPlan、状態、Log、評価結果 |
+| `build*/` | Build結果 |
 
-### Public headers
+詳しいSource FileとFunctionの対応は[`docs/code-reference.md`](docs/code-reference.md)、Shell Command一覧は[`docs/shell-commands.md`](docs/shell-commands.md)を参照してください。
 
-| file | responsibility |
-| --- | --- |
-| `types.h` | Node, Path, Segment, Tunnel, Intent, health, transition, and error data structures |
-| `controller.h` | Controller lifecycle, health submission, reconciliation, and result APIs |
-| `yaml_config.h` | Ibuki YAML subset loader and validator |
-| `topology.h` | Topology and route relationship helpers |
-| `telemetry.h` | Telemetry JSONL parsing, validation, and file handling |
-| `apply_plan.h` | Apply-plan data structures and secure plan-file output |
-| `render_commands.h` | strongSwan/VPP command and configuration rendering |
-| `command_adapters.h` | Command-backed strongSwan, VPP, and health adapter factories |
-| `mock_adapters.h` | Deterministic adapters used by tests and scenarios |
-| `strongswan_observer.h` | Conversion of strongSwan state into controller observations |
-| `strongswan_vici_adapter.h` | Controller-facing strongSwan VICI adapter contract |
-| `strongswan_vici_client.h` | Optional real VICI client contract |
-| `vpp_observer.h` | Conversion of VPP CLI output into route/interface observations |
-| `vpp_api_adapter.h` | Controller-facing VPP Binary API adapter contract |
-| `vpp_api_transport.h` | Optional VPP VAPI transport contract |
-| `json_output.h` | Shared safe JSONL serialization helpers |
+## 9. 関連Document
 
-### Library implementation files
+### 利用・運用
 
-| file | responsibility |
-| --- | --- |
-| `controller.c` | Main reconciliation entry point: observe, select, transition, audit |
-| `path_selection.c` | Intent constraints, fallback, priority, and evaluated Path selection |
-| `transition.c` | Prepare, apply, commit, drain, and rollback state transitions |
-| `state.c` | Applied-Path state, lookup helpers, traffic keys, and enum names |
-| `topology.c` | Path, segment, waypoint, and topology consistency operations |
-| `health_probe.c` | Health-probe validation and adapter integration |
-| `yaml_config.c` | Line-oriented parser for the supported YAML subset and semantic validation |
-| `telemetry.c` | JSONL health/event parsing, freshness, identity, and sequence checks |
-| `apply_plan.c` | Secure writing and application boundaries for generated plans |
-| `render_commands.c` | strongSwan and VPP command/configuration generation |
-| `command_adapters.c` | Real command execution, dry-run, verification, XFRM, VLAN, VRF, and route handling |
-| `strongswan_observer.c` | Parses and normalizes strongSwan/CHILD_SA observations |
-| `strongswan_vici_adapter.c` | Connects controller callbacks to the VICI client abstraction |
-| `strongswan_vici_client.c` | Optional libvici-backed transport, compiled only when enabled |
-| `vpp_observer.c` | Parses VPP FIB and interface output |
-| `vpp_api_adapter.c` | Maps controller VPP operations to a Binary API transport |
-| `vpp_api_transport.c` | Optional VAPI connection and request implementation |
-| `strongswan_adapter_mock.c` | In-memory strongSwan behavior for tests |
-| `vpp_adapter_mock.c` | In-memory VPP behavior for tests |
-| `audit.c` | Bounded audit and error history |
-| `json_output.c` | yyjson-to-JSONL output implementation |
-| `internal.h` | Private cross-module declarations; not a public API |
+- [`docs/yaml-routes.md`](docs/yaml-routes.md): YAML Route記法とValidation Rule
+- [`docs/event-schemas.md`](docs/event-schemas.md): Telemetry、Event、Status、Explain JSONL
+- [`docs/eventnetd-service.md`](docs/eventnetd-service.md): `eventnetd`の常駐運用
+- [`docs/transport-adapter-guide.md`](docs/transport-adapter-guide.md): strongSwan VICI、VPP CLI/Binary API
+- [`scripts/README-linux-vm.md`](scripts/README-linux-vm.md): Linux VMでの構築・試験手順
 
-Function-level ownership and side effects are documented in `docs/code-reference.md`.
+### 設計・実装状況
 
-### Tests, CMake checks, and deployment
+- [`実装方針.md`](実装方針.md): Ibuki全体の実装方針
+- [`docs/future-implementation-map.md`](docs/future-implementation-map.md): 今後の実装場所と優先順位
+- [`docs/scenario-vs-production.md`](docs/scenario-vs-production.md): Scenarioと本番Controllerの差
+- [`docs/security-audit-notes.md`](docs/security-audit-notes.md): Trust BoundaryとSecurity上の注意
+- [`docs/vpp-api-implementation.md`](docs/vpp-api-implementation.md): VPP Binary APIの実装状況
 
-| file | responsibility | operation |
-| --- | --- | --- |
-| `tests/test_controller.c` | Unit tests for parsing, selection, transitions, state, adapters, and security boundaries | `ctest --test-dir build -R eventnet_tests --output-on-failure` |
-| `cmake/check-vlan-vrf-isolation.cmake` | Checks generated VLAN/VRF isolation plans | Invoked by `eventnet_yaml_vlan_vrf_isolation` CTest |
-| `cmake/check-vlan-hub-plan.cmake` | Checks waypoint/hub VLAN route plans | Invoked by `eventnet_yaml_vlan_hub_waypoint` CTest |
-| `cmake/check-gre-over-ipsec-plan.cmake` | Checks GRE-over-IPsec plan generation | Invoked by `eventnet_gre_over_ipsec_plan` CTest |
-| `cmake/check-namespace-runtime.cmake` | Checks generated apply, integrated, and rollback runtime files | Invoked by `eventnet_namespace_runtime_plan` CTest |
-| `deploy/ibuki-eventnetd.service` | systemd unit template for a resident controller | See `docs/eventnetd-service.md` before installation |
+### 研究・評価
 
-### Executables and operation
+- [`研究内容.tex`](研究内容.tex): 研究論文Source
+- [`docs/prior-research-and-sdwan2.md`](docs/prior-research-and-sdwan2.md): 先行研究とONUG SD-WAN 2.0への対応状況
+- [`docs/asano-comparison.md`](docs/asano-comparison.md): ASANO Systemとの比較
+- [`docs/paper-evaluation-checklist.md`](docs/paper-evaluation-checklist.md): 論文評価で必要な証拠
+- [`docs/paper-submission-minimum.md`](docs/paper-submission-minimum.md): 論文提出時の最低条件
+- [`docs/paper-to-mitou-roadmap.md`](docs/paper-to-mitou-roadmap.md): 論文から未踏期間へのRoadmap
 
-All examples below assume a Linux `vm-build-cc.sh` build. For CMake builds, replace `build-linux-cc/` with the selected build directory.
+## 10. 現在の位置付け
 
-| source / executable | responsibility | typical operation |
-| --- | --- | --- |
-| `eventnetd.c` / `eventnetd` | Long-running or one-shot controller process | `build-linux-cc/eventnetd samples/linux-vm-netns.yaml --intent intent-a-b --telemetry samples/telemetry-replay.jsonl --once` |
-| `eventnet_agent.c` / `eventnet_agent` | Endpoint probing and Telemetry JSONL generation | `build-linux-cc/eventnet_agent --yaml samples/linux-vm-netns.yaml --intent intent-a-b --count 1 --simulate 12.5 0` |
-| `netns_plan.c` / `eventnet_netns_plan` | Generates selected Path, strongSwan, VPP, apply, and rollback files | `build-linux-cc/eventnet_netns_plan --intent intent-a-b --out-dir out/netns-runtime samples/linux-vm-netns.yaml` |
-| `eventnet_scenario.c` / `eventnet_scenario` | Reproducible failure, fallback, recovery, and relay scenarios | `build-linux-cc/eventnet_scenario samples/linux-vm-netns.yaml --step direct-failed` |
-| `yaml_demo.c` / `eventnet_yaml_demo` | YAML validation and simple plan generation | `build-linux-cc/eventnet_yaml_demo --validate-only samples/linux-vm-netns.yaml` |
-| `demo.c` / `eventnet_demo` | Minimal library API example | `build-linux-cc/eventnet_demo` |
-| `swanctl_observer.c` / `eventnet_swanctl_observer` | Parses saved `swanctl --list-sas` output | `build-linux-cc/eventnet_swanctl_observer samples/swanctl-list-sas-installed.txt CHILD_ID` |
-| `vpp_observer.c` / `eventnet_vpp_observer` | Parses a saved VPP FIB | `build-linux-cc/eventnet_vpp_observer samples/vpp-show-ip-fib.txt PREFIX` |
-| `vpp_interface_observer.c` / `eventnet_vpp_interface_observer` | Parses saved VPP interface state | `build-linux-cc/eventnet_vpp_interface_observer samples/vpp-show-interface.txt INTERFACE` |
-| `strongswan_vici_probe.c` | Direct libvici transport probe | Build with `-DEVENTNET_ENABLE_STRONGSWAN_VICI=ON`, then run its `version`, `observe`, or `monitor` action |
-| `strongswan_vici_controller_probe.c` | Exercises VICI through the controller adapter | Build with VICI enabled, then pass `VICI_URI YAML [INTENT_ID]` |
-| `vpp_api_transport_probe.c` | Checks VPP VAPI connection and transport availability | Build with `-DEVENTNET_ENABLE_VPP_API=ON`, then run `eventnet_vpp_api_transport_probe` |
+Ibukiは、ONUGが示すSD-WAN 2.0の全機能を実装した製品ではありません。一方で、複数Pathの管理、PolicyとHealthに基づくPath Selection、標準IPsecによる異種装置との接続、Security Waypoint、状態を伴うPath Transition、Adapter/Capability Modelという設計は、SD-WAN 2.0の中核的な方向性と整合します。
 
-### Samples and fixtures
+現時点では、次のように位置付けます。
 
-| group | files | use |
-| --- | --- | --- |
-| Main topology | `linux-vm-netns.yaml`, `node-capabilities.yaml`, `route-examples.yaml` | Normal scenario, selection, and route-form testing |
-| VPP routing | `vpp-netns-routes.yaml`, `vpp-vlan-netns.yaml`, `vpp-vlan-hub-netns.yaml` | FIB, VRF, VLAN, ACL, and waypoint plan tests |
-| GRE/IPsec | `gre-over-ipsec.yaml`, `gre-namespace-v2.yaml`, `gre-vpp-data-plane.yaml` | strongSwan GRE and VPP data-plane experiments |
-| VPP Native IPsec | `gre-namespace-v2-vpp-native.yaml` | Experimental IPIP plus `ipsec tunnel protect` plan; inspect postconditions before relying on it |
-| Certificate/IPsec | `cert-auth.yaml`, `ipsec-routes.yaml` | Certificate and route-based IPsec generation |
-| Compatibility YAML | `agent-legacy-no-segment.yaml` | Legacy route derivation and Agent compatibility testing |
-| Negative YAML | `route-invalid-examples.yaml`, `invalid-empty-no-segment.yaml`, `legacy-explicit-no-segment.yaml`, `vlan-vrf-conflict.yaml` | Validation must fail for these inputs |
-| Isolation YAML | `vlan-vrf-isolation.yaml` | Positive VLAN/VRF isolation plan fixture |
-| Telemetry replay | `telemetry-*.jsonl` | Deterministic `eventnetd` input and fallback testing |
-| Persisted-state fixtures | `state-*.tsv`, `state-disabled-node.yaml` | State-boundary and restart-safety tests |
-| Observer fixtures | `vpp-show-*.txt`, `swanctl-list-sas-installed.txt` | Parser testing without a running daemon |
-| Evaluation data | `paper-metrics-template.csv` | Paper/evaluation metric collection template |
+> Ibukiは、SD-WAN内部のPath切替を、状態、能力、失敗回復、説明可能性の観点から分解し、比較・再現・評価できるようにするPath制御研究基盤である。
 
-### Script entry points
+本番利用には、Credential Lifecycle、Command実行境界の追加Hardening、常駐Serviceの運用検証、Controller HA、Remote Agent認証、Cloud API連携、GUIなどが必要です。
 
-Use these high-level scripts first. The lower-level scripts they call, all arguments, and environment variables are listed in `docs/shell-commands.md`.
+## 11. License
 
-| purpose | entry point |
-| --- | --- |
-| Dependency and syntax checks | `vm-check.sh`, `vm-runtime-status.sh`, `vm-shell-check.sh` |
-| Build | `vm-build-cc.sh`, `vm-build.sh` |
-| One-shot demonstration | `demo-mitou.sh` |
-| Plan generation | `vm-generate-plan.sh`, `vm-generate-netns-runtime.sh` |
-| Scenario and controller tests | `vm-eventnet-scenario-smoke.sh`, `vm-netns-controller-smoke.sh` |
-| Full evaluation | `vm-evaluate.sh`, `vm-paper-validation.sh`, `vm-paper-collect-metrics.sh` |
-| Namespace underlay | `vm-netns-setup.sh`, `vm-netns-smoke.sh`, `vm-netns-clean.sh` |
-| strongSwan IPsec | `vm-netns-ipsec.sh direct|hub|gre <action>` |
-| VPP preparation | `vm-vpp-preflight.sh`, `vm-install-vpp-fdio.sh` |
-| Per-namespace VPP | `vm-vpp-ns-topology.sh`, `vm-vpp-ns-runtime.sh` |
-| VPP/controller integration | `vm-vpp-controller-netns-smoke.sh`, `vm-controller-integrated-runtime-smoke.sh` |
-| GRE and Native IPsec experiments | `vm-gre-over-ipsec-smoke.sh`, `vm-gre-namespace-v2-smoke.sh`, `vm-gre-vpp-data-smoke.sh` |
-
-### Generated runtime files
-
-`eventnet_netns_plan` and the wrapper scripts create the following files under `out/`.
-
-| file | responsibility |
-| --- | --- |
-| `selected-path.txt` | Selected Path, reason, and route summary |
-| `gre-swanctl.conf` | strongSwan connection and CHILD_SA configuration |
-| `vpp-route-plan.sh` | VPP route-only plan |
-| `vpp-netns-route-plan.sh` | Per-node VPP socket, interface, SA, tunnel, and route plan |
-| `apply-selected.sh` | Applies the selected runtime |
-| `apply-integrated.sh` | Applies the combined strongSwan and VPP runtime |
-| `rollback-selected.sh` | Removes the selected runtime after failure or explicit rollback |
-
-Generate them with:
-
-```sh
-sh scripts/vm-generate-netns-runtime.sh samples/linux-vm-netns.yaml
-```
-
-Inspect the generated files before running them with `DRY_RUN=0` or root privileges.
-
-### VPP operation notes
-
-- `vppctl` transports CLI text but does not reliably convert a VPP CLI error into a non-zero process exit status. Do not treat `$? == 0` as sufficient verification.
-- Verify state after mutation with `show ipsec sa`, `show ipsec protect`, `show interface`, and `show ip fib`.
-- `create ipip tunnel ... del` is not an IPIP delete command. Current VPP uses `delete ipip tunnel sw_if_index <index>`.
-- Each VPP instance must contain both the outbound and inbound SA referenced by `ipsec tunnel protect`.
-- `gre-namespace-v2-vpp-native.yaml` is an experimental diagnostic path. The current generated plan must not be considered successful unless `show ipsec protect` contains the expected interface and both SAs.
-- VPP CLI and Binary API sockets are management boundaries. Keep them as restricted Unix sockets and do not expose an unauthenticated TCP CLI.
-
-## Documentation
-
-### Code and operation
-
-| document | contents |
-| --- | --- |
-| `docs/code-reference.md` | C files, important functions, ownership, side effects, and execution paths |
-| `docs/shell-commands.md` | Complete `scripts/*.sh` command, argument, environment-variable, and purpose table |
-| `scripts/README-linux-vm.md` | Ordered Linux VM setup and smoke-test procedure |
-| `docs/eventnetd-service.md` | Resident `eventnetd` systemd deployment and operation |
-| `docs/transport-adapter-guide.md` | strongSwan VICI and VPP CLI/Binary API transport guide |
-| `docs/vpp-api-implementation.md` | VPP Binary API implementation status and remaining work |
-| `docs/yaml-routes.md` | Supported YAML route forms and validation rules |
-| `docs/event-schemas.md` | Versioned Telemetry, event, status, and explain JSONL contracts |
-
-### Runtime and architecture
-
-| document | contents |
-| --- | --- |
-| `docs/namespace-runtime-v2.md` | Namespace, direct/hub/GRE IPsec, VPP, and Native IPsec runtime experiments |
-| `docs/gre-data-plane-fork.md` | GRE data-plane alternatives and design decision points |
-| `docs/gre-namespace-constraint.md` | GRE and network namespace constraints |
-| `docs/scenario-vs-production.md` | Scenario harness behavior versus production controller requirements |
-| `docs/security-audit-notes.md` | Trust boundaries, local audit findings, and prioritized hardening |
-
-### Planning and evaluation
-
-| document | contents |
-| --- | --- |
-| `docs/mitou-submission-status.md` | Current implementation status for the MITOU submission |
-| `docs/future-implementation-map.md` | Next implementation targets and their file/function locations |
-| `docs/worker-guide.md` | Contributor workflow, ownership, outputs, and handoff guidance |
-| `docs/paper-evaluation-checklist.md` | Evaluation evidence required for the paper |
-| `docs/paper-submission-minimum.md` | Minimum implementation and evidence for submission |
-| `docs/paper-to-mitou-implementation-plan.md` | Implementation sequence from paper prototype to MITOU project |
-| `docs/paper-to-mitou-roadmap.md` | Longer-term research and implementation roadmap |
-
-### Comparative research
-
-| document | contents |
-| --- | --- |
-| `docs/awesome-mitou-comparison.md` | Comparison with public `awesome-mitou` materials |
-| `docs/asano-comparison.md` | Comparison notes against the referenced Asano work |
-
-## Current Scope
-
-PathWeaver currently focuses on the controller layer:
-
-- intent and path selection
-- YAML route definition
-- strongSwan/VPP command and runtime generation
-- Linux VM reproducible testing
-- event/scenario experimentation
-
-GUI, FRRouting integration, full production daemonization, and advanced flow
-preservation are planned for later stages.
-
-## Status
-
-This is an early prototype for research and demonstration.  It is not yet a
-production-ready network controller.
-
-Before production use, the project still needs safer command execution through
-API/argv-based transports, certificate and secret lifecycle management, CI,
-complete service hardening, resident VICI event ingestion, and a production VPP
-Binary API transport.
-
-Core build and shell syntax checks are also defined in
-`.github/workflows/ci.yml`. Runtime checks that require root, strongSwan, or
-VPP remain explicit Linux VM evaluations.
+License条件は[`LICENSE`](LICENSE)を参照してください。

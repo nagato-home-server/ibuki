@@ -29,10 +29,10 @@ REPEAT=5 OUT_FILE=out/paper-metrics.csv \
   sudo -E sh scripts/vm-paper-collect-metrics.sh samples/linux-vm-netns.yaml
 ```
 
-GREの実データパスは、VPPとstrongSwanが導入済みのVMで次を実行する。
+GREの実データパスは、VPPとstrongSwanが導入済みのVMでnamespace v2の入口から実行する。
 
 ```sh
-sudo sh scripts/vm-gre-over-ipsec-smoke.sh samples/gre-over-ipsec.yaml
+sudo sh scripts/vm-gre-namespace-v2-smoke.sh samples/gre-namespace-v2.yaml
 ```
 
 各反復では、transition時間、packet loss、最大通信断時間、RTT、TCP retransmission、CPU使用率、メモリ使用量を記録する。収集Scriptが自動取得できない項目は、同時に保存したログと`/usr/bin/time`、`pidstat`等で補完する。未実装のFlow Preserveは測定対象に含めず、設計上の将来課題として扱う。

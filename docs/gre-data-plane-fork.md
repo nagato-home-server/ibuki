@@ -4,13 +4,13 @@
 
 ## 第一段階
 
-`scripts/vm-gre-vpp-data-smoke.sh` が、コントローラ生成のVPP経路計画を適用した後、VPP内に往路と復路のGREトンネルを作成し、サイト間のLAN通信を実パケットで検証します。
+旧root名前空間向けのVPP GRE smokeは整理し、現在はnamespace v2の統合入口で検証します。コントローラ生成の経路計画、VPP Native IPsecまたはstrongSwan、サイト間LAN通信を一つの実験入口から扱います。
 
 ```sh
-sudo sh scripts/vm-gre-vpp-data-smoke.sh samples/gre-vpp-data-plane.yaml
+sudo sh scripts/vm-gre-namespace-v2-smoke.sh samples/gre-namespace-v2-vpp-native.yaml
 ```
 
-この試験では、VPPがroot名前空間で動作し、サイト名前空間にはVPP host-interfaceを接続する既存のVMトポロジを使います。GREの外側はVPP host-interfaceの対向であるサイト側アドレスを使用します。VPPの計画生成は `samples/gre-vpp-data-plane.yaml` から行います。
+この試験では、サイト名前空間ごとにVPPを起動し、VPP Native IPsecではstrongSwanを起動せず、VPPのSAとIPIP保護を使用します。strongSwan/XFRMを検証する場合は `samples/gre-namespace-v2.yaml` を入力にします。
 
 ## 成功条件
 

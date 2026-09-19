@@ -39,6 +39,9 @@ configure_site() {
   vpp "$ns" create host-interface name "$vpp_lan"
   vpp "$ns" set interface state "host-$vpp_lan" up
   vpp "$ns" set interface ip address "host-$vpp_lan" "$vpp_lan_addr"
+  vpp_lan_ip=${vpp_lan_addr%/*}
+  vpp_lan_mac=$(ip netns exec "$ns" cat "/sys/class/net/$vpp_lan/address")
+  ip netns exec "$ns" ip neigh replace "$vpp_lan_ip" lladdr "$vpp_lan_mac" dev "$linux_lan" nud permanent
   vpp "$ns" create host-interface name "$vpp_underlay"
   vpp "$ns" set interface state "host-$vpp_underlay" up
   vpp "$ns" set interface ip address "host-$vpp_underlay" "$vpp_underlay_addr"

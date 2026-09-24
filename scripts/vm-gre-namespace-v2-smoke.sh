@@ -89,5 +89,14 @@ if ! ip netns exec site-b ping -c 3 -W 2 -I 10.10.2.1 10.10.1.1; then
   exit 1
 fi
 printf '== strongSwan/XFRM ==\n'
-ip netns exec site-a ip xfrm state
+if [ "$VPP_NATIVE_IPSEC" = "0" ]; then
+  xfrm_state=$(ip netns exec site-a ip xfrm state)
+  printf '%s\n' "$xfrm_state"
+  if ! printf '%s\n' "$xfrm_state" | grep -Eq 'anti-replay context: seq 0x[1-9a-f]' ||
+     ! printf '%s\n' "$xfrm_state" | grep -Eq 'oseq 0x[1-9a-f]'; then
+    printf 'ESP receive/send sequence did not advance.\n' >&2
+    diagnose_datapath
+    exit 1
+  fi
+fi
 printf 'Namespaced GRE over IPsec smoke passed.\n'

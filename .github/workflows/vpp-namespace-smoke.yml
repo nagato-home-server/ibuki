@@ -37,6 +37,9 @@ jobs:
       - name: Test strongSwan GRE namespace runtime
         if: inputs.backend == 'strongswan'
         run: timeout 12m sudo env SKIP_BUILD=1 BUILD_DIR="$PWD/build-ci" sh scripts/vm-gre-namespace-v2-smoke.sh samples/gre-namespace-v2.yaml
+      - name: Reapply strongSwan GRE namespace runtime after cleanup
+        if: inputs.backend == 'strongswan'
+        run: timeout 12m sudo env SKIP_BUILD=1 BUILD_DIR="$PWD/build-ci" sh scripts/vm-gre-namespace-v2-smoke.sh samples/gre-namespace-v2.yaml
       - name: Test VPP native IPsec namespace runtime
         if: inputs.backend == 'vpp-native'
         run: timeout 12m sudo env SKIP_BUILD=1 BUILD_DIR="$PWD/build-ci" sh scripts/vm-gre-namespace-v2-smoke.sh samples/gre-namespace-v2-vpp-native.yaml

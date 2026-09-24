@@ -15,6 +15,16 @@ jobs:
         run: cmake --build build-ci --parallel
       - name: Test
         run: ctest --test-dir build-ci --output-on-failure
+      - name: Prepare prebuilt Linux binaries
+        run: |
+          mkdir -p out/prebuilt
+          install -m 755 build-ci/eventnet_* build-ci/eventnetd out/prebuilt/
+      - name: Upload prebuilt Linux binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: ibuki-linux-x86_64
+          path: out/prebuilt/
+          if-no-files-found: error
       - name: Install layout
         run: |
           cmake --install build-ci --prefix "$PWD/out/ci-install"

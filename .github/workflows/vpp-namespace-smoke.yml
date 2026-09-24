@@ -1,0 +1,51 @@
+name: VPP namespace smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      backend:
+        description: IPsec backend to test
+        type: choice
+        required: true
+        default: strongswan
+        options:
+          - strongswan
+          - vpp-native
+
+permissions:
+  contents: read
+
+jobs:
+  namespace-smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install namespace and strongSwan tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y iproute2 iputils-ping strongswan-swanctl strongswan-charon curl ca-certificates gnupg
+      - name: Install FD.io VPP packages
+        run: sudo env DRY_RUN=0 sh scripts/vm-install-vpp-fdio.sh
+      - name: Install VPP crypto engines for native IPsec
+        if: inputs.backend == 'vpp-native'
+        run: sudo apt-get install -y vpp-crypto-engines
+      - name: Build Ibuki on the runner
+        run: |
+          cmake -S . -B build-ci -DCMAKE_BUILD_TYPE=Debug
+          cmake --build build-ci --parallel 4 --target eventnet_netns_plan eventnet_yaml_demo
+      - name: Test strongSwan GRE namespace runtime
+        if: inputs.backend == 'strongswan'
+        run: timeout 12m sudo env SKIP_BUILD=1 BUILD_DIR="$PWD/build-ci" sh scripts/vm-gre-namespace-v2-smoke.sh samples/gre-namespace-v2.yaml
+      - name: Test VPP native IPsec namespace runtime
+        if: inputs.backend == 'vpp-native'
+        run: timeout 12m sudo env SKIP_BUILD=1 BUILD_DIR="$PWD/build-ci" sh scripts/vm-gre-namespace-v2-smoke.sh samples/gre-namespace-v2-vpp-native.yaml
+      - name: Show daemon logs after failure
+        if: failure()
+        run: |
+          for path in /run/ibuki-vpp-ns/site-*/vpp.log /run/eventnet-netns-ipsec-gre-v2/site-*/charon.log; do
+            if [ -f "$path" ]; then
+              echo "== $path =="
+              sudo tail -n 100 "$path"
+            fi
+          done

@@ -149,7 +149,22 @@ sudo RUN_RUNTIME=1 sh scripts/demo-mitou.sh samples/linux-vm-netns.yaml
 
 このCommandはNetwork設定を変更するため、専用のLinux VMまたは検証環境で実行してください。
 
-### 4.2 Windows
+### 4.2 Arch Linuxからコンパイルせずに計画を確認する
+
+この変更をmainに反映した後は、GitHub Actionsの`Ibuki CI`で成功した実行の成果物`ibuki-linux-x86_64`からIbukiの実行ファイルを取得できます。対応するCommitのCI実行を選び、Repository直下で実行してください。GitHub CLIへのログインが必要な場合は`gh auth login`を先に実行します。
+
+```sh
+gh run list --workflow ci.yml --branch main
+gh run download -n ibuki-linux-x86_64 -D build-linux-cc
+chmod +x build-linux-cc/eventnet_* build-linux-cc/eventnetd
+BUILD_DIR="$PWD/build-linux-cc" sh scripts/vm-generate-netns-runtime.sh samples/gre-namespace-v2.yaml --intent intent-gre-namespace-v2
+```
+
+バイナリはx86_64 Linux向けです。生成計画の確認だけならVPPは不要です。実通信試験にはVPPとstrongSwanが必要なため、Archホスト上でVPPをビルドせずに試す場合は、Ubuntu VMに[FD.ioの配布済みVPPパッケージ](https://docs.fd.io/vpp/25.06/gettingstarted/installing/ubuntu.html)を入れ、VM内で同じ成果物を使用してください。VMでの実行時は`sudo env SKIP_BUILD=1 BUILD_DIR="$PWD/build-linux-cc" sh scripts/vm-gre-namespace-v2-smoke.sh`でControllerの再ビルドを省けます。
+
+ローカルのディスクを使えない場合は、変更をmainに反映後、GitHubの「Actions」→「VPP namespace smoke」→「Run workflow」から`strongswan`または`vpp-native`を選んで実行できます。VPPパッケージの導入、Ibukiのビルド、namespaceでの双方向pingをGitHubのUbuntuランナー上で行い、結果はその実行ログに残ります。これは手動実行のみで、通常のpushでは起動しません。
+
+### 4.3 Windows
 
 ```powershell
 cd controller

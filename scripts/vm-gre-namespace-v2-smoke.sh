@@ -20,9 +20,12 @@ diagnose_datapath() {
     printf '== datapath diagnostics: %s ==\n' "$ns" >&2
     ip netns exec "$ns" ip -br addr >&2 || true
     ip netns exec "$ns" ip route >&2 || true
+    ip netns exec "$ns" ip neigh >&2 || true
+    ip netns exec "$ns" ip -br link >&2 || true
     ip netns exec "$ns" ip xfrm state >&2 || true
     ip netns exec "$ns" ip -s xfrm policy >&2 || true
     vppctl -s "/run/ibuki-vpp-ns/$ns/cli.sock" show interface >&2 || true
+    vppctl -s "/run/ibuki-vpp-ns/$ns/cli.sock" show hardware-interfaces >&2 || true
     vppctl -s "/run/ibuki-vpp-ns/$ns/cli.sock" show error >&2 || true
   done
 }

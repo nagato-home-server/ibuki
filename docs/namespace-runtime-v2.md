@@ -71,8 +71,9 @@ sudo sh scripts/vm-vpp-ns-runtime.sh stop
 | IKE underlay | `203.0.113.10` | `203.0.113.9` |
 | VPP underlay | `198.18.1.1/30` | `198.18.2.1/30` |
 | Linux underlay peer | `198.18.1.2/30` | `198.18.2.2/30` |
-| VPP LAN attachment | `10.10.1.253/24` | `10.10.2.253/24` |
-| Linux LAN peer | `10.10.1.254/24` | `10.10.2.254/24` |
+| VPP LAN attachment | `172.16.1.1/30` | `172.16.2.1/30` |
+| Linux LAN peer | `172.16.1.2/30` | `172.16.2.2/30` |
+| テスト LAN アドレス | `10.10.1.1/24` | `10.10.2.1/24` |
 | GRE inner | `10.255.0.1/30` | `10.255.0.2/30` |
 | VPP CLI socket | `/run/ibuki-vpp-ns/site-a/cli.sock` | `/run/ibuki-vpp-ns/site-b/cli.sock` |
 

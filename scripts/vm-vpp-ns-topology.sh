@@ -47,6 +47,14 @@ configure_site() {
   vpp "$ns" set interface ip address "host-$vpp_underlay" "$vpp_underlay_addr"
 }
 
+configure_test_lan() {
+  ns="$1"; address="$2"
+  ip netns exec "$ns" ip link show ib-lan-src >/dev/null 2>&1 ||
+    ip netns exec "$ns" ip link add ib-lan-src type dummy
+  ip netns exec "$ns" ip addr replace "$address" dev ib-lan-src
+  ip netns exec "$ns" ip link set ib-lan-src up
+}
+
 setup() {
   for ns in site-a site-b; do
     ip netns exec "$ns" true >/dev/null 2>&1 || { printf 'namespace missing: %s\n' "$ns" >&2; exit 1; }
@@ -54,12 +62,18 @@ setup() {
   sh "$ROOT_DIR/scripts/vm-vpp-ns-runtime.sh" start
   configure_site site-a ib-lan-a ib-lan-a-peer 172.16.1.2/30 172.16.1.1/30 ib-ul-a ib-ul-a-peer 198.18.1.2/30 198.18.1.1/30
   configure_site site-b ib-lan-b ib-lan-b-peer 172.16.2.2/30 172.16.2.1/30 ib-ul-b ib-ul-b-peer 198.18.2.2/30 198.18.2.1/30
+  configure_test_lan site-a 10.10.1.1/24
+  configure_test_lan site-b 10.10.2.1/24
+  ip netns exec site-a sysctl -w net.ipv4.ip_forward=1 >/dev/null
+  ip netns exec site-b sysctl -w net.ipv4.ip_forward=1 >/dev/null
   ip netns exec site-a ip route replace 10.10.2.0/24 via 172.16.1.1 dev ib-lan-a-peer
   ip netns exec site-b ip route replace 10.10.1.0/24 via 172.16.2.1 dev ib-lan-b-peer
   ip netns exec site-a ip route replace 198.18.2.1/32 via 203.0.113.9 dev a-direct
   ip netns exec site-b ip route replace 198.18.1.1/32 via 203.0.113.10 dev b-direct
   vpp site-a ip route add 198.18.2.1/32 via 198.18.1.2 host-ib-ul-a
   vpp site-b ip route add 198.18.1.1/32 via 198.18.2.2 host-ib-ul-b
+  vpp site-a ip route add 10.10.1.0/24 via 172.16.1.2 host-ib-lan-a
+  vpp site-b ip route add 10.10.2.0/24 via 172.16.2.2 host-ib-lan-b
   if [ "${SKIP_GRE:-0}" != "1" ]; then
   vpp site-a create gre tunnel src 198.18.1.1 dst 198.18.2.1 instance 0 del >/dev/null 2>&1 || true
   vpp site-b create gre tunnel src 198.18.2.1 dst 198.18.1.1 instance 0 del >/dev/null 2>&1 || true
@@ -86,6 +100,7 @@ clean() {
     ip netns exec "$ns" ip link del ib-lan-b >/dev/null 2>&1 || true
     ip netns exec "$ns" ip link del ib-ul-a >/dev/null 2>&1 || true
     ip netns exec "$ns" ip link del ib-ul-b >/dev/null 2>&1 || true
+    ip netns exec "$ns" ip link del ib-lan-src >/dev/null 2>&1 || true
   done
   sh "$ROOT_DIR/scripts/vm-vpp-ns-runtime.sh" stop >/dev/null 2>&1 || true
 }

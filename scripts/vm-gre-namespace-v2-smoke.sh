@@ -15,6 +15,17 @@ cleanup() {
   GRE_RUN_BASE="$RUN_BASE" sh scripts/vm-netns-ipsec-gre-stop.sh >/dev/null 2>&1 || true
   sh scripts/vm-vpp-ns-topology.sh clean >/dev/null 2>&1 || true
 }
+diagnose_datapath() {
+  for ns in site-a site-b; do
+    printf '== datapath diagnostics: %s ==\n' "$ns" >&2
+    ip netns exec "$ns" ip -br addr >&2 || true
+    ip netns exec "$ns" ip route >&2 || true
+    ip netns exec "$ns" ip xfrm state >&2 || true
+    ip netns exec "$ns" ip -s xfrm policy >&2 || true
+    vppctl -s "/run/ibuki-vpp-ns/$ns/cli.sock" show interface >&2 || true
+    vppctl -s "/run/ibuki-vpp-ns/$ns/cli.sock" show error >&2 || true
+  done
+}
 trap cleanup EXIT INT TERM
 
 if ! ip netns exec site-a true >/dev/null 2>&1 || ! ip netns exec site-b true >/dev/null 2>&1; then sh scripts/vm-netns-setup.sh; fi
@@ -59,9 +70,15 @@ if [ "$VPP_NATIVE_IPSEC" = "1" ]; then
   done
 fi
 printf '== namespaced GRE over IPsec: site-a -> site-b ==\n'
-ip netns exec site-a ping -c 3 -W 2 -I 10.10.1.1 10.10.2.1
+if ! ip netns exec site-a ping -c 3 -W 2 -I 10.10.1.1 10.10.2.1; then
+  diagnose_datapath
+  exit 1
+fi
 printf '== namespaced GRE over IPsec: site-b -> site-a ==\n'
-ip netns exec site-b ping -c 3 -W 2 -I 10.10.2.1 10.10.1.1
+if ! ip netns exec site-b ping -c 3 -W 2 -I 10.10.2.1 10.10.1.1; then
+  diagnose_datapath
+  exit 1
+fi
 printf '== strongSwan/XFRM ==\n'
 ip netns exec site-a ip xfrm state
 printf 'Namespaced GRE over IPsec smoke passed.\n'

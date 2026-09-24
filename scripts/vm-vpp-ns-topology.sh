@@ -40,7 +40,11 @@ configure_site() {
   vpp "$ns" set interface state "host-$vpp_lan" up
   vpp "$ns" set interface ip address "host-$vpp_lan" "$vpp_lan_addr"
   vpp_lan_ip=${vpp_lan_addr%/*}
-  vpp_lan_mac=$(ip netns exec "$ns" cat "/sys/class/net/$vpp_lan/address")
+  vpp_lan_mac=$(vpp "$ns" show hardware-interfaces "host-$vpp_lan" | awk '/Ethernet address/{print $3; exit}')
+  if [ -z "$vpp_lan_mac" ]; then
+    printf 'Could not read VPP MAC for %s in %s\n' "$vpp_lan" "$ns" >&2
+    exit 1
+  fi
   ip netns exec "$ns" ip neigh replace "$vpp_lan_ip" lladdr "$vpp_lan_mac" dev "$linux_lan" nud permanent
   vpp "$ns" create host-interface name "$vpp_underlay"
   vpp "$ns" set interface state "host-$vpp_underlay" up

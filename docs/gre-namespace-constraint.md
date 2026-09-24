@@ -1,4 +1,6 @@
-# GRE over IPsecのnamespace構成制約
+# GRE over IPsecの旧namespace構成制約
+
+この文書はroot namespaceにVPPを共有配置していた時期の検証記録であり、現在の構成を示すものではない。現在は拠点ごとのVPPとstrongSwanを同じnamespaceに置く。構成、アドレス、検証状態は[Namespace Runtime v2](namespace-runtime-v2.md)を参照する。
 
 ## 概要
 

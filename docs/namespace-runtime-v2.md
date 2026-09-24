@@ -32,7 +32,7 @@ sudo sh scripts/vm-vpp-ns-runtime.sh status
 sudo sh scripts/vm-vpp-ns-runtime.sh stop
 ```
 
-`scripts/vm-vpp-ns-topology.sh` は各サイトnamespace内にLAN/underlay vethとVPP host-interfaceを作成し、VPPのunderlay経路と双方向GREを構成する。`scripts/vm-gre-namespace-v2-smoke.sh` は毎回Controllerを強制再ビルドしてから、このトポロジ、生成計画、namespace内strongSwanをまとめて起動する。古い生成器を明示的に再利用する場合だけ`SKIP_BUILD=1`を指定する。通常のCビルドでも、Git切替後などに`FORCE_REBUILD=1 BUILD_DIR=build-ns-v2 sh scripts/vm-build-cc.sh`を使えば共通オブジェクトを全て作り直せる。既存のroot VPPスクリプトは互換性確認用に残す。
+`scripts/vm-vpp-ns-topology.sh` は各サイトnamespace内にLAN/underlay veth、テスト用LANアドレス、VPP host-interfaceとunderlay経路を作成する。単独実行時はGREも構成できるが、統合試験では`SKIP_GRE=1`としてGRE interfaceの所有者を生成計画だけにする。二重作成すると古いFIB経路参照が残り、LAN宛てパケットがdropされる。`scripts/vm-gre-namespace-v2-smoke.sh` は通常Controllerをビルドしてから、このトポロジ、生成計画、namespace内strongSwanを起動する。CIでは先にターゲットだけをビルドし、`SKIP_BUILD=1`で再ビルドを省く。通常のCビルドでも、Git切替後などに`FORCE_REBUILD=1 BUILD_DIR=build-ns-v2 sh scripts/vm-build-cc.sh`を使えば共通オブジェクトを全て作り直せる。既存のroot VPPスクリプトは互換性確認用に残す。
 
 ## 移行順
 
@@ -62,7 +62,7 @@ sudo sh scripts/vm-vpp-ns-runtime.sh stop
 - site-a/site-bのLAN pingが暗号化状態で双方向に成功する
 - 停止・再適用・rollback後も残留socket、PID、GRE、XFRM、経路がない
 
-現段階では、VPPプロセス分離、YAML socket入力、生成計画のnode dispatch、LAN/underlay attachment生成、双方向GRE構成までを実装済みとする。暗号化データパスとrollbackの実VM確認は、Linux VMで `vm-gre-namespace-v2-smoke.sh` を実行して判定する。
+現段階では、VPPプロセス分離、YAML socket入力、生成計画のnode dispatch、LAN/underlay attachment生成、双方向GRE構成、strongSwanのIKE/CHILD_SA確立までを実ランナーで確認した。暗号化データパスの双方向LAN pingとrollbackは未達であり、`vm-gre-namespace-v2-smoke.sh` の成功で判定する。ローカルArchにVPPをビルド・導入せず、手動実行の[GitHub Actions VPP namespace smoke](../.github/workflows/vpp-namespace-smoke.yml)でUbuntu 24.04にFD.io VPPパッケージを導入して検証する。
 
 ## v2の具体的なアドレス構成
 
@@ -79,15 +79,17 @@ sudo sh scripts/vm-vpp-ns-runtime.sh stop
 
 `198.18.1.1` と `198.18.2.1` はVPPが生成するGRE outer endpointであり、Linux側のunderlay peerを経由して既存の `a-direct`/`b-direct` へ転送する。namespace実験ではIKE endpointが`203.0.113.10`／`203.0.113.9`と別なので、strongSwanはtunnel modeと固定の`/32[gre]` selectorを使用する。`dynamic[gre]` は実パケットから別の外側アドレスを選択するため、この構成では使用しない。
 
+pingの送信元・宛先となる`10.10.1.1`／`10.10.2.1`は各namespaceのdummy interface `ib-lan-src`に割り当てる。Linuxは対向LAN宛てを`ib-lan-*-peer`経由でVPPに転送し、VPPはローカルLANへの戻り経路を同peerへ、対向LANへの経路をGREへ向ける。VPP AF_PACKET host-interfaceのMACはLinux vethのMACと異なるため、Linux側の固定近隣表には`show hardware-interfaces`から取得したVPP MACを登録する。
+
 ## 起動順序
 
 1. `vm-netns-setup.sh` がsite namespaceと既存underlayを作成する
 2. `vm-vpp-ns-runtime.sh start` がsiteごとのVPPを起動する
-3. `vm-vpp-ns-topology.sh setup` がLAN/underlay vethとVPP host-interfaceを作成する
+3. `SKIP_GRE=1 vm-vpp-ns-topology.sh setup` がLAN/underlay veth、LAN送信元、VPP host-interfaceを作成する
 4. `eventnet_netns_plan` がYAMLを解析し、`gre-swanctl.conf` とVPP計画を生成する
 5. `vm-netns-ipsec-gre-start.sh` が両siteのcharonを起動し、VICI経由で設定をロードする
 6. `vpp-netns-route-plan.sh` が `run_vpp_node` 経由でsiteごとのVPPへGRE・経路を適用する
-7. site namespaceのLAN routeからVPP host-interfaceへ入り、GRE、XFRM、underlayの順に転送する
+7. site namespaceのLAN routeからVPP host-interfaceへ入り、GRE、Linux XFRM、underlayの順に転送する（このデータパスは検証中）
 
 ## 停止順序
 

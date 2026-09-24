@@ -151,6 +151,13 @@ static void write_vpp_gre_setup(FILE *file, const en_yaml_config_t *config, cons
             else fprintf(file, "run_vpp_node %s create gre tunnel src %s dst %s\n", tunnel->local_node, gre_local_endpoint, gre_remote_endpoint);
             fprintf(file, "run_vpp_node %s set interface ip address %s %s\n", tunnel->local_node, tunnel->gre_interface, tunnel->gre_local_address);
             fprintf(file, "run_vpp_node %s set interface state %s up\n", tunnel->local_node, tunnel->gre_interface);
+            if (tunnel->gre_instance >= 0) fprintf(file, "run_vpp_node %s create gre tunnel src %s dst %s instance %d del 2>/dev/null || true\n", tunnel->remote_node, gre_remote_endpoint, gre_local_endpoint, tunnel->gre_instance);
+            else fprintf(file, "run_vpp_node %s create gre tunnel src %s dst %s del 2>/dev/null || true\n", tunnel->remote_node, gre_remote_endpoint, gre_local_endpoint);
+            if (tunnel->gre_instance >= 0) fprintf(file, "run_vpp_node %s create gre tunnel src %s dst %s instance %d\n", tunnel->remote_node, gre_remote_endpoint, gre_local_endpoint, tunnel->gre_instance);
+            else fprintf(file, "run_vpp_node %s create gre tunnel src %s dst %s\n", tunnel->remote_node, gre_remote_endpoint, gre_local_endpoint);
+            if (strchr(tunnel->gre_remote_address, '/') == NULL) fprintf(file, "run_vpp_node %s set interface ip address %s %s/30\n", tunnel->remote_node, tunnel->gre_interface, tunnel->gre_remote_address);
+            else fprintf(file, "run_vpp_node %s set interface ip address %s %s\n", tunnel->remote_node, tunnel->gre_interface, tunnel->gre_remote_address);
+            fprintf(file, "run_vpp_node %s set interface state %s up\n", tunnel->remote_node, tunnel->gre_interface);
         }
     }
     if (path->segment_count == 0) {

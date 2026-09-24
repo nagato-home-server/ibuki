@@ -136,6 +136,7 @@ enable_testing()
 add_executable(eventnet_tests tests/test_controller.c)
 target_link_libraries(eventnet_tests PRIVATE eventnet_controller)
 add_test(NAME eventnet_tests COMMAND eventnet_tests)
+set_tests_properties(eventnet_tests PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 add_test(NAME eventnet_scenario_direct
     COMMAND eventnet_scenario ${CMAKE_CURRENT_SOURCE_DIR}/samples/linux-vm-netns.yaml --step direct-ok)
 add_test(NAME eventnet_scenario_fallback
@@ -261,7 +262,12 @@ add_test(NAME eventnet_gre_over_ipsec_plan
     COMMAND ${CMAKE_COMMAND}
         -DEVENTNET_NETNS_PLAN=$<TARGET_FILE:eventnet_netns_plan>
         -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/check-gre-over-ipsec-plan.cmake)
+    -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/check-gre-over-ipsec-plan.cmake)
+add_test(NAME eventnet_namespace_runtime_plan
+    COMMAND ${CMAKE_COMMAND}
+        -DEVENTNET_NETNS_PLAN=$<TARGET_FILE:eventnet_netns_plan>
+        -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/check-namespace-runtime.cmake)
 
 install(TARGETS eventnetd
     RUNTIME DESTINATION libexec/ibuki

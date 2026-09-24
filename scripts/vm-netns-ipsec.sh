@@ -7,6 +7,7 @@ usage() {
   cat >&2 <<'EOF'
 Usage:
   sh scripts/vm-netns-ipsec.sh direct|hub generate
+  sudo sh scripts/vm-netns-ipsec.sh gre start
   sudo sh scripts/vm-netns-ipsec.sh direct|hub start
   sudo sh scripts/vm-netns-ipsec.sh direct|hub status
   sh scripts/vm-netns-ipsec.sh direct|hub logs
@@ -40,6 +41,11 @@ case "$MODE" in
     RUN_BASE="${RUN_BASE:-/run/eventnet-netns-ipsec-hub}"
     SWANCTL_WORK_BASE="${SWANCTL_WORK_BASE:-/etc/swanctl/eventnet-netns-ipsec-hub}"
     ;;
+  gre)
+    NODES="site-a site-b"
+    RUN_BASE="${RUN_BASE:-/run/eventnet-netns-ipsec-gre}"
+    SWANCTL_WORK_BASE="${SWANCTL_WORK_BASE:-/etc/swanctl/eventnet-netns-ipsec-gre}"
+    ;;
   *)
     usage
     ;;
@@ -72,6 +78,11 @@ clean_hub() {
     ip netns exec "$ns" ip xfrm policy flush 2>/dev/null || true
   done
   printf 'Flushed hub XFRM state, policy, routes, and xfrm interfaces.\n'
+}
+
+clean_gre() {
+  need_root
+  sh "$ROOT_DIR/scripts/vm-netns-ipsec-gre-stop.sh"
 }
 
 show_logs() {
@@ -123,8 +134,10 @@ case "$ACTION" in
   clean)
     if [ "$MODE" = "direct" ]; then
       clean_direct
-    else
+    elif [ "$MODE" = "hub" ]; then
       clean_hub
+    else
+      clean_gre
     fi
     ;;
   logs)

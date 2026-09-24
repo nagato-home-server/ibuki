@@ -1,0 +1,5 @@
+scenario,strategy,repetition,transition_ms,packet_loss,packet_reordering,tcp_retransmissions,cpu_percent,memory_mb
+direct,immediate,1,,,,,,
+direct,graceful,1,,,,,,
+hub-fallback,immediate,1,,,,,,
+relay-fallback,immediate,1,,,,,,

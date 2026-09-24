@@ -1,0 +1,57 @@
+tunnels:
+  - id: gre-vpp-a-b
+    type: gre_over_ipsec
+    local_node: site-a
+    remote_node: site-b
+    local_endpoint: 203.0.113.10
+    remote_endpoint: 203.0.113.9
+    local_id: site-a
+    remote_id: site-b
+    psk: "change-me"
+    gre_interface: gre0
+    gre_instance: 0
+    gre_outer_local_endpoint: 172.16.1.1
+    gre_outer_remote_endpoint: 172.16.2.2
+    gre_local_address: 10.255.0.1/30
+    gre_remote_address: 10.255.0.2
+    local_ts: 10.10.1.0/24
+    remote_ts: 10.10.2.0/24
+    mtu: 1400
+
+vpp_edges:
+  - node_id: site-a
+    vpp_interface: host-vpp-site-a
+    namespace_interface: vpp-client
+    namespace_address: 172.16.1.2/30
+    vpp_address: 172.16.1.1/30
+    next_hop: 172.16.1.2
+    vpp_socket: /run/ibuki-vpp-ns/site-a/cli.sock
+  - node_id: site-b
+    vpp_interface: host-vpp-site-b
+    namespace_interface: vpp-client
+    namespace_address: 172.16.2.2/30
+    vpp_address: 172.16.2.1/30
+    next_hop: 172.16.2.2
+    vpp_socket: /run/ibuki-vpp-ns/site-b/cli.sock
+
+paths:
+  - id: path-gre-vpp-a-b
+    source: site-a
+    destination: site-b
+    route_destination_prefix: 10.10.2.0/24
+    egress_tunnel_id: gre-vpp-a-b
+    priority: 10
+    segments:
+      - id: seg-gre-vpp-a-b
+        from: site-a
+        to: site-b
+        tunnel_id: gre-vpp-a-b
+
+intents:
+  - id: intent-gre-vpp-data
+    traffic:
+      source: site-a
+      destination: site-b
+    path_selection:
+      mode: explicit
+      path_id: path-gre-vpp-a-b

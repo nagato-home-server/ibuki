@@ -221,6 +221,11 @@ en_error_code_t en_yaml_config_validate(const en_yaml_config_t *config, char *er
                 set_error(error, error_len, 0, "gre_over_ipsec tunnel has invalid GRE settings");
                 return EN_ERR_INVALID_ARGUMENT;
             }
+            if ((tunnel->gre_outer_local_endpoint[0] != '\0' && !valid_config_token(tunnel->gre_outer_local_endpoint)) ||
+                (tunnel->gre_outer_remote_endpoint[0] != '\0' && !valid_config_token(tunnel->gre_outer_remote_endpoint))) {
+                set_error(error, error_len, 0, "gre_over_ipsec tunnel has invalid outer endpoint");
+                return EN_ERR_INVALID_ARGUMENT;
+            }
         }
         if (config->node_count > 0 && (!yaml_has_node(config, tunnel->local_node) || !yaml_has_node(config, tunnel->remote_node))) {
             set_error(error, error_len, 0, "tunnel references unknown node");
@@ -475,6 +480,10 @@ en_error_code_t en_yaml_config_validate(const en_yaml_config_t *config, char *er
             set_error(error, error_len, 0, "vpp edge requires node_id, vpp_interface, and next_hop");
             return EN_ERR_INVALID_ARGUMENT;
         }
+        if (edge->vpp_socket[0] != '\0' && !valid_config_token(edge->vpp_socket)) {
+            set_error(error, error_len, 0, "vpp edge has invalid vpp_socket");
+            return EN_ERR_INVALID_ARGUMENT;
+        }
         for (size_t j = i + 1; j < config->vpp_edge_count; j++) {
             bool same_node = strcmp(edge->node_id, config->vpp_edges[j].node_id) == 0;
             bool same_port = edge->port_id[0] == '\0' || config->vpp_edges[j].port_id[0] == '\0' ||
@@ -601,6 +610,10 @@ static en_error_code_t parse_line(en_yaml_config_t *config, yaml_parse_state_t *
             copy_id(state->tunnel->protocol, sizeof(state->tunnel->protocol), "ipsec");
             copy_id(state->tunnel->tunnel_type, sizeof(state->tunnel->tunnel_type), "ipsec");
             state->tunnel->gre_instance = -1;
+            state->tunnel->vpp_local_sa_id = -1;
+            state->tunnel->vpp_remote_sa_id = -1;
+            state->tunnel->vpp_local_spi = -1;
+            state->tunnel->vpp_remote_spi = -1;
             copy_id(state->tunnel->auth_method, sizeof(state->tunnel->auth_method), "psk");
             state->tunnel->state = EN_TUNNEL_CONFIGURED;
             state->tunnel->health = EN_HEALTH_UNKNOWN;
@@ -905,6 +918,8 @@ static en_error_code_t parse_vpp_edge_kv(yaml_parse_state_t *state, const char *
         copy_id(state->vpp_edge->namespace_address, sizeof(state->vpp_edge->namespace_address), value);
     } else if (strcmp(key, "vpp_address") == 0 || strcmp(key, "vpp_addr") == 0) {
         copy_id(state->vpp_edge->vpp_address, sizeof(state->vpp_edge->vpp_address), value);
+    } else if (strcmp(key, "vpp_socket") == 0 || strcmp(key, "vpp_api_socket") == 0 || strcmp(key, "vpp_cli_socket") == 0) {
+        copy_id(state->vpp_edge->vpp_socket, sizeof(state->vpp_edge->vpp_socket), value);
     } else if (strcmp(key, "next_hop") == 0) {
         copy_id(state->vpp_edge->next_hop, sizeof(state->vpp_edge->next_hop), value);
     } else if (strcmp(key, "allowed_vlans") == 0) {
@@ -951,6 +966,10 @@ static en_error_code_t parse_tunnel_kv(yaml_parse_state_t *state, const char *ke
         copy_id(state->tunnel->protocol, sizeof(state->tunnel->protocol), value);
     } else if (strcmp(key, "gre_interface") == 0) {
         copy_id(state->tunnel->gre_interface, sizeof(state->tunnel->gre_interface), value);
+    } else if (strcmp(key, "gre_outer_local_endpoint") == 0) {
+        copy_id(state->tunnel->gre_outer_local_endpoint, sizeof(state->tunnel->gre_outer_local_endpoint), value);
+    } else if (strcmp(key, "gre_outer_remote_endpoint") == 0) {
+        copy_id(state->tunnel->gre_outer_remote_endpoint, sizeof(state->tunnel->gre_outer_remote_endpoint), value);
     } else if (strcmp(key, "gre_local_address") == 0) {
         copy_id(state->tunnel->gre_local_address, sizeof(state->tunnel->gre_local_address), value);
     } else if (strcmp(key, "gre_remote_address") == 0) {
@@ -959,6 +978,22 @@ static en_error_code_t parse_tunnel_kv(yaml_parse_state_t *state, const char *ke
         state->tunnel->gre_instance = atoi(value);
     } else if (strcmp(key, "mtu") == 0 || strcmp(key, "gre_mtu") == 0) {
         state->tunnel->gre_mtu = atoi(value);
+    } else if (strcmp(key, "vpp_local_sa_id") == 0) {
+        state->tunnel->vpp_local_sa_id = atoi(value);
+    } else if (strcmp(key, "vpp_remote_sa_id") == 0) {
+        state->tunnel->vpp_remote_sa_id = atoi(value);
+    } else if (strcmp(key, "vpp_local_spi") == 0) {
+        state->tunnel->vpp_local_spi = atoi(value);
+    } else if (strcmp(key, "vpp_remote_spi") == 0) {
+        state->tunnel->vpp_remote_spi = atoi(value);
+    } else if (strcmp(key, "vpp_crypto_algorithm") == 0) {
+        copy_id(state->tunnel->vpp_crypto_algorithm, sizeof(state->tunnel->vpp_crypto_algorithm), value);
+    } else if (strcmp(key, "vpp_crypto_key") == 0) {
+        copy_id(state->tunnel->vpp_crypto_key, sizeof(state->tunnel->vpp_crypto_key), value);
+    } else if (strcmp(key, "vpp_integrity_algorithm") == 0) {
+        copy_id(state->tunnel->vpp_integrity_algorithm, sizeof(state->tunnel->vpp_integrity_algorithm), value);
+    } else if (strcmp(key, "vpp_integrity_key") == 0) {
+        copy_id(state->tunnel->vpp_integrity_key, sizeof(state->tunnel->vpp_integrity_key), value);
     }
     return EN_ERR_NONE;
 }

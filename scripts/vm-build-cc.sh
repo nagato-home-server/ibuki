@@ -6,6 +6,7 @@ BUILD_DIR="${BUILD_DIR:-$ROOT_DIR/build-linux-cc}"
 CC="${CC:-cc}"
 CFLAGS="${CFLAGS:--std=c17 -Wall -Wextra -Wpedantic -O2 -g -fstack-protector-strong -D_FORTIFY_SOURCE=2 -D_POSIX_C_SOURCE=200809L}"
 LDLIBS="${LDLIBS:--lm}"
+FORCE_REBUILD="${FORCE_REBUILD:-0}"
 
 mkdir -p "$BUILD_DIR"
 
@@ -39,7 +40,7 @@ COMMON_OBJECTS=""
 object_index=0
 for source in $COMMON_SRCS; do
     object="$BUILD_DIR/common-${object_index}.o"
-    if [ ! -f "$object" ] || [ "$ROOT_DIR/$source" -nt "$object" ]; then
+    if [ "$FORCE_REBUILD" = "1" ] || [ ! -f "$object" ] || [ "$ROOT_DIR/$source" -nt "$object" ]; then
         printf '[build] compiling common object %s\n' "$source"
         $CC $CFLAGS -Iinclude -Ithird_party/yyjson -c "$source" -o "$object"
     else

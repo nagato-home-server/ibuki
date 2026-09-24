@@ -132,6 +132,8 @@ typedef struct {
     char local_traffic_selector[EN_MAX_ID_LEN];
     char remote_traffic_selector[EN_MAX_ID_LEN];
     char gre_interface[EN_MAX_ID_LEN];
+    char gre_outer_local_endpoint[EN_MAX_ID_LEN];
+    char gre_outer_remote_endpoint[EN_MAX_ID_LEN];
     char gre_local_address[EN_MAX_ID_LEN];
     char gre_remote_address[EN_MAX_ID_LEN];
     int gre_instance;
@@ -252,6 +254,7 @@ typedef struct {
     char namespace_interface[EN_MAX_ID_LEN];
     char namespace_address[EN_MAX_ID_LEN];
     char vpp_address[EN_MAX_ID_LEN];
+    char vpp_socket[EN_MAX_ID_LEN];
     char next_hop[EN_MAX_ID_LEN];
     int allowed_vlans[EN_MAX_ALLOWED_VLANS];
     size_t allowed_vlan_count;

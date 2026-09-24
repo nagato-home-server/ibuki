@@ -1,5 +1,5 @@
 tunnels:
-  - id: gre-a-b
+  - id: gre-namespace-v2
     type: gre_over_ipsec
     local_node: site-a
     remote_node: site-b
@@ -10,32 +10,44 @@ tunnels:
     psk: "change-me"
     gre_interface: gre0
     gre_instance: 0
-    gre_outer_local_endpoint: 172.16.1.1
-    gre_outer_remote_endpoint: 172.16.2.1
+    gre_outer_local_endpoint: 198.18.1.1
+    gre_outer_remote_endpoint: 198.18.2.1
     gre_local_address: 10.255.0.1/30
     gre_remote_address: 10.255.0.2
     local_ts: 10.10.1.0/24
     remote_ts: 10.10.2.0/24
     mtu: 1400
 
+vpp_edges:
+  - node_id: site-a
+    port_id: underlay
+    vpp_interface: host-ib-ul-a
+    next_hop: 198.18.1.2
+    vpp_socket: /run/ibuki-vpp-ns/site-a/cli.sock
+  - node_id: site-b
+    port_id: underlay
+    vpp_interface: host-ib-ul-b
+    next_hop: 198.18.2.2
+    vpp_socket: /run/ibuki-vpp-ns/site-b/cli.sock
+
 paths:
-  - id: path-gre-a-b
+  - id: path-gre-namespace-v2
     source: site-a
     destination: site-b
     route_destination_prefix: 10.10.2.0/24
-    egress_tunnel_id: gre-a-b
+    egress_tunnel_id: gre-namespace-v2
     priority: 10
     segments:
-      - id: seg-gre-a-b
+      - id: seg-gre-namespace-v2
         from: site-a
         to: site-b
-        tunnel_id: gre-a-b
+        tunnel_id: gre-namespace-v2
 
 intents:
-  - id: intent-gre-a-b
+  - id: intent-gre-namespace-v2
     traffic:
       source: site-a
       destination: site-b
     path_selection:
       mode: explicit
-      path_id: path-gre-a-b
+      path_id: path-gre-namespace-v2

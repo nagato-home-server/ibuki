@@ -884,12 +884,8 @@ static int write_vpp_netns_route_plan(const char *filename, const en_yaml_config
     } else {
         const en_tunnel_t *gre_tunnel = first_tunnel != NULL && strcmp(first_tunnel->tunnel_type, "gre_over_ipsec") == 0 ? first_tunnel : NULL;
         if (gre_tunnel != NULL) {
-            char gre_local_next_hop[EN_MAX_ID_LEN];
-            snprintf(gre_local_next_hop, sizeof(gre_local_next_hop), "%s", gre_tunnel->gre_local_address);
-            char *prefix_separator = strchr(gre_local_next_hop, '/');
-            if (prefix_separator != NULL) *prefix_separator = '\0';
-            fprintf(file, "run_vpp_node %s ip route add %s via %s %s\n", path->source, destination_prefix, gre_tunnel->gre_remote_address, gre_tunnel->gre_interface);
-            fprintf(file, "run_vpp_node %s ip route add %s via %s %s\n", path->destination, source_prefix, gre_local_next_hop, gre_tunnel->gre_interface);
+            fprintf(file, "run_vpp_node %s ip route add %s via %s\n", path->source, destination_prefix, gre_tunnel->gre_interface);
+            fprintf(file, "run_vpp_node %s ip route add %s via %s\n", path->destination, source_prefix, gre_tunnel->gre_interface);
         } else if (intent->traffic.has_vlan_id) {
             fprintf(file, "run_vpp_node %s ip route add %s via %s %s.%d\n", path->source, source_prefix, source_next_hop, source_vpp_interface, intent->traffic.vlan_id);
             fprintf(file, "run_vpp_node %s ip route add %s via %s %s.%d\n", path->destination, destination_prefix, destination_next_hop, destination_vpp_interface, intent->traffic.vlan_id);

@@ -87,8 +87,8 @@ setup() {
   vpp site-b set interface ip address gre0 10.255.0.2/30
   vpp site-a set interface state gre0 up
   vpp site-b set interface state gre0 up
-  vpp site-a ip route add 10.10.2.0/24 via gre0
-  vpp site-b ip route add 10.10.1.0/24 via gre0
+  vpp site-a ip route add 10.10.2.0/24 via 10.255.0.2 gre0
+  vpp site-b ip route add 10.10.1.0/24 via 10.255.0.1 gre0
   else
     printf 'Configured namespaced VPP topology: LAN and underlay only.\n'
   fi

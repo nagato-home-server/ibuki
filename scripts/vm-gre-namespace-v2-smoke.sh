@@ -56,7 +56,9 @@ fi
 if [ "$VPP_NATIVE_IPSEC" = "1" ]; then
   printf 'Auto-selected VPP Native IPsec mode.\n'
 fi
-SKIP_GRE="$VPP_NATIVE_IPSEC" sh scripts/vm-vpp-ns-topology.sh setup
+# The generated plan owns GRE. Creating it here too leaves stale FIB paths
+# when the plan deletes and recreates gre0.
+SKIP_GRE=1 sh scripts/vm-vpp-ns-topology.sh setup
 BUILD_DIR="$BUILD_DIR" OUT_DIR="$OUT_DIR" sh scripts/vm-generate-netns-runtime.sh "$YAML" --intent "$INTENT_ID"
 if [ "$VPP_NATIVE_IPSEC" = "1" ]; then
   printf 'Using VPP Native IPsec; strongSwan is not started for this smoke.\n'

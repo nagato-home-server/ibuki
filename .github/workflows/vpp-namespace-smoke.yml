@@ -40,8 +40,13 @@ jobs:
       - name: Reapply strongSwan GRE namespace runtime after cleanup
         if: inputs.backend == 'strongswan'
         run: timeout 12m sudo env SKIP_BUILD=1 BUILD_DIR="$PWD/build-ci" sh scripts/vm-gre-namespace-v2-smoke.sh samples/gre-namespace-v2.yaml
+      - name: Test VPP native IPsec namespace runtime
+        if: inputs.backend == 'vpp-native'
+        run: timeout 12m sudo env SKIP_BUILD=1 BUILD_DIR="$PWD/build-ci" sh scripts/vm-gre-namespace-v2-smoke.sh samples/gre-namespace-v2-vpp-native.yaml
+      - name: Reapply VPP native IPsec namespace runtime after cleanup
+        if: inputs.backend == 'vpp-native'
+        run: timeout 12m sudo env SKIP_BUILD=1 BUILD_DIR="$PWD/build-ci" sh scripts/vm-gre-namespace-v2-smoke.sh samples/gre-namespace-v2-vpp-native.yaml
       - name: Verify no namespace runtime residue
-        if: inputs.backend == 'strongswan'
         run: |
           for ns in site-a site-b; do
             for path in "/run/ibuki-vpp-ns/$ns/cli.sock" "/run/ibuki-vpp-ns/$ns/api.sock" "/run/ibuki-vpp-ns/$ns/vpp.pid" "/run/eventnet-netns-ipsec-gre-v2/$ns/charon.pid"; do
@@ -51,9 +56,6 @@ jobs:
             if [ -n "$(sudo ip netns exec "$ns" ip xfrm state)" ]; then echo "Residual XFRM state in $ns"; exit 1; fi
             if [ -n "$(sudo ip netns exec "$ns" ip xfrm policy)" ]; then echo "Residual XFRM policy in $ns"; exit 1; fi
           done
-      - name: Test VPP native IPsec namespace runtime
-        if: inputs.backend == 'vpp-native'
-        run: timeout 12m sudo env SKIP_BUILD=1 BUILD_DIR="$PWD/build-ci" sh scripts/vm-gre-namespace-v2-smoke.sh samples/gre-namespace-v2-vpp-native.yaml
       - name: Show daemon logs after failure
         if: failure()
         run: |

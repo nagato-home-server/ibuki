@@ -93,12 +93,19 @@ if [ "$VPP_NATIVE_IPSEC" = "1" ]; then
     printf '== VPP Native IPsec traffic counters: %s ==\n' "$ns"
     vpp_socket="/run/ibuki-vpp-ns/$ns/cli.sock"
     vppctl -s "$vpp_socket" show ipsec sa
-    vppctl -s "$vpp_socket" show errors
-    vppctl -s "$vpp_socket" show counters | grep -Ei 'ipsec|esp|sa' || true
+    vpp_errors=$(vppctl -s "$vpp_socket" show errors)
+    printf '%s\n' "$vpp_errors"
+    for node in esp4-encrypt-tun esp4-decrypt-tun; do
+      if ! printf '%s\n' "$vpp_errors" | awk -v node="$node" '$2 == node && $1 + 0 > 0 { found=1 } END { exit !found }'; then
+        printf 'No %s traffic observed in %s.\n' "$node" "$ns" >&2
+        diagnose_datapath
+        exit 1
+      fi
+    done
   done
 fi
-printf '== strongSwan/XFRM ==\n'
 if [ "$VPP_NATIVE_IPSEC" = "0" ]; then
+  printf '== strongSwan/XFRM ==\n'
   xfrm_state=$(ip netns exec site-a ip xfrm state)
   printf '%s\n' "$xfrm_state"
   if ! printf '%s\n' "$xfrm_state" | grep -Eq 'anti-replay context: seq 0x[1-9a-f]' ||

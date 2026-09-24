@@ -34,4 +34,25 @@ endif()
 if(NOT VPP_NETNS_PLAN MATCHES "run_vpp_node site-b set interface ip address gre0 10\\.255\\.0\\.2/30")
     message(FATAL_ERROR "site-b GRE address missing")
 endif()
+set(NATIVE_OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/namespace-native-runtime-test")
+file(REMOVE_RECURSE "${NATIVE_OUTPUT_DIR}")
+execute_process(
+    COMMAND "${EVENTNET_NETNS_PLAN}" --intent intent-gre-namespace-v2-native --out-dir "${NATIVE_OUTPUT_DIR}"
+        "${SOURCE_DIR}/samples/gre-namespace-v2-vpp-native.yaml"
+    RESULT_VARIABLE NATIVE_PLAN_RESULT
+    OUTPUT_VARIABLE NATIVE_PLAN_OUTPUT
+    ERROR_VARIABLE NATIVE_PLAN_ERROR
+)
+if(NOT NATIVE_PLAN_RESULT EQUAL 0)
+    message(FATAL_ERROR "native namespace runtime plan generation failed: ${NATIVE_PLAN_OUTPUT}${NATIVE_PLAN_ERROR}")
+endif()
+file(READ "${NATIVE_OUTPUT_DIR}/vpp-netns-route-plan.sh" NATIVE_VPP_PLAN)
+foreach(NODE site-a site-b)
+    if(NOT NATIVE_VPP_PLAN MATCHES "run_vpp_node ${NODE} create ipip tunnel")
+        message(FATAL_ERROR "${NODE} native IPIP tunnel missing")
+    endif()
+    if(NOT NATIVE_VPP_PLAN MATCHES "run_vpp_node ${NODE} ipsec tunnel protect ipip0")
+        message(FATAL_ERROR "${NODE} native IPsec tunnel protection missing")
+    endif()
+endforeach()
 message(STATUS "Namespace runtime VPP dispatch checks passed")

@@ -62,7 +62,7 @@ sudo sh scripts/vm-vpp-ns-runtime.sh stop
 - site-a/site-bのLAN pingが暗号化状態で双方向に成功する
 - 停止・再適用・rollback後も残留socket、PID、GRE、XFRM、経路がない
 
-現段階では、VPPプロセス分離、YAML socket入力、生成計画のnode dispatch、LAN/underlay attachment生成、双方向GRE構成、strongSwanのIKE/CHILD_SA確立、および暗号化データパスの双方向LAN pingを実ランナーで確認した。[GitHub Actions実行 36018395070](https://github.com/nagato-home-server/ibuki/actions/runs/36018395070)では両方向とも3/3応答、損失0%、XFRM ESPの送受信シーケンス進行を確認し、クリーンアップ後の再適用でも同じ検査が通った。終了後のVPP socket/PID、charon PID、テストLAN interface、XFRM state/policyの残留検査も通過した。VPP Native IPsec backendの実通信は別途確認する。ローカルArchにVPPをビルド・導入せず、手動実行の[GitHub Actions VPP namespace smoke](../.github/workflows/vpp-namespace-smoke.yml)でUbuntu 24.04にFD.io VPPパッケージを導入して検証する。
+現段階では、VPPプロセス分離、YAML socket入力、生成計画のnode dispatch、LAN/underlay attachment生成、strongSwan側の双方向GREとIKE/CHILD_SA、暗号化データパスの双方向LAN pingを実ランナーで確認した。[strongSwan/XFRM実行 36022032962](https://github.com/nagato-home-server/ibuki/actions/runs/36022032962)では両方向とも3/3応答、損失0%、XFRM ESPの送受信シーケンス進行を確認した。[VPP Native実行 36022029474](https://github.com/nagato-home-server/ibuki/actions/runs/36022029474)でも両方向3/3応答、損失0%で、両siteのVPP ESP暗号化・復号カウンタが増加した。両backendでクリーンアップ後の再適用と、終了後のVPP socket/PID、charon PID、テストLAN interface、XFRM state/policyの残留検査が通過した。ローカルArchにVPPをビルド・導入せず、手動実行の[GitHub Actions VPP namespace smoke](../.github/workflows/vpp-namespace-smoke.yml)でUbuntu 24.04にFD.io VPPパッケージを導入して検証する。
 
 ## v2の具体的なアドレス構成
 
@@ -109,7 +109,7 @@ pingの送信元・宛先となる`10.10.1.1`／`10.10.2.1`は各namespaceのdum
 
 ## VPP Native IPsec実験
 
-Native VPP IPsecでは、GREを生成せず、現行VPPの`create ipip tunnel`と`ipsec tunnel protect`を組み合わせます。GREを必要とする経路はstrongSwan/XFRM Backendで処理し、Native BackendはL3 IPIP/IPsecトンネルとして扱います。
+Native VPP IPsecでは、GREを生成せず、現行VPPの`create ipip tunnel`と`ipsec tunnel protect`を組み合わせる。GREを必要とする経路はstrongSwan/XFRM Backendで処理し、Native BackendはL3 IPIP/IPsecトンネルとして扱う。この違いにより、nativeの疎通成功を「VPP Native GRE over IPsec」の実証とは呼ばない。
 
 `samples/gre-namespace-v2-vpp-native.yaml` は、strongSwan/Linux XFRMを使わず、VPPのIPsec pluginでIPIP interfaceを保護する実験入力である。Tunnelへ `vpp_local_sa_id`、`vpp_remote_sa_id`、SPI、暗号鍵、認証鍵を指定すると、生成された `vpp-netns-route-plan.sh` がESP SA、`create ipip tunnel`、`ipsec tunnel protect`を出力する。Linux VMで次のように実行する。
 
@@ -120,7 +120,9 @@ sudo sh scripts/vm-gre-namespace-v2-smoke.sh samples/gre-namespace-v2-vpp-native
 Native用のVPP SA項目を含むYAMLでは、スクリプトがIntentとNative IPsecモードを自動選択する。`INTENT_ID`または`VPP_NATIVE_IPSEC=0`を指定した場合は明示設定を優先する。
 Nativeサンプルの`gre_interface: ipip0`は論理的な経路interface名として使用され、実際のVPPデータプレーンはIPIPである。
 
-現行VPPでNative IPsec-GREが利用できない場合は、strongSwan/XFRM経路の実験を次で行う。
+[2026-09-25のGitHub Actions実行](https://github.com/nagato-home-server/ibuki/actions/runs/36022029474)で、site-a/site-bそれぞれの`esp4-encrypt-tun`と`esp4-decrypt-tun`カウンタが通信後に増加し、両方向のping、再適用、残留検査も通過した。サンプルのSAと鍵は静的な実験用であり、IKEによる鍵交換・更新や本番用の鍵管理を備えた構成ではない。
+
+GRE自体の暗号化データパスを試す場合は、strongSwan/XFRM経路を次で実行する。
 
 ```sh
 sudo sh scripts/vm-gre-namespace-v2-smoke.sh samples/gre-namespace-v2.yaml

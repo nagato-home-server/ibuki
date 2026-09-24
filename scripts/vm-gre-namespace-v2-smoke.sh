@@ -26,6 +26,8 @@ diagnose_datapath() {
     ip netns exec "$ns" ip -s xfrm policy >&2 || true
     vppctl -s "/run/ibuki-vpp-ns/$ns/cli.sock" show interface >&2 || true
     vppctl -s "/run/ibuki-vpp-ns/$ns/cli.sock" show hardware-interfaces >&2 || true
+    vppctl -s "/run/ibuki-vpp-ns/$ns/cli.sock" show ip fib >&2 || true
+    vppctl -s "/run/ibuki-vpp-ns/$ns/cli.sock" show trace >&2 || true
     vppctl -s "/run/ibuki-vpp-ns/$ns/cli.sock" show error >&2 || true
   done
 }
@@ -73,6 +75,8 @@ if [ "$VPP_NATIVE_IPSEC" = "1" ]; then
   done
 fi
 printf '== namespaced GRE over IPsec: site-a -> site-b ==\n'
+vppctl -s /run/ibuki-vpp-ns/site-a/cli.sock trace add af-packet-input 20 >/dev/null 2>&1 || true
+vppctl -s /run/ibuki-vpp-ns/site-b/cli.sock trace add af-packet-input 20 >/dev/null 2>&1 || true
 if ! ip netns exec site-a ping -c 3 -W 2 -I 10.10.1.1 10.10.2.1; then
   diagnose_datapath
   exit 1

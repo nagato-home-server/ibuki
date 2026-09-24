@@ -76,7 +76,7 @@ sudo sh scripts/vm-vpp-ns-runtime.sh stop
 | GRE inner | `10.255.0.1/30` | `10.255.0.2/30` |
 | VPP CLI socket | `/run/ibuki-vpp-ns/site-a/cli.sock` | `/run/ibuki-vpp-ns/site-b/cli.sock` |
 
-`198.18.1.1` と `198.18.2.1` はVPPが生成するGRE outer endpointであり、Linux側のunderlay peerを経由して既存の `a-direct`/`b-direct` へ転送する。namespace実験ではstrongSwanのtransport selectorにもこれらの固定 `/32[gre]` アドレスを使用する。`dynamic[gre]` は実パケットから別の外側アドレスを選択するため、この構成では使用しない。
+`198.18.1.1` と `198.18.2.1` はVPPが生成するGRE outer endpointであり、Linux側のunderlay peerを経由して既存の `a-direct`/`b-direct` へ転送する。namespace実験ではIKE endpointが`203.0.113.10`／`203.0.113.9`と別なので、strongSwanはtunnel modeと固定の`/32[gre]` selectorを使用する。`dynamic[gre]` は実パケットから別の外側アドレスを選択するため、この構成では使用しない。
 
 ## 起動順序
 

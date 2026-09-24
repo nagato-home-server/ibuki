@@ -111,7 +111,12 @@ en_error_code_t en_render_swanctl_conf(
         local_ts = local_ts_buffer;
         remote_ts = remote_ts_buffer;
     }
-    const char *mode = gre_over_ipsec ? " mode=transport" : "";
+    const char *mode = "tunnel";
+    if (gre_over_ipsec) {
+        const char *gre_local = tunnel->gre_outer_local_endpoint[0] == '\0' ? tunnel->local_endpoint : tunnel->gre_outer_local_endpoint;
+        const char *gre_remote = tunnel->gre_outer_remote_endpoint[0] == '\0' ? tunnel->remote_endpoint : tunnel->gre_outer_remote_endpoint;
+        if (strcmp(gre_local, tunnel->local_endpoint) == 0 && strcmp(gre_remote, tunnel->remote_endpoint) == 0) mode = "transport";
+    }
     FORMAT_COMMAND(
         buf,
         buf_len,
@@ -123,7 +128,7 @@ en_error_code_t en_render_swanctl_conf(
         tunnel->remote_endpoint,
         tunnel->tunnel_id,
         tunnel->tunnel_id,
-        mode[0] == '\0' ? "tunnel" : "transport",
+        mode,
         tunnel->tunnel_id,
         tunnel->tunnel_id,
         local_ts,

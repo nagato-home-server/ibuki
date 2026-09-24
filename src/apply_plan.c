@@ -479,7 +479,13 @@ static en_error_code_t append_tunnel_conf(en_apply_plan_t *plan, const en_tunnel
         local_ts = local_ts_buffer;
         remote_ts = remote_ts_buffer;
     }
-    const char *mode = gre_over_ipsec ? "        mode = transport\n" : "";
+    const char *mode = "";
+    if (gre_over_ipsec) {
+        const char *gre_local = tunnel->gre_outer_local_endpoint[0] == '\0' ? tunnel->local_endpoint : tunnel->gre_outer_local_endpoint;
+        const char *gre_remote = tunnel->gre_outer_remote_endpoint[0] == '\0' ? tunnel->remote_endpoint : tunnel->gre_outer_remote_endpoint;
+        mode = strcmp(gre_local, tunnel->local_endpoint) == 0 && strcmp(gre_remote, tunnel->remote_endpoint) == 0 ?
+            "        mode = transport\n" : "        mode = tunnel\n";
+    }
     if (snprintf(
         block,
         sizeof(block),

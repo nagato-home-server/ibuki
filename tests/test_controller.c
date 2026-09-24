@@ -736,6 +736,7 @@ static void test_renderers_generate_vpp_gre_over_ipsec(void)
     snprintf(tunnel.gre_outer_local_endpoint, sizeof(tunnel.gre_outer_local_endpoint), "%s", "172.16.1.1");
     snprintf(tunnel.gre_outer_remote_endpoint, sizeof(tunnel.gre_outer_remote_endpoint), "%s", "172.16.2.1");
     ASSERT_TRUE(en_render_swanctl_conf(&tunnel, command, sizeof(command)) == EN_ERR_NONE);
+    ASSERT_TRUE(strstr(command, "children.gre-a-b.mode=tunnel") != NULL);
     ASSERT_TRUE(strstr(command, "local_ts=172.16.1.1/32[gre]") != NULL);
     ASSERT_TRUE(strstr(command, "remote_ts=172.16.2.1/32[gre]") != NULL);
     ASSERT_TRUE(en_render_vpp_gre_create(&tunnel, command, sizeof(command)) == EN_ERR_NONE);

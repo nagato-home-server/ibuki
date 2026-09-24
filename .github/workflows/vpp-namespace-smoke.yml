@@ -40,6 +40,17 @@ jobs:
       - name: Reapply strongSwan GRE namespace runtime after cleanup
         if: inputs.backend == 'strongswan'
         run: timeout 12m sudo env SKIP_BUILD=1 BUILD_DIR="$PWD/build-ci" sh scripts/vm-gre-namespace-v2-smoke.sh samples/gre-namespace-v2.yaml
+      - name: Verify no namespace runtime residue
+        if: inputs.backend == 'strongswan'
+        run: |
+          for ns in site-a site-b; do
+            for path in "/run/ibuki-vpp-ns/$ns/cli.sock" "/run/ibuki-vpp-ns/$ns/api.sock" "/run/ibuki-vpp-ns/$ns/vpp.pid" "/run/eventnet-netns-ipsec-gre-v2/$ns/charon.pid"; do
+              if sudo test -e "$path"; then echo "Residual runtime file: $path"; exit 1; fi
+            done
+            if sudo ip netns exec "$ns" ip link show ib-lan-src >/dev/null 2>&1; then echo "Residual LAN interface in $ns"; exit 1; fi
+            if [ -n "$(sudo ip netns exec "$ns" ip xfrm state)" ]; then echo "Residual XFRM state in $ns"; exit 1; fi
+            if [ -n "$(sudo ip netns exec "$ns" ip xfrm policy)" ]; then echo "Residual XFRM policy in $ns"; exit 1; fi
+          done
       - name: Test VPP native IPsec namespace runtime
         if: inputs.backend == 'vpp-native'
         run: timeout 12m sudo env SKIP_BUILD=1 BUILD_DIR="$PWD/build-ci" sh scripts/vm-gre-namespace-v2-smoke.sh samples/gre-namespace-v2-vpp-native.yaml

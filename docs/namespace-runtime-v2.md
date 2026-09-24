@@ -62,7 +62,7 @@ sudo sh scripts/vm-vpp-ns-runtime.sh stop
 - site-a/site-bのLAN pingが暗号化状態で双方向に成功する
 - 停止・再適用・rollback後も残留socket、PID、GRE、XFRM、経路がない
 
-現段階では、VPPプロセス分離、YAML socket入力、生成計画のnode dispatch、LAN/underlay attachment生成、双方向GRE構成、strongSwanのIKE/CHILD_SA確立、および暗号化データパスの双方向LAN pingを実ランナーで確認した。[GitHub Actions実行 36017195563](https://github.com/nagato-home-server/ibuki/actions/runs/36017195563)では両方向とも3/3応答、損失0%、XFRM ESPの送受信シーケンス進行を確認し、クリーンアップ後の再適用でも同じ検査が通った。停止後の残留を個別に検査するステップと、VPP Native IPsec backendの実通信は別途確認する。ローカルArchにVPPをビルド・導入せず、手動実行の[GitHub Actions VPP namespace smoke](../.github/workflows/vpp-namespace-smoke.yml)でUbuntu 24.04にFD.io VPPパッケージを導入して検証する。
+現段階では、VPPプロセス分離、YAML socket入力、生成計画のnode dispatch、LAN/underlay attachment生成、双方向GRE構成、strongSwanのIKE/CHILD_SA確立、および暗号化データパスの双方向LAN pingを実ランナーで確認した。[GitHub Actions実行 36018395070](https://github.com/nagato-home-server/ibuki/actions/runs/36018395070)では両方向とも3/3応答、損失0%、XFRM ESPの送受信シーケンス進行を確認し、クリーンアップ後の再適用でも同じ検査が通った。終了後のVPP socket/PID、charon PID、テストLAN interface、XFRM state/policyの残留検査も通過した。VPP Native IPsec backendの実通信は別途確認する。ローカルArchにVPPをビルド・導入せず、手動実行の[GitHub Actions VPP namespace smoke](../.github/workflows/vpp-namespace-smoke.yml)でUbuntu 24.04にFD.io VPPパッケージを導入して検証する。
 
 ## v2の具体的なアドレス構成
 

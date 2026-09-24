@@ -88,6 +88,15 @@ if ! ip netns exec site-b ping -c 3 -W 2 -I 10.10.2.1 10.10.1.1; then
   diagnose_datapath
   exit 1
 fi
+if [ "$VPP_NATIVE_IPSEC" = "1" ]; then
+  for ns in site-a site-b; do
+    printf '== VPP Native IPsec traffic counters: %s ==\n' "$ns"
+    vpp_socket="/run/ibuki-vpp-ns/$ns/cli.sock"
+    vppctl -s "$vpp_socket" show ipsec sa
+    vppctl -s "$vpp_socket" show errors
+    vppctl -s "$vpp_socket" show counters | grep -Ei 'ipsec|esp|sa' || true
+  done
+fi
 printf '== strongSwan/XFRM ==\n'
 if [ "$VPP_NATIVE_IPSEC" = "0" ]; then
   xfrm_state=$(ip netns exec site-a ip xfrm state)

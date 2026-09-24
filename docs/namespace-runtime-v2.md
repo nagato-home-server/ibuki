@@ -89,7 +89,7 @@ pingの送信元・宛先となる`10.10.1.1`／`10.10.2.1`は各namespaceのdum
 4. `eventnet_netns_plan` がYAMLを解析し、`gre-swanctl.conf` とVPP計画を生成する
 5. `vm-netns-ipsec-gre-start.sh` が両siteのcharonを起動し、VICI経由で設定をロードする
 6. `vpp-netns-route-plan.sh` が `run_vpp_node` 経由でsiteごとのVPPへGRE・経路を適用する
-7. site namespaceのLAN routeからVPP host-interfaceへ入り、GRE、Linux XFRM、underlayの順に転送する（このデータパスは検証中）
+7. site namespaceのLAN routeからVPP host-interfaceへ入り、GRE、Linux XFRM、underlayの順に転送する。このデータパスは2026-09-25に双方向LAN pingとESP送受信counterで検証済みである
 
 ## 停止順序
 

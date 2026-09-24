@@ -16,8 +16,8 @@ JSONLの処理は、入力・出力ともyyjsonを共通ライブラリとして
 4. Agentの逐次測定を基準実装とし、測定結果をControllerへ投入してPath選択へ反映できることを確認する。
 5. direct障害、hub fallback、recovery、relay選択、rollback、XFRMポリシー、VLAN/FIB計画を再現可能なテストとして残す。
 6. strongSwanをIPsec Backendとして利用し、Linux評価環境ではLinux XFRMによるIPsec SA、経路、疎通、rollbackを確認する。IbukiはIKE・暗号処理・OS固有のIPsecデータプレーンを再実装しない。
-7. VPPは論文前にはroute／VRF／VLAN／forwardingのBackendとして扱い、VPP GREとLinux XFRMをhandoffする実データパスは論文前の必須条件にしない。
-8. `gre_over_ipsec`のYAML・VPP GRE計画生成は実験的な設計境界として保持してよいが、実Backendの完成やGRE経由疎通として主張しない。実環境依存部分はskip理由を出力する。
+7. VPPはroute／VRF／VLAN／forwardingのBackendとして扱う。加えて、当初の必須範囲を越えてVPP GREとLinux XFRMをhandoffするnamespace v2実データパスまで検証した。
+8. `gre_over_ipsec`のYAML・VPP GRE計画生成と、strongSwan/XFRM backendによるGRE経由疎通を実装済みとして扱う。VPP Native backendはIPIP + IPsecの比較用実験構成であり、GRE実装または本番用鍵管理の完成とは主張しない。
 
 ### 論文提出時点では実装しないもの
 
@@ -27,7 +27,7 @@ JSONLの処理は、入力・出力ともyyjsonを共通ライブラリとして
 - 本番用のHA、BGP/FRRによる動的経路交換、証明書自動更新、Flow Preserve。
 - OSPFなどマルチキャストを利用する動的経路制御。
 - Linux GREを標準Backendとする実装。Linux GREは比較用の補助実験を除き、標準構成には採用しない。
-- VPP Native IPsec、VPP GREとLinux XFRMを接続するhandoff、GRE over IPsecの実データパス。
+- VPP Native IPsecのIKE連携、動的SA同期、鍵更新、本番向けsecret管理。静的SA・鍵によるIPIP/IPsec疎通は実験実装済みである。
 
 ## 論文提出から未踏期間まで
 
@@ -38,7 +38,7 @@ JSONLの処理は、入力・出力ともyyjsonを共通ライブラリとして
 5. Telemetry保存の抽象インターフェースを追加する。論文提出時はJSONLファイルを標準実装とし、必要になった場合だけSQLite等を差し替えられる形にする。
 6. VPP Binary APIとstrongSwan VICIを実機に接続するための最小adapterを完成させ、vppctl/CLIは診断用・互換用として残す。
 7. strongSwanのOS固有Backend（Linux XFRM、BSD PF_KEY等）をCapabilityとadapter境界へ整理し、Linux固有の補助処理を本体から分離する。
-8. VPP GREとstrongSwan IPsecを接続する方式を比較し、VPP Native IPsecを含む実データパスの最小構成を決定する。
+8. VPP GRE + strongSwan/XFRMとVPP Native IPIP/IPsecの最小構成は決定・疎通確認済みである。次は同じ測定条件で、切替時間、通信断、CPU、メモリ、MTU影響を比較する。
 
 ## 未踏期間中
 
@@ -46,8 +46,8 @@ JSONLの処理は、入力・出力ともyyjsonを共通ライブラリとして
 2. Telemetry DBを導入する。用途は履歴ダッシュボード、長期傾向、閾値調整、障害解析、イベント再生、複数Agentの時系列相関であり、Path選択そのものに必須ではない。小規模構成はSQLite、時系列・多拠点構成はPrometheus等を候補とする。
 3. 証明書認証、鍵更新、失効確認、認証情報の安全な格納をstrongSwan VICI操作と結合する。
 4. VLAN/VRF/FIBをVPP Binary APIで実反映し、IPsec対象外通信の遮断とrollbackを実トラフィックで検証する。
-5. VPP Native IPsecをstrongSwanとの責任分界、SA同期、観測、rollbackを含む独立Backendとして実装する。
-6. VPP GREとVPP Native IPsecを接続し、GRE over IPsecの実データパスを実測する。
+5. 実験済みのVPP Native IPIP/IPsecを、IKE、SA同期、鍵更新、継続観測、rollbackを含む独立Backendへ発展させる。
+6. 検証済みのVPP GRE + strongSwan/XFRMを反復測定し、必要ならVPP Native GRE + IPsecを別構成として追加する。Native IPIP/IPsecをGREと呼ばない。
 7. FRRoutingを接続し、BGPによるprefix広告・withdrawalと経路収束を実測する。
 8. OSPFを追加し、GREのマルチキャスト収容とVPP FIB反映を検証する。
 9. GREとVTIを同じPath／Intent条件で比較し、MTU、経路収束、切替時間、障害観測粒度、CPU使用率を評価する。

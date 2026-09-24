@@ -12,6 +12,15 @@
 
 論文用の合格条件は、Linux VMで同一YAMLと同一telemetryから同じPath選択結果を得られること、Direct障害時にHubまたはRelayへ切り替えられること、ESP counterとVPP forwardingを確認できること、設定変更・不正設定・古いtelemetryを評価できることである。評価結果は`pass`、`partial`、`skip`、`fail`を混同せず、実験環境と作業ツリーの情報を保存する。
 
+### 2026-09-25進捗
+
+- 制御層: CTest 27件がpassし、Path選択、failure/recovery、設定検証、telemetry、Graceful/rollbackの制御ロジックまで実装済み。
+- 実データパス: strongSwan/XFRM + VPP GREと、比較用VPP Native IPIP/IPsecで双方向疎通、暗号counter、cleanup、再適用を確認済み。
+- 論文本文: 章立てと初期結果は記述済み。旧評価値を現在参照できる証拠へ置き換えた。
+- 未完了: 反復した定量測定、工程別時間、最大通信断、RTT/reordering/TCP retransmission、CPU/メモリ、図表生成、提出commitでのLinux/Windows最終再現、PDF校正。
+
+したがって、現在の主な不足は新しいBackendの追加ではなく、既存機能を同一条件で測って論文の主張へ結び付ける評価工程である。
+
 ## 論文作成後から未踏開始まで：実験環境
 
 最初に、Linux namespaceで再現できる経路を、物理機または小規模クラウドへ移す。最低限、site-a、site-b、hubまたはrelayの3拠点相当を用意し、各区間で遅延、Packet Loss、Jitter、帯域を独立に変更できるようにする。高価な専用測定器を必須にせず、`tc netem`、`iperf3`、`ping`、`tcpdump`、VPP統計を組み合わせ、同じ条件を再実行できる構成を優先する。

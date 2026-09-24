@@ -4,13 +4,13 @@
 
 単に「どの機能があるか」を列挙するだけでなく、なぜその機能を実装したのか、どのような操作で何を確認できるのか、そして本番実装へ進む際に何が残っているのかを明確にします。
 
-## 論文執筆へ移行する現在地（2026-09-08）
+## 論文執筆へ移行する現在地（2026-09-25）
 
-論文前のController基盤範囲は完了しています。WSL上の非root基準validationで、C単体、scenario、全route YAML、Agent telemetry、閾値・安定性、イベント再選択、UNIX socket、設定reload、出力security、Shell構文がすべてpassしました。`event-reconcile`ではdirect障害時のhub fallback、回復時のdirect復帰、VLAN route／interface観測、XFRM遮断、共有socket batch、state保存まで確認しています。論文提出までの正式BackendはstrongSwanを用いたIPsecとし、VPP GRE over IPsecは実験的計画生成として扱い、実データパスは未踏期間の検証対象へ移します。
+論文前のController基盤範囲は完了しています。root不要のCTest 27件がpassし、論文前validation成果物ではC単体、scenario、route YAML、Agent telemetry、閾値・安定性、イベント再選択、reload、status／plan security、Shell構文など12件がpass、root/VPP依存3件がskipです。`event-reconcile`ではdirect障害時のhub fallback、回復時のdirect復帰、VLAN route／interface観測、XFRM遮断、共有socket batch、state保存まで確認しています。
 
-論文執筆前に必ず保存する成果物は、validationの`summary.csv`、各caseのログ、scenario Explain JSONL、生成されたselected path／runtime planです。rootが必要なVPP実適用、VPP GRE over IPsec runtime、XFRM cleartext遮断、IPsec+VPP統合direct／fallbackはLinux VMで再実行し、GRE Backendの実動作を確認します。root環境が未実行の場合は`skip`として記録し、実Backend runtimeを完了したとは主張しません。起動環境の不整合は`fail`として記録します。
+namespace v2では、strongSwan/XFRM backendのVPP GRE over IPsecと、比較用VPP Native IPIP/IPsec backendの双方について、双方向LAN疎通、暗号化・復号counter増加、停止後残留なし、再適用をGitHub Actionsで確認しました。成功実行はそれぞれ[36022032962](https://github.com/nagato-home-server/ibuki/actions/runs/36022032962)と[36022029474](https://github.com/nagato-home-server/ibuki/actions/runs/36022029474)です。Native構成はGREではなく、静的SA・鍵を用いたIPIP + `ipsec tunnel protect`であり、本番Backend完成とは扱いません。
 
-したがって、ここからの必須作業はstrongSwan／Linux XFRMを用いた正式Backendの実環境検証と、論文の実験条件・結果・図表・考察の記述です。VPP Native IPsec、VPP GREとの実データパス、VPP Binary APIの版依存codec、strongSwanのrekey／DPD運用、FRR／BGP／OSPFによる動的経路交換、VTI比較、HA、Graceful／Flow Preserve、実trunk分離、GUIは未踏期間以降の拡張とします。
+ここからの論文提出上の必須作業は、同一条件の反復測定、切替工程別時間と通信影響・resource使用量の取得、提出対象commitへ紐付く統合成果物の保存、図表生成、本文とPDFの仕上げです。VPP NativeのIKE／鍵更新／SA同期、VPP Binary APIの版依存codec、strongSwanのrekey／DPD運用、FRR／BGP／OSPF、VTI比較、HA、Flow Preserve、実trunk分離、GUIは未踏期間以降の拡張とします。Gracefulは制御ロジック済みですが実runtimeの定量評価が残っています。
 
 ## 1. プロジェクト概要
 
@@ -468,15 +468,15 @@ VPP edgeを含む経路はVPP-only runtimeとして生成でき、選択・統�
 
 Gracefulでは、旧Pathをdraining状態にして短いpause/drain期間を設け、新Pathへのforwarding切替後に旧Pathのrouteと専用tunnelを撤去します。切替失敗時は既存rollbackへ戻ります。TCPフローの識別・保持を行うFlow Preserveや、Gracefulの通信影響を定量測定する評価は未実装です。
 
-### 8.6 VPP GRE over IPsec Backendは未踏期間の実装候補
+### 8.6 GRE over IPsecとVPP Native比較Backendの現在地
 
-現在のPrototypeにはVPP GREの計画生成とstrongSwanのGRE selector生成が存在しますが、VPP GREパケットをLinux XFRMへ接続する実データパスは検証済みではありません。論文提出までの正式Backendには含めず、論文後から未踏期間にVPP Native IPsecとの組合せ、strongSwanとの責任分界、SA同期を含めて再設計します。Linux GREは標準Backendにしません。
+strongSwan/XFRM backendでは、VPP GRE packetをLinux XFRMへhandoffする実データパスをnamespace v2で検証済みです。VPPがGRE outer packetを生成し、Linux XFRMがESPで暗号化し、対向側で復号後にVPP GREへ戻す構成で、双方向LAN pingとESP送受信counterの増加を確認しました。Linux GREは標準Backendにせず、GRE操作はVPPが担当します。
 
-論文前の合格条件は、strongSwan IPsec SA、Linux XFRM policy、VPP route／VLAN／VRF、拠点間疎通を個別に確認でき、Prepare、Validate、Commit、Post Validation、Rollbackを再現できることです。GRE interface、VPP Native IPsec、BGP／OSPFによる動的経路交換、VPP Binary APIによる実操作、VTIとの比較は未踏期間へ回します。
+比較用のVPP Native backendも、IPIP + `ipsec tunnel protect`、静的SA・鍵により双方向疎通と両siteの`esp4-encrypt-tun`／`esp4-decrypt-tun` counter増加を確認済みです。この結果はNative IPsecの最小データパス成立を示しますが、GREとの組合せ、IKE、鍵更新、SA同期、secret管理を含みません。BGP／OSPF、VPP Binary APIによる実操作、VTI比較とともに本番化課題として残します。
 
-### 8.7 実データパス検証の現在地（2026-09-11）
+### 8.7 実データパス検証の現在地（2026-09-25）
 
-現ローカル環境では`vpp`、`vppctl`、`swanctl`が未導入で、非rootユーザのためnamespace／VPP runtimeも起動できませんでした。`scripts/vm-vpp-preflight.sh`は`vpp`と`vppctl`を`missing`、`ip`のみ`ok`と判定しました。このため、VPP GREとstrongSwan／Linux XFRMを同一packetで通過させる実データパス検証は`skip`として記録し、成功したとは扱いません。検証環境を用意した後、VPP導入、strongSwan／charon起動、XFRM policy・SA、VPP GRE、GRE内側route、双方向疎通、ESP counter、rollbackの順で再実行します。
+Archのローカル環境にはVPP／strongSwan runtimeを常設せず、Ubuntu上のGitHub Actions workflowを再現可能な検証環境として使用しました。strongSwan/XFRM GREは実行36022032962、VPP Native IPIP/IPsecは実行36022029474で成功しています。両workflowは双方向ping、暗号counter、cleanup、再適用、停止後残留を検査します。ローカルでVPPをコンパイルすることは、この機能確認の必須条件ではありません。
 
 ### 8.8 FRRoutingは未踏期間に実装
 
@@ -486,9 +486,9 @@ Gracefulでは、旧Pathをdraining状態にして短いpause/drain期間を設�
 
 Flow Preserveの概念は設計にありますが、実際のflow分類、既存flow維持、新規flow割当制御はまだ実装していません。
 
-### 8.10 同一packetのIPsec→VPP本番pipelineは未完成
+### 8.10 同一packetのIPsec→VPP pipelineは実験検証済み、本番運用は未完成
 
-現在の統合runtimeは、同じcontroller-generated planでIPsecとVPPを連続制御するものです。実運用gatewayとして、同一packetがIPsec tunnelとVPP forwarding pipelineを連続して通る構成は、次の設計課題です。
+namespace v2では、同一packetがVPP GREとLinux XFRMを連続して通る構成、およびVPP内でIPIPとNative IPsecを連続して通る構成を検証済みです。一方、動的鍵交換・更新、継続監視、障害時の自動収束、secret管理、長時間負荷を含む実運用gatewayとしての完成は今後の課題です。
 
 ### 8.11 GUIは未実装
 

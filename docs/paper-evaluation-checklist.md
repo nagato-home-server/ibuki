@@ -164,6 +164,8 @@ root不要範囲で確認する項目は、C単体、全Path選択方式、route
 
 rootが必要なruntimeはnamespace v2 workflowでstrongSwan/XFRM GREとVPP Native IPsec/IPIPの両方を実行します。2026-09-25のcommit `69d8d9b`で双方向疎通、ESP counter、再適用、停止後残留確認が成功し、生成planとping/counterを含むjob logをActions artifactへ保存しました。[namespace runtime実行](https://github.com/nagato-home-server/ibuki/actions/runs/36107566451)。未完了の定量反復はroot runtime利用可能なUbuntu runnerで行い、CSVとログを保存します。
 
+2026-09-25にArch上のcommit `2a99f2d` ReleaseバイナリでPriority、Evaluated、direct/fallback/recoveryのplan生成を各5回実行した。平均CLIプロセス時間はそれぞれ25.8 ms、29.6 ms、47.2 ms、29.4 ms、58.2 ms。これらは制御系の初期測定で、実データパス切替時間ではない。Immediate/GracefulはCテストによる機能確認のみで個別反復値がなく、残りのruntime反復と通信・resource指標は引き続き未完了。
+
 ```sh
 sudo BUILD_DIR=build-paper-baseline RUN_RUNTIME=1 sh scripts/vm-paper-validation.sh samples/linux-vm-netns.yaml
 ```

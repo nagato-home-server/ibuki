@@ -17,7 +17,8 @@
 - 制御層: CTest 27件がpassし、Path選択、failure/recovery、設定検証、telemetry、Graceful/rollbackの制御ロジックまで実装済み。
 - 実データパス: strongSwan/XFRM + VPP GREと、比較用VPP Native IPIP/IPsecで双方向疎通、暗号counter、cleanup、再適用を確認済み。
 - 論文本文: 章立てと初期結果は記述済み。旧評価値を現在参照できる証拠へ置き換えた。
-- 未完了: 反復した定量測定、工程別時間、最大通信断、RTT/reordering/TCP retransmission、CPU/メモリ、図表生成、提出commitでのLinux/Windows最終再現、PDF校正。
+- 完了: 提出commit `253901f` でLinux Release build・CTest 27/27、root不要validation 12件、Windows build/CTestが成功。root不要成果は`out/paper-final-253901f/`に保存。
+- 未完了: root/VPP runtimeの同一commit再実行、反復した定量測定、工程別時間、最大通信断、RTT/reordering/TCP retransmission、CPU/メモリ、図表生成、PDF校正。
 
 したがって、現在の主な不足は新しいBackendの追加ではなく、既存機能を同一条件で測って論文の主張へ結び付ける評価工程である。
 

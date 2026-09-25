@@ -160,9 +160,9 @@ root不要の論文前validationは、次の一括実行で全caseがpassする�
 BUILD_DIR=build-paper-baseline sh scripts/vm-paper-validation.sh samples/linux-vm-netns.yaml
 ```
 
-root不要範囲で確認する項目は、C単体、全Path選択方式、route YAML網羅、Agent／telemetry、閾値・安定性、event reconcile、socket、reload、status／plan security、Shell構文です。2026-09-25時点でCTest 27件は全件passしています。`out/paper-baseline-3/summary.csv`には論文前validationのroot不要12件がpass、root/VPP依存3件がskipとして残っています。
+root不要範囲で確認する項目は、C単体、全Path選択方式、route YAML網羅、Agent／telemetry、閾値・安定性、event reconcile、socket、reload、status／plan security、Shell構文です。提出commit `253901f` でCTest 27件と論文前validation 12件がpassし、root/VPP依存3件はskipしました。新しいsummary、各ログ、環境記録は`out/paper-final-253901f/`に保存しています。
 
-rootが必要な次の項目は、Linux VMの依存とsudoが利用できるときだけ追加実行します。加えてnamespace v2 workflowでstrongSwan/XFRM GREとVPP Native IPsec/IPIPを確認します。2026-09-25のGitHub Actionsでは両backendとも双方向疎通、ESP counter、再適用、停止後残留確認に成功していますが、提出用には同一commitのvalidation成果物へ統合して保存します。
+rootが必要な次の項目は、Linux VMの依存とsudoが利用できるときだけ追加実行します。namespace v2 workflowではstrongSwan/XFRM GREとVPP Native IPsec/IPIPを確認します。2026-09-25時点の成功実行はコードが同一のcommit `d590e52`（後続`253901f`までソース変更なし）で、両backendの双方向疎通、ESP counter、再適用、停止後残留確認に成功しています。実行ログは[strongSwan/XFRM](https://github.com/nagato-home-server/ibuki/actions/runs/36022032962)と[VPP Native](https://github.com/nagato-home-server/ibuki/actions/runs/36022029474)です。未完了の定量反復はroot runtime利用可能なUbuntu runnerで行い、CSVとログを保存します。
 
 ```sh
 sudo BUILD_DIR=build-paper-baseline RUN_RUNTIME=1 sh scripts/vm-paper-validation.sh samples/linux-vm-netns.yaml

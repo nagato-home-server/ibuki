@@ -69,6 +69,9 @@ jobs:
             if [ -n "$(sudo ip netns exec "$ns" ip xfrm state)" ]; then echo "Residual XFRM state in $ns"; exit 1; fi
             if [ -n "$(sudo ip netns exec "$ns" ip xfrm policy)" ]; then echo "Residual XFRM policy in $ns"; exit 1; fi
           done
+      - name: Make captured runtime outputs readable
+        if: always()
+        run: sudo chmod -R a+rX "out/namespace-runtime-${{ matrix.backend }}" 2>/dev/null || true
       - name: Upload runtime plans, ping output, and backend counters
         if: always()
         uses: actions/upload-artifact@v4

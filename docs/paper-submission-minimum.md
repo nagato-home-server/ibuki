@@ -83,10 +83,10 @@ SVGはTeXへ取り込む前に、評価時のcommit、YAML、OS、kernel、VPP�
 
 1. Direct正常、Hub fallback、Direct復旧、Priority/Evaluated、Immediate/Gracefulを同一条件で5回以上測定し、正式な`out/paper-metrics.csv`を作る。
 2. 現在の収集scriptが記録するsmoke全体時間を、Decision、Prepare、Validate、Commit、Post Validation、Rollbackへ分解する。最大通信断、RTT、reordering、TCP retransmission、CPU、メモリの空欄も実測で埋める。
-3. 提出commit `253901f` ではLinux Release build、CTest 27件、root不要validation 12件、およびWindows build/CTestがpass済み。残りはroot必須のVPP runtime 3項目を同一commitで再実行し、既存namespace workflowの結果・ログと一緒に成果物へまとめる。
+3. 提出commit `253901f` ではLinux Release build、CTest 27件、root不要validation 12件、およびWindows build/CTestがpass済み。さらにruntime検証用commit `69d8d9b`ではstrongSwan/XFRM GREとVPP Native IPIP/IPsecが双方向疎通、再適用、残留確認まで成功し、生成planとping/counterログをActions artifactに保存した。提出直前にはコード変更がないことを確認してruntime workflowを再実行する。
 4. `generate-paper-graphs.py`で図と統計CSVを生成し、`研究内容.tex`の評価表・考察を正式データへ置き換える。
 5. TeXをPDF化して、図表、参照、改ページ、フォント、主張と証拠の対応を最終確認する。
 
 本番化の残作業であり論文提出の必須条件にはしないものは、VPP NativeのIKE/鍵更新とSA同期、VPP Binary APIの版依存codec、strongSwanのrekey/DPD運用、FRR/BGP/OSPF、HA、Flow Preserve、実trunk分離、GUIである。
 
-今回の再現記録は`out/paper-final-253901f/`に保存した。ローカルArchではVPPとstrongSwanが未導入で、特権namespace実行も許可されず、空き容量は約2.5 GBである。そのためVPPを新規導入せず、root runtimeはGitHub Actions上の既存成功実行（コード同一の`d590e52`、以後`253901f`までソース変更なし）を参照する。論文提出前にはその評価を提出成果物へ取り込み、反復測定も同じUbuntu runtimeで実施する。
+今回の再現記録は`out/paper-final-253901f/`に保存した。ローカルArchではVPPとstrongSwanが未導入で、特権namespace実行も許可されず、空き容量は約2.5 GBである。そのためVPPを新規導入せず、root runtimeはUbuntu GitHub Actionsで実施した。最新のnamespace runtime実行[36107566451](https://github.com/nagato-home-server/ibuki/actions/runs/36107566451)ではstrongSwan/XFRMとVPP Nativeの両jobが成功し、planとruntimeログをartifact化した。artifactは[strongSwan/XFRM](https://github.com/nagato-home-server/ibuki/actions/runs/36107566451)、[VPP Native](https://github.com/nagato-home-server/ibuki/actions/runs/36107566451)から取得できる。最新のLinux/Windows CI[36107566590](https://github.com/nagato-home-server/ibuki/actions/runs/36107566590)も全job成功した。性能反復計測は引き続き未完了である。

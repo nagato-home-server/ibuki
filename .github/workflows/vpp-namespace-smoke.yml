@@ -39,16 +39,26 @@ jobs:
           cmake --build build-ci --parallel 4 --target eventnet_netns_plan eventnet_yaml_demo
       - name: Test strongSwan GRE namespace runtime
         if: matrix.backend == 'strongswan'
-        run: timeout 12m sudo env SKIP_BUILD=1 BUILD_DIR="$PWD/build-ci" sh scripts/vm-gre-namespace-v2-smoke.sh samples/gre-namespace-v2.yaml
+        run: |
+          mkdir -p "out/namespace-runtime-${{ matrix.backend }}"
+          set -o pipefail
+          timeout 12m sudo env SKIP_BUILD=1 BUILD_DIR="$PWD/build-ci" OUT_DIR="$PWD/out/namespace-runtime-${{ matrix.backend }}/initial-plan" sh scripts/vm-gre-namespace-v2-smoke.sh samples/gre-namespace-v2.yaml 2>&1 | tee "out/namespace-runtime-${{ matrix.backend }}/initial.log"
       - name: Reapply strongSwan GRE namespace runtime after cleanup
         if: matrix.backend == 'strongswan'
-        run: timeout 12m sudo env SKIP_BUILD=1 BUILD_DIR="$PWD/build-ci" sh scripts/vm-gre-namespace-v2-smoke.sh samples/gre-namespace-v2.yaml
+        run: |
+          set -o pipefail
+          timeout 12m sudo env SKIP_BUILD=1 BUILD_DIR="$PWD/build-ci" OUT_DIR="$PWD/out/namespace-runtime-${{ matrix.backend }}/reapply-plan" sh scripts/vm-gre-namespace-v2-smoke.sh samples/gre-namespace-v2.yaml 2>&1 | tee "out/namespace-runtime-${{ matrix.backend }}/reapply.log"
       - name: Test VPP native IPsec namespace runtime
         if: matrix.backend == 'vpp-native'
-        run: timeout 12m sudo env SKIP_BUILD=1 BUILD_DIR="$PWD/build-ci" sh scripts/vm-gre-namespace-v2-smoke.sh samples/gre-namespace-v2-vpp-native.yaml
+        run: |
+          mkdir -p "out/namespace-runtime-${{ matrix.backend }}"
+          set -o pipefail
+          timeout 12m sudo env SKIP_BUILD=1 BUILD_DIR="$PWD/build-ci" OUT_DIR="$PWD/out/namespace-runtime-${{ matrix.backend }}/initial-plan" sh scripts/vm-gre-namespace-v2-smoke.sh samples/gre-namespace-v2-vpp-native.yaml 2>&1 | tee "out/namespace-runtime-${{ matrix.backend }}/initial.log"
       - name: Reapply VPP native IPsec namespace runtime after cleanup
         if: matrix.backend == 'vpp-native'
-        run: timeout 12m sudo env SKIP_BUILD=1 BUILD_DIR="$PWD/build-ci" sh scripts/vm-gre-namespace-v2-smoke.sh samples/gre-namespace-v2-vpp-native.yaml
+        run: |
+          set -o pipefail
+          timeout 12m sudo env SKIP_BUILD=1 BUILD_DIR="$PWD/build-ci" OUT_DIR="$PWD/out/namespace-runtime-${{ matrix.backend }}/reapply-plan" sh scripts/vm-gre-namespace-v2-smoke.sh samples/gre-namespace-v2-vpp-native.yaml 2>&1 | tee "out/namespace-runtime-${{ matrix.backend }}/reapply.log"
       - name: Verify no namespace runtime residue
         run: |
           for ns in site-a site-b; do
@@ -59,6 +69,13 @@ jobs:
             if [ -n "$(sudo ip netns exec "$ns" ip xfrm state)" ]; then echo "Residual XFRM state in $ns"; exit 1; fi
             if [ -n "$(sudo ip netns exec "$ns" ip xfrm policy)" ]; then echo "Residual XFRM policy in $ns"; exit 1; fi
           done
+      - name: Upload runtime plans, ping output, and backend counters
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: namespace-runtime-${{ matrix.backend }}-${{ github.run_id }}
+          path: out/namespace-runtime-${{ matrix.backend }}/
+          if-no-files-found: error
       - name: Show daemon logs after failure
         if: failure()
         run: |

@@ -25,6 +25,21 @@ long long en_now_ms(void)
 #endif
 }
 
+unsigned long long en_monotonic_ns(void)
+{
+#ifdef _WIN32
+    LARGE_INTEGER counter, frequency;
+    if (!QueryPerformanceFrequency(&frequency) || !QueryPerformanceCounter(&counter) || frequency.QuadPart <= 0) return 0;
+    unsigned long long ticks = (unsigned long long)counter.QuadPart;
+    unsigned long long hz = (unsigned long long)frequency.QuadPart;
+    return ticks / hz * 1000000000ULL + ticks % hz * 1000000000ULL / hz;
+#else
+    struct timespec now;
+    if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) return 0;
+    return (unsigned long long)now.tv_sec * 1000000000ULL + (unsigned long long)now.tv_nsec;
+#endif
+}
+
 void en_copy_id(char *dst, size_t dst_len, const char *src)
 {
     if (dst_len == 0) {
@@ -40,6 +55,40 @@ void en_copy_id(char *dst, size_t dst_len, const char *src)
 bool en_streq(const char *left, const char *right)
 {
     return left != NULL && right != NULL && strcmp(left, right) == 0;
+}
+
+bool en_transition_status_update(en_controller_t *controller, const char *traffic_key, const char *intent_id, en_transition_state_t state)
+{
+    if (controller == NULL || traffic_key == NULL || traffic_key[0] == '\0' || intent_id == NULL || intent_id[0] == '\0') return false;
+    en_transition_status_t *status = NULL;
+    for (size_t index = 0; index < controller->state.transition_status_count; index++) {
+        en_transition_status_t *candidate = &controller->state.transition_statuses[index];
+        if (en_streq(candidate->traffic_key, traffic_key) && en_streq(candidate->intent_id, intent_id)) {
+            status = candidate;
+            break;
+        }
+    }
+    if (status == NULL) {
+        if (controller->state.transition_status_count >= EN_MAX_CANDIDATES) return false;
+        status = &controller->state.transition_statuses[controller->state.transition_status_count++];
+        en_copy_id(status->traffic_key, sizeof(status->traffic_key), traffic_key);
+    }
+    en_copy_id(status->intent_id, sizeof(status->intent_id), intent_id);
+    status->state = state;
+    return true;
+}
+
+bool en_transition_status_get(const en_controller_t *controller, const char *traffic_key, const char *intent_id, en_transition_state_t *state)
+{
+    if (controller == NULL || traffic_key == NULL || intent_id == NULL || state == NULL) return false;
+    for (size_t index = 0; index < controller->state.transition_status_count; index++) {
+        const en_transition_status_t *candidate = &controller->state.transition_statuses[index];
+        if (en_streq(candidate->traffic_key, traffic_key) && en_streq(candidate->intent_id, intent_id)) {
+            *state = candidate->state;
+            return true;
+        }
+    }
+    return false;
 }
 
 size_t en_path_hop_count(const en_path_t *path)
@@ -169,6 +218,7 @@ void en_set_applied_path(en_controller_t *controller, const char *traffic_key, c
         if (en_streq(controller->state.traffic_keys[i], traffic_key)) {
             en_copy_id(controller->state.applied_paths[i], sizeof(controller->state.applied_paths[i]), path_id);
             controller->state.applied_since_ms[i] = en_now_ms();
+            controller->state.applied_verified[i] = true;
             return;
         }
     }
@@ -177,6 +227,37 @@ void en_set_applied_path(en_controller_t *controller, const char *traffic_key, c
         en_copy_id(controller->state.traffic_keys[idx], sizeof(controller->state.traffic_keys[idx]), traffic_key);
         en_copy_id(controller->state.applied_paths[idx], sizeof(controller->state.applied_paths[idx]), path_id);
         controller->state.applied_since_ms[idx] = en_now_ms();
+        controller->state.applied_verified[idx] = true;
+    }
+}
+
+void en_clear_applied_path(en_controller_t *controller, const char *traffic_key)
+{
+    for (size_t i = 0; i < controller->state.applied_count; i++) {
+        if (!en_streq(controller->state.traffic_keys[i], traffic_key)) continue;
+        for (size_t j = i + 1; j < controller->state.applied_count; j++) {
+            memcpy(controller->state.traffic_keys[j - 1], controller->state.traffic_keys[j], sizeof(controller->state.traffic_keys[j]));
+            memcpy(controller->state.applied_paths[j - 1], controller->state.applied_paths[j], sizeof(controller->state.applied_paths[j]));
+            controller->state.applied_since_ms[j - 1] = controller->state.applied_since_ms[j];
+            controller->state.applied_verified[j - 1] = controller->state.applied_verified[j];
+        }
+        controller->state.applied_count--;
+        return;
+    }
+}
+
+bool en_applied_path_verified(en_controller_t *controller, const char *traffic_key)
+{
+    for (size_t i = 0; i < controller->state.applied_count; i++) {
+        if (en_streq(controller->state.traffic_keys[i], traffic_key)) return controller->state.applied_verified[i];
+    }
+    return false;
+}
+
+void en_invalidate_applied_path(en_controller_t *controller, const char *traffic_key)
+{
+    for (size_t i = 0; i < controller->state.applied_count; i++) {
+        if (en_streq(controller->state.traffic_keys[i], traffic_key)) controller->state.applied_verified[i] = false;
     }
 }
 
@@ -192,6 +273,8 @@ en_error_code_t en_controller_restore_applied_path(en_controller_t *controller, 
     }
     restored_path->operational_state = EN_PATH_ACTIVE;
     en_set_applied_path(controller, traffic_key, path_id);
+    /* A persisted choice is a hint, not proof that routes and SAs survived. */
+    en_invalidate_applied_path(controller, traffic_key);
     return EN_ERR_NONE;
 }
 
@@ -214,6 +297,11 @@ void en_make_traffic_key(const en_traffic_selector_t *traffic, char *buf, size_t
 const char *en_controller_applied_path(const en_controller_t *controller, const char *traffic_key)
 {
     return en_get_applied_path((en_controller_t *)controller, traffic_key);
+}
+
+bool en_controller_get_transition_state(const en_controller_t *controller, const char *traffic_key, const char *intent_id, en_transition_state_t *state)
+{
+    return en_transition_status_get(controller, traffic_key, intent_id, state);
 }
 
 const char *en_health_state_name(en_health_state_t state)
@@ -243,6 +331,7 @@ const char *en_transition_state_name(en_transition_state_t state)
     case EN_TRANSITION_COMPLETED: return "completed";
     case EN_TRANSITION_ROLLING_BACK: return "rolling_back";
     case EN_TRANSITION_FAILED: return "failed";
+    case EN_TRANSITION_ROLLED_BACK: return "rolled_back";
     }
     return "invalid";
 }

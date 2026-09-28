@@ -15,6 +15,11 @@ typedef struct {
     en_error_code_t (*install_path)(void *ctx, const char *traffic_key, const en_path_t *path);
     en_error_code_t (*remove_path)(void *ctx, const char *traffic_key, const en_path_t *path);
     const char *(*active_path)(void *ctx, const char *traffic_key);
+    /* Must keep established flows on previous_path, move new flows to target_path,
+       and return only after the old flows have drained. On error, previous_path
+       must remain usable; the controller will attempt rollback. */
+    en_error_code_t (*graceful_switch)(void *ctx, const char *traffic_key, const en_path_t *previous_path,
+        const en_path_t *target_path, int max_pause_ms, int drain_timeout_ms);
     void *ctx;
 } en_vpp_adapter_t;
 
@@ -74,6 +79,14 @@ size_t en_controller_errors(
 const char *en_controller_applied_path(
     const en_controller_t *controller,
     const char *traffic_key
+);
+
+/* Return the retained state for one Intent/traffic pair; completion is not reset. */
+bool en_controller_get_transition_state(
+    const en_controller_t *controller,
+    const char *traffic_key,
+    const char *intent_id,
+    en_transition_state_t *state
 );
 
 const en_path_t *en_controller_find_path(

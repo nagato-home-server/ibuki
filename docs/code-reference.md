@@ -50,7 +50,8 @@ YAML / JSONL
 
 | 関数 | 入力・出力 | 処理と副作用 |
 |---|---|---|
-| `en_now_ms` | なし -> `long long` | 単調時計の現在時刻を返す。hold-down等の時間判定に使う。 |
+| `en_now_ms` | なし -> `long long` | Unix epoch基準の時刻をミリ秒で返す。audit timestamp等に使う。 |
+| `en_monotonic_ns` | なし -> `unsigned long long` | 経過時間計測用の単調時計をnanosecondで返す。 |
 | `en_copy_id` | 文字列 -> 固定長バッファ | IDを安全にコピーし、終端を保証する。 |
 | `en_streq` | 2文字列 -> `bool` | NULLを含む識別子比較を行う。 |
 | `en_path_hop_count` | Path -> hop数 | segment/waypointから経路長を計算する。 |
@@ -70,6 +71,7 @@ YAML / JSONL
 | `en_controller_applied_path` | const Controller, traffic key -> Path ID | 読み取り専用の適用Path参照API。 |
 | `en_health_state_name` | health enum -> 文字列 | JSON・ログ向けの状態名を返す。 |
 | `en_transition_state_name` | transition enum -> 文字列 | 遷移状態名を返す。 |
+| `en_controller_get_transition_state` | Controller + traffic key + Intent ID -> state | Intent／traffic pairごとの最後の遷移状態を取得する。完了直後にIDLEへ戻さず、結果を保持する。 |
 | `en_error_code_name` | error enum -> 文字列 | エラーコード名を返す。 |
 
 ### `src/path_selection.c`
@@ -91,16 +93,15 @@ YAML / JSONL
 
 | 関数 | 役割 |
 |---|---|
-| `en_transition_path` | 選択結果を現在の適用状態へ反映する統合API。prepare、forwarding、commit、rollbackの境界を管理する。 |
-| `sleep_ms` | retry、drain、hold-down待機用の内部待機。 |
-| `transition_failed` | 失敗結果を遷移状態とエラーへ変換する。 |
-| `rollback_previous_path` | 旧Pathの復元操作をadapterへ依頼する。 |
-| `remove_previous_path` | 新Path確立後に旧Pathを削除する。 |
-| `apply_target_path` | Tunnel確立と転送経路適用を順序付ける。 |
-| `drain_previous_path` | graceful設定時の旧Path排出待ちを行う簡易実装。Flow Preserveの完全なフロー追跡ではない。 |
-| `record_transition` | 監査履歴へ遷移結果を書き込む。 |
+| `en_transition_path` | 選択結果を現在の適用状態へ反映する統合API。各phaseの時間を記録し、失敗時のrollback時間も結果へ加算する。 |
+| `prepare_path` / `validate_path` | target Tunnelの準備とhealth probeによる適用前検証を行う。 |
+| `commit_path` | Immediateでは通常のinstall callbackを呼ぶ。GracefulはVPP adapterのflow-aware `graceful_switch` capabilityへ委譲する。 |
+| `confirm_path` | adapterがactive pathを返す場合に切替結果を照合する。 |
+| `cleanup_previous` | 切替確認後、共有されていない旧Path/Tunnelを削除する。 |
+| `rollback` / `rollback_and_report` | 新Pathの除去と旧Pathの復元を行い、復旧失敗時は`EN_ERR_ROLLBACK_FAILED`を呼び出し元へ返す。 |
+| `transition_retry_wait` | retry backoff待機を行う。Graceful drain待機には使わない。 |
 
-Immediateは直ちに切替、Gracefulは簡易drainと待機を伴う。Flow Preserveは設計上の予約であり、現在のC実装はフロー単位の移行を保証しない。
+Gracefulはflow-aware切替をadapterへ要求する。現行command/VPP API adapterには実flow drain実装がないため、既存PathからのGraceful切替はfail-closedで拒否される。mock adapterのdrain成功は「既存flowゼロ」のモデルに限り、実データパスのdrain検証ではない。Flow Preserveは別の未実装戦略である。
 
 ### `src/controller.c`
 
@@ -110,10 +111,34 @@ Immediateは直ちに切替、Gracefulは簡易drainと待機を伴う。Flow Pr
 | `en_controller_destroy` | Controllerが所有する履歴・状態を破棄する。 |
 | `store_health` | 最新healthをPath ID単位で保存する。 |
 | `observe_one` | 1 Pathのprobeをhealth adapterへ依頼し、結果を保存する。 |
-| `observe_candidate_health` | Intent候補のhealthを収集する。 |
+| `observe_candidate_health` | Evaluatedとactive pathを伴うreconcileでは候補を観測し、初回Priorityでは順番にprobeして最初の利用可能候補で止める。 |
 | `en_controller_create` / `en_controller_create_with_tunnels` / `en_controller_create_with_nodes_and_tunnels` | Pathだけ、Tunnel付き、Node/Tunnel付きの3形式でControllerを初期化する。 |
-| `en_controller_submit_intent` | health観測、Path選択、必要な遷移を一連で実行するreconcile入口。 |
+| `en_controller_submit_intent` | health観測、Path選択、active Path障害時のconfigured fallback、必要な遷移を一連で実行するreconcile入口。初回Priorityでは最初の利用可能候補までprobeを逐次実行する。 |
 | `en_controller_audit_events` / `en_controller_errors` | 監査イベントとエラー履歴を読み取り専用で取得する。 |
+
+`en_reconcile_result_t`は`intent_id`と`traffic_key`を含み、Controller内の状態記録もそのpairで照会できる。`metrics`の時間単位はnanosecond。`decision_ns`は候補health観測と選択、`prepare_ns`はtunnel準備、`validate_ns`は準備後の再検証、`commit_ns`は転送先切替、`post_validation_ns`は切替確認と旧path後処理、`rollback_ns`はrollback全体を表す。`health_probe_count` / `health_probe_ns`は候補probeと準備後probeを合算し、意図した再検証を含む重複観測の計測に使う。時計は単調増加時計を使う。これらはreconcile呼び出し結果に保持され、`eventnetd`の標準出力とstatus JSONの`metrics_ns`オブジェクトにも出力される。
+
+### 命名・構造の読み方
+
+公開関数・公開構造体・YAML/JSON field名は互換性と検索性を優先し、`en_`接頭辞と完全なドメイン名を維持する。短縮対象は内部関数、ローカル変数、内部専用のサンプルsource filenameに限定する。略語は`dst`（destination）、`prev`（previous）、`temp`（temporary）、`obs`（observation）、`sec`（second）を使い、役割が読み取れない一文字名にはしない。
+
+| 旧名 | 現行名 | 対象・意味 |
+|---|---|---|
+| `transition_prepare` / `transition_commit` / `transition_confirm` | `prepare_path` / `commit_path` / `confirm_path` | 内部遷移phase helper。 |
+| `transition_ready` / `transition_ready_retry` | `validate_path` / `validate_retry` | 適用前のhealth検証とretry。 |
+| `transition_cleanup_previous` | `cleanup_previous` | 切替後の旧Path後処理。 |
+| `transition_prepare_retry` / `transition_commit_retry` / `transition_confirm_retry` | `prepare_retry` / `commit_retry` / `confirm_retry` | 各phaseの再試行helper。 |
+| `valid_command_token` / `valid_config_token` / `valid_observation_token` | `command_token_ok` / `config_token_ok` / `obs_token_ok` | private token検証関数。 |
+| `run_exec_command` | `run_command` | shellを介さない外部command実行helper。 |
+| `temporary_filename` / `telemetry_filename` | `temp_file` / `telemetry_file` | ローカル変数。 |
+| `temporary_fd` / `state_filename` / `rollback_path_id` | `temp_fd` / `state_file` / `old_path_id` | ローカル変数・内部関数引数。 |
+| `previous_destination_prefix` | `prev_dst_prefix` | health probe内の保存用ローカル変数。 |
+| `max_records_per_second` | `max_records_sec` | eventnetd内部引数。CLI option `--max-records-per-second`は維持する。 |
+| `examples/strongswan_vici_controller_probe.c` | `examples/vici_controller_probe.c` | 実行ファイル名とCMake targetは互換性のため維持する。 |
+
+ファイルの責務はディレクトリで分ける。`include/eventnet/`は公開型/API、`src/`はController・状態・selection・transition・adapter実装、`examples/`は実行入口とprobe、`tests/`は回帰試験である。個別sourceの対応関係は本書の各節を参照する。
+
+圧縮量は変更した識別子の出現箇所で集計する。内部関数・ローカル名の11組は218箇所、3,959文字相当から2,821文字相当へ1,138文字（28.7%）減。先行変更の遷移helper 9定義名は合計73文字減、source filenameは43文字から32文字となり11文字減である。集計対象全体では1,222文字減。これは列挙対象だけの名前表記の差で、ソース全体の文字数や実行性能の削減量ではない。公開API、schema、設定key、CLI optionは互換性維持のため意図して変更していない。
 
 ## 5. 設定・Telemetry・出力
 
@@ -126,7 +151,7 @@ Immediateは直ちに切替、Gracefulは簡易drainと待機を伴う。Flow Pr
 | `parse_line` | YAMLのインデントとkey/valueを状態機械へ渡す。 |
 | `parse_*_kv` | Tunnel、Node、Path、Segment、Route、Intent、VPP edge、selection、constraints、transition、fallbackの値を各構造体へ設定する。 |
 | `copy_id` / `copy_value` | 固定長構造体へ安全に値をコピーする。 |
-| `valid_config_token` | shell・設定生成へ渡してよい文字だけか確認する。 |
+| `config_token_ok` | shell・設定生成へ渡してよい文字だけか確認する。 |
 | `set_error` | 行番号付きエラーをバッファへ記録する。 |
 | `validate_*` 系関数 | Path、Tunnel、Intent、VLAN、能力、参照整合性を個別に検証する。 |
 
@@ -173,7 +198,7 @@ JSON処理はyyjsonへ統一している。外部DBは現在必須ではなく�
 | `health_validate` | コマンドprobe結果の妥当性を検査する。 |
 | `run_template` |安全な変数置換後にコマンドを実行する。 |
 | `run_shell_command` | 互換用shell境界。入力検査済みの計画に限定して使う。 |
-| `run_exec_command` / `run_exec_capture` | shellを介さない外部コマンド実行・出力取得を行う。 |
+| `run_command` / `run_exec_capture` | shellを介さない外部コマンド実行・出力取得を行う。 |
 | `apply_xfrm_block` / `remove_xfrm_block` | IPsec対象外通信を遮断するXFRM policyの適用・撤去を行う。 |
 | `xfrm_policy_exists` / `has_xfrm_block` | XFRM状態の存在確認を行う。 |
 | `verify_vpp_route` | 期待next-hop、interface、tableのVPP経路を確認する。 |
@@ -300,7 +325,7 @@ VICIの本番接続点は実装済みだが、証明書配置、鍵更新、権�
 
 | テスト関数群 | 確認対象 |
 |---|---|
-| `test_priority_*`、`test_evaluated_*` | Path選択、除外理由、品質比較 |
+| `test_priority_*`、`test_evaluated_*`、`test_configured_fallback_*` | Priority early-stop、configured fallback、除外理由、品質比較 |
 | `test_failed_forwarding_*`、`test_successful_switch_*` | rollback、旧Path削除、retry |
 | `test_graceful_switch_*`、`test_hold_down_*`、`test_path_selection_thresholds_*` | graceful、flap抑制、閾値 |
 | `test_yaml_*` | YAML各形式、参照整合性、VLAN/VRF、能力、危険値拒否 |
@@ -318,7 +343,7 @@ VICIの本番接続点は実装済みだが、証明書配置、鍵更新、権�
 ### 論文提出に利用できる実装
 
 - Explicit/Priority/Evaluated Path選択
-- priority fallback、health、threshold、hold-down、簡易Graceful
+- priority fallback、health、threshold、hold-down、mock-only zero-flow Graceful hook（実backend drain未対応）
 - YAMLサブセットの検証と複数route形式
 - yyjsonによるJSON/JSONL入出力
 - strongSwan command/VICI adapter境界

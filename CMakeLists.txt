@@ -92,7 +92,7 @@ if(EVENTNET_ENABLE_STRONGSWAN_VICI)
     target_compile_definitions(eventnet_controller PUBLIC EVENTNET_ENABLE_STRONGSWAN_VICI=1)
     add_executable(eventnet_strongswan_vici_probe examples/strongswan_vici_probe.c)
     target_link_libraries(eventnet_strongswan_vici_probe PRIVATE eventnet_controller)
-    add_executable(eventnet_strongswan_vici_controller_probe examples/strongswan_vici_controller_probe.c)
+    add_executable(eventnet_strongswan_vici_controller_probe examples/vici_controller_probe.c)
     target_link_libraries(eventnet_strongswan_vici_controller_probe PRIVATE eventnet_controller)
     message(STATUS "strongSwan libvici enabled: ${STRONGSWAN_VICI_INCLUDE_DIR}, ${STRONGSWAN_VICI_LIBRARY}")
 else()
@@ -133,6 +133,19 @@ add_executable(eventnet_vpp_interface_observer examples/vpp_interface_observer.c
 target_link_libraries(eventnet_vpp_interface_observer PRIVATE eventnet_controller)
 
 enable_testing()
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME eventnet_paper_metric_validation
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_paper_metric_validation.py)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        add_test(NAME eventnet_telemetry_liveness
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_eventnetd_liveness.py
+                $<TARGET_FILE:eventnetd> ${CMAKE_CURRENT_SOURCE_DIR}/samples/linux-vm-netns.yaml)
+        set_tests_properties(eventnet_telemetry_liveness PROPERTIES TIMEOUT 30)
+    endif()
+    add_test(NAME eventnet_extract_transition_metrics
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_extract_transition_metrics.py)
+endif()
 add_executable(eventnet_tests tests/test_controller.c)
 target_link_libraries(eventnet_tests PRIVATE eventnet_controller)
 add_test(NAME eventnet_tests COMMAND eventnet_tests)
@@ -214,6 +227,13 @@ add_test(NAME eventnet_file_replay_fallback
         --batch-size 3 --count 2 --max-age-ms 0)
 set_tests_properties(eventnet_file_replay_fallback PROPERTIES
     PASS_REGULAR_EXPRESSION "selected_path: path-direct;selected_path: path-via-hub")
+if(Python3_Interpreter_FOUND)
+    add_test(NAME eventnet_controller_fallback_replay
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_eventnetd_fallback.py
+            $<TARGET_FILE:eventnetd>
+            ${CMAKE_CURRENT_SOURCE_DIR}/samples/linux-vm-netns.yaml
+            ${CMAKE_CURRENT_SOURCE_DIR}/samples/telemetry-replay-fallback.jsonl)
+endif()
 add_test(NAME eventnet_file_replay_incomplete
     COMMAND eventnetd ${CMAKE_CURRENT_SOURCE_DIR}/samples/linux-vm-netns.yaml
         --intent intent-a-b --telemetry ${CMAKE_CURRENT_SOURCE_DIR}/samples/telemetry-replay.jsonl

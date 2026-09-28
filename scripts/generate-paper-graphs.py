@@ -4,6 +4,7 @@
 import argparse
 import csv
 import html
+import math
 import pathlib
 import statistics
 from collections import Counter, defaultdict
@@ -83,22 +84,29 @@ def generate_evaluation_graphs(rows, output_dir):
 def generate_metric_graphs(rows, output_dir):
     required = {"scenario", "transition_ms", "packet_loss"}
     if not rows or not required.issubset(rows[0]):
-        return False
+        raise ValueError("transition metrics require scenario, transition_ms and packet_loss; runtime smoke CSV is not transition data")
     grouped = defaultdict(list)
-    for row in rows:
+    for number, row in enumerate(rows, 2):
+        if row.get("measurement_kind", "live_transition") != "live_transition" or row.get("status", "pass") != "pass":
+            raise ValueError(f"row {number}: only successful live transition measurements are accepted")
         try:
             transition_ms = float(row["transition_ms"])
             packet_loss = float(row["packet_loss"])
-        except (KeyError, ValueError):
-            continue
-        grouped[row["scenario"]].append((transition_ms, packet_loss))
+        except (KeyError, ValueError, TypeError) as error:
+            raise ValueError(f"row {number}: missing or invalid measured metrics") from error
+        if not row["scenario"] or not math.isfinite(transition_ms) or transition_ms < 0 or not math.isfinite(packet_loss) or not 0 <= packet_loss <= 100:
+            raise ValueError(f"row {number}: invalid scenario, duration or packet loss percentage")
+        label = row["scenario"]
+        if row.get("strategy"):
+            label += " / " + row["strategy"]
+        grouped[label].append((transition_ms, packet_loss))
     if not grouped:
         return False
     labels = list(grouped)
     transition_means = [statistics.fmean(item[0] for item in grouped[label]) for label in labels]
     loss_means = [statistics.fmean(item[1] for item in grouped[label]) for label in labels]
     write_svg(output_dir / "transition-time.svg", "Transition time by scenario", labels, transition_means, ["#7c3aed"], "Milliseconds")
-    write_svg(output_dir / "packet-loss.svg", "Packet loss by scenario", labels, loss_means, ["#0891b2"], "Packets", "{:.2f}")
+    write_svg(output_dir / "packet-loss.svg", "Packet loss by scenario", labels, loss_means, ["#0891b2"], "Percent", "{:.2f}")
     summary_file = output_dir / "metrics-summary.csv"
     with summary_file.open("w", newline="", encoding="utf-8") as stream:
         writer = csv.writer(stream)

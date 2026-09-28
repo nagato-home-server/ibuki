@@ -23,12 +23,14 @@
 - Priority選択とEvaluated選択
 - Immediateと、実装できた場合のGraceful
 
-実測CSVはroot権限を持つLinux VMで次のように収集する。各ケースのログはCSVと同じ場所に残る。
+runtime smokeの補助CSVはroot権限を持つLinux VMで次のように収集する。各ケースのログはCSVと同じ場所に残る。このCSVは実通信中の切替計測ではなく、正式な`paper-metrics.csv`とは別の成果物である。
 
 ```sh
-REPEAT=5 OUT_FILE=out/paper-metrics.csv \
+REPEAT=5 OUT_FILE=out/runtime-smoke-metrics.csv \
   sudo -E sh scripts/vm-paper-collect-metrics.sh samples/linux-vm-netns.yaml
 ```
+
+collectorは`smoke_duration_ms`、最初の適用後pingの`post_apply_packet_loss_percent`、`status`、`measurement_kind=runtime_smoke`を出力する。未取得のlossを100%と推定せず空欄とし、既存CSVへの上書きは拒否する。再実行時は別の出力名を指定する。fallbackは障害状態を指定したplanの適用試験であり、実障害の検知時間・通信断時間は測定しない。正式な切替計測には、連続通信中の障害注入とAgent検知、Controller適用、疎通回復を同一時系列で記録する評価が別途必要である。
 
 GREの実データパスは、VPPとstrongSwanが導入済みのVMでnamespace v2の入口から実行する。
 
@@ -44,7 +46,20 @@ sudo sh scripts/vm-gre-namespace-v2-smoke.sh samples/gre-namespace-v2-native.yam
 
 各反復では、transition時間、packet loss、最大通信断時間、RTT、TCP retransmission、CPU使用率、メモリ使用量を記録する。収集Scriptが自動取得できない項目は、同時に保存したログと`/usr/bin/time`、`pidstat`等で補完する。未実装のFlow Preserveは測定対象に含めず、設計上の将来課題として扱う。
 
+`eventnetd --status-jsonl`の反復ログからController内phase時間を別CSVへ抽出する。
+
+```sh
+python3 scripts/extract-transition-metrics.py \
+  --input out/direct/status.jsonl \
+  --output out/direct/phase-metrics.csv \
+  --scenario direct
+```
+
+このCSVはControllerが報告した処理時間であり、runtime smoke全体時間や実通信断時間の代替ではない。各ケースのstatus JSONL、telemetry、runtimeログは同じ評価ディレクトリへ保存する。
+
 測定値は`samples/paper-metrics-template.csv`をコピーして記入する。空欄のまま提出用グラフを作成してはならない。
+
+図生成はruntime smoke CSV、失敗行、切替時間・packet lossの欠測や非有限値を拒否する。ImmediateとGracefulは別集計とし、packet lossの単位は%とする。過去のcollectorが出力した`transition_ms`もsmoke全体時間であるため、列名だけを根拠に正式データへ転用してはならない。
 
 ## 図の生成
 
@@ -82,7 +97,7 @@ SVGはTeXへ取り込む前に、評価時のcommit、YAML、OS、kernel、VPP�
 提出を止める残作業は次のとおりである。
 
 1. Direct正常、Hub fallback、Direct復旧、Priority/Evaluated、Immediate/Gracefulを同一条件で5回以上測定し、正式な`out/paper-metrics.csv`を作る。
-2. 現在の収集scriptが記録するsmoke全体時間を、Decision、Prepare、Validate、Commit、Post Validation、Rollbackへ分解する。最大通信断、RTT、reordering、TCP retransmission、CPU、メモリの空欄も実測で埋める。
+2. `eventnetd` status JSONLの`metrics_ns`に出るDecision、Prepare、Validate、Commit、Post Validation、Rollbackを各反復で保存する。`vm-paper-collect-metrics.sh`の`transition_ms`はruntime smoke全体時間であり、phase時間とは別の指標である。最大通信断、RTT、reordering、TCP retransmission、CPU、メモリの空欄も実測で埋める。
 3. 提出commit `253901f` ではLinux Release build、CTest 27件、root不要validation 12件、およびWindows build/CTestがpass済み。さらにruntime検証用commit `69d8d9b`ではstrongSwan/XFRM GREとVPP Native IPIP/IPsecが双方向疎通、再適用、残留確認まで成功し、生成planとping/counterログをActions artifactに保存した。提出直前にはコード変更がないことを確認してruntime workflowを再実行する。
 4. `generate-paper-graphs.py`で図と統計CSVを生成し、`研究内容.tex`の評価表・考察を正式データへ置き換える。
 5. TeXをPDF化して、図表、参照、改ページ、フォント、主張と証拠の対応を最終確認する。
@@ -91,4 +106,6 @@ SVGはTeXへ取り込む前に、評価時のcommit、YAML、OS、kernel、VPP�
 
 今回の再現記録は`out/paper-final-253901f/`に保存した。ローカルArchではVPPとstrongSwanが未導入で、特権namespace実行も許可されず、空き容量は約2.5 GBである。そのためVPPを新規導入せず、root runtimeはUbuntu GitHub Actionsで実施した。最新のnamespace runtime実行[36107566451](https://github.com/nagato-home-server/ibuki/actions/runs/36107566451)ではstrongSwan/XFRMとVPP Nativeの両jobが成功し、planとruntimeログをartifact化した。artifactは[strongSwan/XFRM](https://github.com/nagato-home-server/ibuki/actions/runs/36107566451)、[VPP Native](https://github.com/nagato-home-server/ibuki/actions/runs/36107566451)から取得できる。最新のLinux/Windows CI[36107566590](https://github.com/nagato-home-server/ibuki/actions/runs/36107566590)も全job成功した。性能反復計測は引き続き未完了である。
 
-2026-09-25にArch上のReleaseバイナリ（commit `2a99f2d`）で制御系の反復測定を開始した。5回の平均プロセス時間はPriority direct選択25.8 ms、Evaluated選択29.6 ms、direct runtime plan生成47.2 ms、fallback plan生成29.4 ms、recovery plan生成58.2 msだった。これはCLI起動・YAML読込・選択／plan生成を含むホスト上の制御系時間であり、パケット転送の切替時間やnamespace実runtime時間ではない。環境はArch Linux 6.19.8、GCC Release build、VICI/VPP API無効。生ログは`/tmp/ibuki-paper-eval*`と`/tmp/ibuki-direct-*`、`/tmp/ibuki-recovery-*`にある。Immediate/Gracefulの個別反復、実runtime 5反復、切替フェーズ分解、最大通信断・reordering・TCP再送・CPU・メモリは未計測のまま。
+2026-09-25にArch上のReleaseバイナリ（commit `2a99f2d`）で制御系の反復測定を開始した。記録された5回平均はPriority direct選択25.8 ms、Evaluated選択29.6 ms、direct runtime plan生成47.2 ms、fallback plan生成29.4 ms、recovery plan生成58.2 ms。Fallbackの生値は28, 27, 27, 31, 34 msで、29.4 msはその算術平均。`vm-evaluate.sh`のsummaryは整数除算のため29 msと表示される。いずれもCLI起動・YAML読込・選択／plan生成を含むホスト上の制御系時間であり、パケット転送の切替時間やnamespace実runtime時間ではない。環境はArch Linux 6.19.8、GCC Release build、VICI/VPP API無効。反復ごとの永続記録があるのはFallbackのみ（`/tmp/ibuki-paper-eval-fallback/fallback-time.log`）。Priority/Evaluated/Direct/Recoveryの平均は実行時に得た値だが個別計測値を保存しておらず、指定した`/tmp` directoryにはPriority/Evaluatedの集計summaryまたはDirect/Recoveryの生成planしか残らない。したがって、これら4ケースは論文採用前に反復データをCSVへ保存して再測定する。Immediate/Gracefulの個別反復、実runtime 5反復、切替フェーズ分解、最大通信断・reordering・TCP再送・CPU・メモリは未計測のまま。
+
+2026-09-28にRollback failure propagation、Intent／traffic pair単位の完了状態、configured Hub fallback、初回Priorityの逐次早期終了、phase計測とstatus JSONLからのCSV抽出を追加した。root不要CTestは29/29 pass。mock smokeの5反復では3候補Priorityのhealth probeが平均4回から2回になった（Decision平均22.5 µsから14.8 µs）が、これはmock上の動作確認値であり、実adapterやデータパスの高速化を示す論文結果には使わない。実backendでのGraceful drainとruntime計測は未完了のまま。

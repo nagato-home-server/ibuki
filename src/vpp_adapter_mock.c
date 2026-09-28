@@ -9,6 +9,10 @@ static en_error_code_t install_path(void *ctx, const char *traffic_key, const en
     if (mock == NULL || traffic_key == NULL || path == NULL) {
         return EN_ERR_INVALID_ARGUMENT;
     }
+    if (mock->fail_update_count > 0) {
+        mock->fail_update_count--;
+        return EN_ERR_FORWARDING_UPDATE_FAILED;
+    }
     if (mock->fail_next_update) {
         mock->fail_next_update = false;
         return EN_ERR_FORWARDING_UPDATE_FAILED;
@@ -61,12 +65,25 @@ static en_error_code_t remove_path(void *ctx, const char *traffic_key, const en_
     return EN_ERR_NONE;
 }
 
+static en_error_code_t graceful_switch(void *ctx, const char *traffic_key, const en_path_t *previous_path,
+    const en_path_t *target_path, int max_pause_ms, int drain_timeout_ms)
+{
+    en_vpp_mock_t *mock = ctx;
+    if (mock == NULL || traffic_key == NULL || previous_path == NULL || target_path == NULL ||
+        max_pause_ms < 0 || drain_timeout_ms < 0) return EN_ERR_INVALID_ARGUMENT;
+    mock->graceful_switch_count++;
+    /* The mock models an immediate drain (zero remaining flows); it does not
+       claim to test dataplane flow tracking. */
+    return install_path(ctx, traffic_key, target_path);
+}
+
 en_vpp_adapter_t en_vpp_mock_adapter(en_vpp_mock_t *mock)
 {
     en_vpp_adapter_t adapter = {
         .install_path = install_path,
         .remove_path = remove_path,
         .active_path = active_path,
+        .graceful_switch = mock != NULL && mock->supports_graceful_switch ? graceful_switch : NULL,
         .ctx = mock,
     };
     return adapter;

@@ -17,6 +17,7 @@
 #include <string.h>
 #if !defined(_WIN32)
 #include <sys/stat.h>
+#include <unistd.h>
 #endif
 
 #define ASSERT_TRUE(expr) do { if (!(expr)) { fprintf(stderr, "assert failed: %s:%d: %s\n", __FILE__, __LINE__, #expr); exit(1); } } while (0)
@@ -285,6 +286,71 @@ static void test_priority_selects_first_healthy_path(void)
     en_reconcile_result_t result = {0};
     ASSERT_TRUE(en_controller_submit_intent(controller, &intent, &result) == EN_ERR_NONE);
     ASSERT_STREQ(result.selected_path, "path-direct");
+    ASSERT_TRUE(result.metrics.health_probe_count == 2);
+    ASSERT_TRUE(result.metrics.decision_ns > 0);
+    ASSERT_TRUE(result.metrics.validate_ns > 0);
+    ASSERT_TRUE(result.metrics.prepare_ns > 0);
+    ASSERT_TRUE(result.metrics.commit_ns > 0);
+    ASSERT_TRUE(result.metrics.post_validation_ns > 0);
+
+    en_controller_destroy(controller);
+}
+
+static void test_priority_continues_after_failed_candidate(void)
+{
+    en_vpp_mock_t vpp_mock = {0};
+    en_health_probe_mock_t health_mock = {0};
+    en_path_health_t failed = {0};
+    snprintf(failed.path_id, sizeof(failed.path_id), "%s", "path-direct");
+    failed.state = EN_HEALTH_FAILED;
+    en_health_probe_mock_set(&health_mock, failed);
+
+    en_controller_t *controller = make_controller(&vpp_mock, &health_mock);
+    en_intent_t intent = base_intent(EN_SELECT_PRIORITY);
+    intent.path_selection.candidate_count = 2;
+    snprintf(intent.path_selection.candidates[0], sizeof(intent.path_selection.candidates[0]), "%s", "path-direct");
+    snprintf(intent.path_selection.candidates[1], sizeof(intent.path_selection.candidates[1]), "%s", "path-via-hub");
+
+    en_reconcile_result_t result = {0};
+    ASSERT_TRUE(en_controller_submit_intent(controller, &intent, &result) == EN_ERR_NONE);
+    ASSERT_STREQ(result.selected_path, "path-via-hub");
+    ASSERT_TRUE(result.explanation.excluded_count == 1);
+    ASSERT_TRUE(result.metrics.health_probe_count == 3);
+
+    en_controller_destroy(controller);
+}
+
+static void test_configured_fallback_precedes_other_priority_candidates(void)
+{
+    en_vpp_mock_t vpp_mock = {0};
+    en_health_probe_mock_t health_mock = {0};
+    en_controller_t *controller = make_controller(&vpp_mock, &health_mock);
+    en_intent_t intent = base_intent(EN_SELECT_PRIORITY);
+    intent.path_selection.candidate_count = 3;
+    snprintf(intent.path_selection.candidates[0], sizeof(intent.path_selection.candidates[0]), "%s", "path-direct");
+    snprintf(intent.path_selection.candidates[1], sizeof(intent.path_selection.candidates[1]), "%s", "path-via-relay-c");
+    snprintf(intent.path_selection.candidates[2], sizeof(intent.path_selection.candidates[2]), "%s", "path-via-hub");
+
+    en_reconcile_result_t result = {0};
+    ASSERT_TRUE(en_controller_submit_intent(controller, &intent, &result) == EN_ERR_NONE);
+    ASSERT_STREQ(result.selected_path, "path-direct");
+
+    en_path_health_t direct_failed = {0};
+    snprintf(direct_failed.path_id, sizeof(direct_failed.path_id), "%s", "path-direct");
+    direct_failed.state = EN_HEALTH_FAILED;
+    en_health_probe_mock_set(&health_mock, direct_failed);
+    en_path_health_t relay_healthy = {0};
+    snprintf(relay_healthy.path_id, sizeof(relay_healthy.path_id), "%s", "path-via-relay-c");
+    relay_healthy.state = EN_HEALTH_HEALTHY;
+    en_health_probe_mock_set(&health_mock, relay_healthy);
+    en_path_health_t hub_healthy = {0};
+    snprintf(hub_healthy.path_id, sizeof(hub_healthy.path_id), "%s", "path-via-hub");
+    hub_healthy.state = EN_HEALTH_HEALTHY;
+    en_health_probe_mock_set(&health_mock, hub_healthy);
+
+    ASSERT_TRUE(en_controller_submit_intent(controller, &intent, &result) == EN_ERR_NONE);
+    ASSERT_STREQ(result.selected_path, "path-via-hub");
+    ASSERT_TRUE(strstr(result.explanation.reason, "configured fallback") != NULL);
 
     en_controller_destroy(controller);
 }
@@ -333,10 +399,34 @@ static void test_failed_forwarding_rolls_back_to_previous_path(void)
     vpp_mock.fail_next_update = true;
     en_reconcile_result_t second_result = {0};
     ASSERT_TRUE(en_controller_submit_intent(controller, &second, &second_result) == EN_ERR_FORWARDING_UPDATE_FAILED);
+    ASSERT_TRUE(second_result.transition_state == EN_TRANSITION_ROLLED_BACK);
+    ASSERT_TRUE(second_result.metrics.rollback_ns > 0);
 
     char traffic_key[EN_MAX_TRAFFIC_KEY_LEN] = {0};
     en_make_traffic_key(&first.traffic, traffic_key, sizeof(traffic_key));
     ASSERT_STREQ(en_controller_applied_path(controller, traffic_key), "path-via-hub");
+
+    en_controller_destroy(controller);
+}
+
+static void test_failed_rollback_is_reported_to_caller(void)
+{
+    en_vpp_mock_t vpp_mock = {0};
+    en_health_probe_mock_t health_mock = {0};
+    en_controller_t *controller = make_controller(&vpp_mock, &health_mock);
+
+    en_intent_t first = base_intent(EN_SELECT_EXPLICIT);
+    snprintf(first.path_selection.path_id, sizeof(first.path_selection.path_id), "%s", "path-via-hub");
+    en_reconcile_result_t first_result = {0};
+    ASSERT_TRUE(en_controller_submit_intent(controller, &first, &first_result) == EN_ERR_NONE);
+
+    en_intent_t second = base_intent(EN_SELECT_EXPLICIT);
+    snprintf(second.intent_id, sizeof(second.intent_id), "%s", "intent-a-b-rollback-fails");
+    snprintf(second.path_selection.path_id, sizeof(second.path_selection.path_id), "%s", "path-direct");
+    vpp_mock.fail_update_count = 2;
+    en_reconcile_result_t second_result = {0};
+    ASSERT_TRUE(en_controller_submit_intent(controller, &second, &second_result) == EN_ERR_ROLLBACK_FAILED);
+    ASSERT_TRUE(second_result.transition_state == EN_TRANSITION_FAILED);
 
     en_controller_destroy(controller);
 }
@@ -357,8 +447,76 @@ static void test_successful_switch_removes_previous_path(void)
     snprintf(second.path_selection.path_id, sizeof(second.path_selection.path_id), "%s", "path-via-hub");
     en_reconcile_result_t second_result = {0};
     ASSERT_TRUE(en_controller_submit_intent(controller, &second, &second_result) == EN_ERR_NONE);
+    ASSERT_TRUE(second_result.transition_state == EN_TRANSITION_COMPLETED);
     ASSERT_TRUE(vpp_mock.remove_count == 1);
     ASSERT_STREQ(vpp_mock.active_paths[0], "path-via-hub");
+
+    char traffic_key[EN_MAX_TRAFFIC_KEY_LEN] = {0};
+    en_transition_state_t transition_state = EN_TRANSITION_IDLE;
+    en_make_traffic_key(&first.traffic, traffic_key, sizeof(traffic_key));
+    ASSERT_TRUE(en_controller_get_transition_state(controller, traffic_key, first.intent_id, &transition_state));
+    ASSERT_TRUE(transition_state == EN_TRANSITION_COMPLETED);
+    en_controller_destroy(controller);
+}
+
+static void test_transition_results_are_scoped_by_traffic_key(void)
+{
+    en_vpp_mock_t vpp_mock = {0};
+    en_health_probe_mock_t health_mock = {0};
+    en_controller_t *controller = make_controller(&vpp_mock, &health_mock);
+    en_intent_t first = base_intent(EN_SELECT_EXPLICIT);
+    snprintf(first.path_selection.path_id, sizeof(first.path_selection.path_id), "%s", "path-direct");
+    en_reconcile_result_t first_result = {0};
+    ASSERT_TRUE(en_controller_submit_intent(controller, &first, &first_result) == EN_ERR_NONE);
+    ASSERT_TRUE(first_result.transition_state == EN_TRANSITION_COMPLETED);
+
+    en_intent_t second = first;
+    snprintf(second.intent_id, sizeof(second.intent_id), "%s", "intent-a-b-vlan");
+    second.traffic.has_vlan_id = true;
+    second.traffic.vlan_id = 42;
+    en_reconcile_result_t second_result = {0};
+    ASSERT_TRUE(en_controller_submit_intent(controller, &second, &second_result) == EN_ERR_NONE);
+    ASSERT_TRUE(second_result.transition_state == EN_TRANSITION_COMPLETED);
+
+    char first_key[EN_MAX_TRAFFIC_KEY_LEN] = {0};
+    char second_key[EN_MAX_TRAFFIC_KEY_LEN] = {0};
+    en_transition_state_t state = EN_TRANSITION_IDLE;
+    en_make_traffic_key(&first.traffic, first_key, sizeof(first_key));
+    en_make_traffic_key(&second.traffic, second_key, sizeof(second_key));
+    ASSERT_TRUE(en_controller_get_transition_state(controller, first_key, first.intent_id, &state));
+    ASSERT_TRUE(state == EN_TRANSITION_COMPLETED);
+    ASSERT_TRUE(en_controller_get_transition_state(controller, second_key, second.intent_id, &state));
+    ASSERT_TRUE(state == EN_TRANSITION_COMPLETED);
+
+    en_controller_destroy(controller);
+}
+
+static void test_transition_results_are_scoped_by_intent_and_traffic(void)
+{
+    en_vpp_mock_t vpp_mock = {0};
+    en_health_probe_mock_t health_mock = {0};
+    en_controller_t *controller = make_controller(&vpp_mock, &health_mock);
+    en_intent_t first = base_intent(EN_SELECT_EXPLICIT);
+    snprintf(first.path_selection.path_id, sizeof(first.path_selection.path_id), "%s", "path-direct");
+    en_reconcile_result_t first_result = {0};
+    ASSERT_TRUE(en_controller_submit_intent(controller, &first, &first_result) == EN_ERR_NONE);
+
+    en_intent_t second = first;
+    snprintf(second.intent_id, sizeof(second.intent_id), "%s", "intent-a-b-second");
+    snprintf(second.path_selection.path_id, sizeof(second.path_selection.path_id), "%s", "path-via-hub");
+    vpp_mock.fail_next_update = true;
+    en_reconcile_result_t second_result = {0};
+    ASSERT_TRUE(en_controller_submit_intent(controller, &second, &second_result) == EN_ERR_FORWARDING_UPDATE_FAILED);
+    ASSERT_TRUE(second_result.transition_state == EN_TRANSITION_ROLLED_BACK);
+
+    char traffic_key[EN_MAX_TRAFFIC_KEY_LEN] = {0};
+    en_transition_state_t state = EN_TRANSITION_IDLE;
+    en_make_traffic_key(&first.traffic, traffic_key, sizeof(traffic_key));
+    ASSERT_TRUE(en_controller_get_transition_state(controller, traffic_key, first.intent_id, &state));
+    ASSERT_TRUE(state == EN_TRANSITION_COMPLETED);
+    ASSERT_TRUE(en_controller_get_transition_state(controller, traffic_key, second.intent_id, &state));
+    ASSERT_TRUE(state == EN_TRANSITION_ROLLED_BACK);
+
     en_controller_destroy(controller);
 }
 
@@ -384,6 +542,7 @@ static void test_forwarding_failure_retries_before_rollback(void)
 static void test_graceful_switch_drains_previous_path(void)
 {
     en_vpp_mock_t vpp_mock = {0};
+    vpp_mock.supports_graceful_switch = true;
     en_health_probe_mock_t health_mock = {0};
     en_controller_t *controller = make_controller(&vpp_mock, &health_mock);
 
@@ -401,6 +560,7 @@ static void test_graceful_switch_drains_previous_path(void)
     en_reconcile_result_t second_result = {0};
     ASSERT_TRUE(en_controller_submit_intent(controller, &second, &second_result) == EN_ERR_NONE);
     ASSERT_TRUE(vpp_mock.remove_count == 1);
+    ASSERT_TRUE(vpp_mock.graceful_switch_count == 1);
 
     const en_audit_event_t *events = NULL;
     size_t event_count = en_controller_audit_events(controller, &events);
@@ -409,6 +569,32 @@ static void test_graceful_switch_drains_previous_path(void)
         if (strcmp(events[index].event_type, "DRAINING") == 0) saw_draining = true;
     }
     ASSERT_TRUE(saw_draining);
+    en_controller_destroy(controller);
+}
+
+static void test_graceful_switch_requires_flow_aware_adapter(void)
+{
+    en_vpp_mock_t vpp_mock = {0};
+    en_health_probe_mock_t health_mock = {0};
+    en_controller_t *controller = make_controller(&vpp_mock, &health_mock);
+
+    en_intent_t first = base_intent(EN_SELECT_EXPLICIT);
+    snprintf(first.path_selection.path_id, sizeof(first.path_selection.path_id), "%s", "path-direct");
+    en_reconcile_result_t first_result = {0};
+    ASSERT_TRUE(en_controller_submit_intent(controller, &first, &first_result) == EN_ERR_NONE);
+
+    en_intent_t second = first;
+    snprintf(second.intent_id, sizeof(second.intent_id), "%s", "intent-a-b-graceful-unsupported");
+    snprintf(second.path_selection.path_id, sizeof(second.path_selection.path_id), "%s", "path-via-hub");
+    second.transition.strategy = EN_TRANSITION_GRACEFUL;
+    second.transition.max_pause_ms = 5;
+    second.transition.drain_timeout_ms = 10;
+    en_reconcile_result_t second_result = {0};
+    ASSERT_TRUE(en_controller_submit_intent(controller, &second, &second_result) == EN_ERR_STATE_CONFLICT);
+    ASSERT_TRUE(vpp_mock.graceful_switch_count == 0);
+    ASSERT_STREQ(vpp_mock.active_paths[0], "path-direct");
+    ASSERT_TRUE(second_result.transition_state == EN_TRANSITION_FAILED);
+
     en_controller_destroy(controller);
 }
 
@@ -604,6 +790,102 @@ static void test_repeated_intent_submission_does_not_exhaust_state(void)
     en_controller_destroy(controller);
 }
 
+static en_error_code_t failing_tunnel_remove(void *ctx, const en_tunnel_t *desired, en_tunnel_t *observed)
+{
+    vici_test_state_t *state = ctx;
+    *observed = *desired;
+    state->remove_count++;
+    return state->remove_count == 1 ? EN_ERR_STATE_CONFLICT : EN_ERR_NONE;
+}
+
+static en_error_code_t failing_path_remove(void *ctx, const char *traffic_key, const en_path_t *path)
+{
+    en_vpp_mock_t *mock = ctx;
+    (void)traffic_key; (void)path;
+    mock->remove_count++;
+    return EN_ERR_FORWARDING_UPDATE_FAILED;
+}
+
+static void test_observation_expiry_is_not_refreshed_by_health(void)
+{
+    en_health_probe_mock_t mock = { .max_age_ms = 100, .require_interface_and_route = true };
+    en_path_health_t health = { .last_updated_ms = 100, .state = EN_HEALTH_HEALTHY,
+        .has_route_observation = true, .route_state = EN_HEALTH_HEALTHY,
+        .has_interface_observation = true, .interface_state = EN_HEALTH_HEALTHY };
+    snprintf(health.path_id, sizeof(health.path_id), "%s", "path-direct");
+    en_health_probe_mock_set(&mock, health);
+    health.has_route_observation = false;
+    health.has_interface_observation = false;
+    health.last_updated_ms = 200;
+    en_health_probe_mock_set(&mock, health);
+    ASSERT_TRUE(en_health_probe_mock_expire(&mock, 251));
+    ASSERT_TRUE(mock.overrides[0].state == EN_HEALTH_FAILED);
+    ASSERT_TRUE(mock.overrides[0].last_updated_ms == 200);
+    ASSERT_TRUE(!mock.overrides[0].has_route_observation);
+    ASSERT_TRUE(!en_health_probe_mock_expire(&mock, 252));
+}
+
+static void test_shared_tunnel_and_rollback_cleanup(void)
+{
+    en_path_t paths[EN_MAX_PATHS];
+    size_t path_count = en_initial_demo_paths(paths, EN_MAX_PATHS);
+    en_health_probe_mock_t health = {0};
+    en_vpp_mock_t vpp = {0};
+    vici_test_state_t tunnels = {0};
+    en_strongswan_adapter_t swan = { .ctx = &tunnels, .ensure_tunnel = vici_test_ensure, .remove_tunnel = vici_test_remove };
+    en_controller_t *controller = en_controller_create(paths, path_count, swan, en_vpp_mock_adapter(&vpp), en_health_probe_mock_adapter(&health));
+    ASSERT_TRUE(controller != NULL);
+    en_intent_t first = base_intent(EN_SELECT_EXPLICIT);
+    snprintf(first.path_selection.path_id, sizeof(first.path_selection.path_id), "%s", "path-direct");
+    en_intent_t other = first;
+    snprintf(other.intent_id, sizeof(other.intent_id), "%s", "other-traffic");
+    other.traffic.has_vlan_id = true;
+    other.traffic.vlan_id = 100;
+    en_reconcile_result_t result = {0};
+    ASSERT_TRUE(en_controller_submit_intent(controller, &first, &result) == EN_ERR_NONE);
+    ASSERT_TRUE(en_controller_submit_intent(controller, &other, &result) == EN_ERR_NONE);
+    snprintf(first.path_selection.path_id, sizeof(first.path_selection.path_id), "%s", "path-via-hub");
+    ASSERT_TRUE(en_controller_submit_intent(controller, &first, &result) == EN_ERR_NONE);
+    ASSERT_TRUE(tunnels.remove_count == 0);
+    snprintf(other.path_selection.path_id, sizeof(other.path_selection.path_id), "%s", "path-via-hub");
+    ASSERT_TRUE(en_controller_submit_intent(controller, &other, &result) == EN_ERR_NONE);
+    ASSERT_TRUE(tunnels.remove_count == 1);
+    en_controller_destroy(controller);
+
+    memset(&tunnels, 0, sizeof(tunnels));
+    memset(&vpp, 0, sizeof(vpp));
+    swan.remove_tunnel = failing_tunnel_remove;
+    controller = en_controller_create(paths, path_count, swan, en_vpp_mock_adapter(&vpp), en_health_probe_mock_adapter(&health));
+    ASSERT_TRUE(controller != NULL);
+    snprintf(first.path_selection.path_id, sizeof(first.path_selection.path_id), "%s", "path-direct");
+    ASSERT_TRUE(en_controller_submit_intent(controller, &first, &result) == EN_ERR_NONE);
+    snprintf(first.path_selection.path_id, sizeof(first.path_selection.path_id), "%s", "path-via-hub");
+    vpp.fail_next_update = true;
+    ASSERT_TRUE(en_controller_submit_intent(controller, &first, &result) == EN_ERR_ROLLBACK_FAILED);
+    ASSERT_TRUE(tunnels.remove_count == 2); /* Both cleanup operations attempted. */
+    ASSERT_TRUE(vpp.install_count == 2); /* Old path restored despite cleanup failure. */
+    ASSERT_STREQ(vpp.active_paths[0], "path-direct");
+    ASSERT_TRUE(result.transition_state == EN_TRANSITION_FAILED);
+    snprintf(first.path_selection.path_id, sizeof(first.path_selection.path_id), "%s", "path-direct");
+    ASSERT_TRUE(en_controller_submit_intent(controller, &first, &result) == EN_ERR_NONE);
+    ASSERT_TRUE(vpp.install_count == 3); /* Incomplete rollback cannot skip repair. */
+    en_controller_destroy(controller);
+
+    memset(&vpp, 0, sizeof(vpp));
+    swan.remove_tunnel = vici_test_remove;
+    en_vpp_adapter_t adapter = en_vpp_mock_adapter(&vpp);
+    adapter.remove_path = failing_path_remove;
+    controller = en_controller_create(paths, path_count, swan, adapter, en_health_probe_mock_adapter(&health));
+    ASSERT_TRUE(controller != NULL);
+    ASSERT_TRUE(en_controller_submit_intent(controller, &first, &result) == EN_ERR_NONE);
+    snprintf(first.path_selection.path_id, sizeof(first.path_selection.path_id), "%s", "path-via-hub");
+    vpp.fail_next_update = true;
+    ASSERT_TRUE(en_controller_submit_intent(controller, &first, &result) == EN_ERR_ROLLBACK_FAILED);
+    ASSERT_TRUE(vpp.remove_count == 1 && vpp.install_count == 2);
+    ASSERT_STREQ(vpp.active_paths[0], "path-direct");
+    en_controller_destroy(controller);
+}
+
 static void test_applied_path_can_be_restored(void)
 {
     en_path_t paths[EN_MAX_PATHS];
@@ -625,6 +907,13 @@ static void test_applied_path_can_be_restored(void)
     ASSERT_TRUE(en_controller_restore_applied_path(controller, "site-a->site-b", "path-direct") == EN_ERR_STATE_CONFLICT);
     ((en_path_t *)en_controller_find_path(controller, "path-direct"))->administrative_state = EN_ADMIN_ENABLED;
     ASSERT_TRUE(en_controller_restore_applied_path(controller, "site-a->site-b", "missing") == EN_ERR_NOT_FOUND);
+    en_intent_t intent = base_intent(EN_SELECT_EXPLICIT);
+    snprintf(intent.path_selection.path_id, sizeof(intent.path_selection.path_id), "%s", "path-direct");
+    en_reconcile_result_t result = {0};
+    ASSERT_TRUE(en_controller_submit_intent(controller, &intent, &result) == EN_ERR_NONE);
+    ASSERT_TRUE(vpp_mock.install_count == 1);
+    ASSERT_TRUE(en_controller_submit_intent(controller, &intent, &result) == EN_ERR_NONE);
+    ASSERT_TRUE(vpp_mock.install_count == 1);
     en_controller_destroy(controller);
 }
 
@@ -692,6 +981,57 @@ static void test_renderers_generate_swanctl_and_vppctl(void)
     ASSERT_TRUE(en_render_vpp_route_replace_entry(&unsafe_route, command, sizeof(command)) == EN_ERR_INVALID_ARGUMENT);
     ASSERT_TRUE(en_render_vpp_route_delete_with_tunnel(&path, &tunnel, command, sizeof(command)) == EN_ERR_NONE);
     ASSERT_STREQ(command, "vppctl ip route del 10.0.2.0/24 via 203.0.113.20");
+}
+
+static void test_command_adapter_shared_gre_and_routes(void)
+{
+#if !defined(_WIN32)
+    en_tunnel_t tunnel = {0};
+    snprintf(tunnel.tunnel_id, sizeof(tunnel.tunnel_id), "%s", "shared-gre");
+    snprintf(tunnel.tunnel_type, sizeof(tunnel.tunnel_type), "%s", "gre_over_ipsec");
+    snprintf(tunnel.local_endpoint, sizeof(tunnel.local_endpoint), "%s", "203.0.113.10");
+    snprintf(tunnel.remote_endpoint, sizeof(tunnel.remote_endpoint), "%s", "203.0.113.20");
+    snprintf(tunnel.gre_interface, sizeof(tunnel.gre_interface), "%s", "gre0");
+    snprintf(tunnel.gre_local_address, sizeof(tunnel.gre_local_address), "%s", "10.255.0.1/30");
+    snprintf(tunnel.gre_remote_address, sizeof(tunnel.gre_remote_address), "%s", "10.255.0.2");
+    en_path_t first = {0};
+    snprintf(first.path_id, sizeof(first.path_id), "%s", "first");
+    snprintf(first.egress_tunnel_id, sizeof(first.egress_tunnel_id), "%s", tunnel.tunnel_id);
+    snprintf(first.route_destination_prefix, sizeof(first.route_destination_prefix), "%s", "10.0.2.0/24");
+    en_path_t second = first;
+    snprintf(second.path_id, sizeof(second.path_id), "%s", "second");
+    en_vpp_command_ctx_t context = { .dry_run = true, .tunnels = &tunnel, .tunnel_count = 1 };
+    en_vpp_adapter_t adapter = en_vpp_command_adapter(&context);
+    FILE *output = tmpfile();
+    ASSERT_TRUE(output != NULL);
+    fflush(stdout);
+    int saved = dup(STDOUT_FILENO);
+    ASSERT_TRUE(saved >= 0 && dup2(fileno(output), STDOUT_FILENO) >= 0);
+    ASSERT_TRUE(adapter.install_path(adapter.ctx, "traffic-a", &first) == EN_ERR_NONE);
+    fflush(stdout);
+    long start = ftell(output);
+    ASSERT_TRUE(adapter.install_path(adapter.ctx, "traffic-b", &first) == EN_ERR_NONE);
+    ASSERT_TRUE(adapter.remove_path(adapter.ctx, "traffic-a", &first) == EN_ERR_NONE);
+    ASSERT_TRUE(adapter.install_path(adapter.ctx, "traffic-b", &second) == EN_ERR_NONE);
+    ASSERT_TRUE(adapter.remove_path(adapter.ctx, "traffic-b", &first) == EN_ERR_NONE);
+    fflush(stdout);
+    long end = ftell(output);
+    ASSERT_TRUE(adapter.remove_path(adapter.ctx, "traffic-b", &second) == EN_ERR_NONE);
+    fflush(stdout);
+    ASSERT_TRUE(dup2(saved, STDOUT_FILENO) >= 0);
+    close(saved);
+    char commands[8192] = {0};
+    ASSERT_TRUE(end >= start && (size_t)(end - start) < sizeof(commands));
+    ASSERT_TRUE(fseek(output, start, SEEK_SET) == 0);
+    ASSERT_TRUE(fread(commands, 1, (size_t)(end - start), output) == (size_t)(end - start));
+    ASSERT_TRUE(strstr(commands, "create gre tunnel") == NULL);
+    ASSERT_TRUE(strstr(commands, "ip route del") == NULL);
+    memset(commands, 0, sizeof(commands));
+    ASSERT_TRUE(fread(commands, 1, sizeof(commands) - 1, output) > 0);
+    ASSERT_TRUE(strstr(commands, "ip route del") != NULL);
+    ASSERT_TRUE(strstr(commands, "instance 0 del") != NULL);
+    fclose(output);
+#endif
 }
 
 static void test_renderers_generate_vpp_gre_over_ipsec(void)
@@ -2061,12 +2401,21 @@ static void test_yaml_validation_rejects_unsafe_identifiers(void)
 
 int main(void)
 {
+    test_observation_expiry_is_not_refreshed_by_health();
+    test_command_adapter_shared_gre_and_routes();
+    test_shared_tunnel_and_rollback_cleanup();
     test_priority_selects_first_healthy_path();
+    test_priority_continues_after_failed_candidate();
+    test_configured_fallback_precedes_other_priority_candidates();
     test_evaluated_excludes_failed_path();
     test_failed_forwarding_rolls_back_to_previous_path();
+    test_failed_rollback_is_reported_to_caller();
     test_successful_switch_removes_previous_path();
+    test_transition_results_are_scoped_by_traffic_key();
+    test_transition_results_are_scoped_by_intent_and_traffic();
     test_forwarding_failure_retries_before_rollback();
     test_graceful_switch_drains_previous_path();
+    test_graceful_switch_requires_flow_aware_adapter();
     test_path_selection_thresholds_prevent_flapping();
     test_hold_down_prevents_healthy_path_switch();
     test_evaluated_hysteresis_prevents_small_quality_switch();

@@ -81,7 +81,7 @@ static bool yaml_has_vpp_edge(const en_yaml_config_t *config, const char *node_i
 static bool yaml_has_vpp_edge_interface(const en_yaml_config_t *config, const en_route_t *route);
 static const en_tunnel_t *yaml_find_tunnel(const en_yaml_config_t *config, const char *tunnel_id);
 
-static bool valid_config_token(const char *value)
+static bool config_token_ok(const char *value)
 {
     if (value == NULL || value[0] == '\0') return false;
     for (const unsigned char *cursor = (const unsigned char *)value; *cursor != '\0'; cursor++) {
@@ -164,22 +164,22 @@ en_error_code_t en_yaml_config_validate(const en_yaml_config_t *config, char *er
     }
     for (size_t i = 0; i < config->node_count; i++) {
         const en_node_t *node = &config->nodes[i];
-        if (node->node_id[0] == '\0' || !valid_config_token(node->node_id)) {
+        if (node->node_id[0] == '\0' || !config_token_ok(node->node_id)) {
             set_error(error, error_len, 0, "node requires a valid id");
             return EN_ERR_INVALID_ARGUMENT;
         }
-        if (node->role[0] != '\0' && !valid_config_token(node->role)) {
+        if (node->role[0] != '\0' && !config_token_ok(node->role)) {
             set_error(error, error_len, 0, "node role contains invalid characters");
             return EN_ERR_INVALID_ARGUMENT;
         }
         for (size_t j = 0; j < node->endpoint_count; j++) {
-            if (!valid_config_token(node->endpoints[j])) {
+            if (!config_token_ok(node->endpoints[j])) {
                 set_error(error, error_len, 0, "node endpoint contains invalid characters");
                 return EN_ERR_INVALID_ARGUMENT;
             }
         }
         for (size_t j = 0; j < node->capability_count; j++) {
-            if (!valid_config_token(node->capabilities[j])) {
+            if (!config_token_ok(node->capabilities[j])) {
                 set_error(error, error_len, 0, "node capability contains invalid characters");
                 return EN_ERR_INVALID_ARGUMENT;
             }
@@ -203,7 +203,7 @@ en_error_code_t en_yaml_config_validate(const en_yaml_config_t *config, char *er
             set_error(error, error_len, 0, "tunnel requires id, local_node, and remote_node");
             return EN_ERR_INVALID_ARGUMENT;
         }
-        if (!valid_config_token(tunnel->tunnel_id) || !valid_config_token(tunnel->local_node) || !valid_config_token(tunnel->remote_node)) {
+        if (!config_token_ok(tunnel->tunnel_id) || !config_token_ok(tunnel->local_node) || !config_token_ok(tunnel->remote_node)) {
             set_error(error, error_len, 0, "tunnel identifier contains invalid characters");
             return EN_ERR_INVALID_ARGUMENT;
         }
@@ -216,13 +216,13 @@ en_error_code_t en_yaml_config_validate(const en_yaml_config_t *config, char *er
                 set_error(error, error_len, 0, "gre_over_ipsec tunnel requires gre_interface, gre_local_address, and gre_remote_address");
                 return EN_ERR_INVALID_ARGUMENT;
             }
-            if (!valid_config_token(tunnel->gre_interface) || !valid_config_token(tunnel->gre_local_address) || !valid_config_token(tunnel->gre_remote_address) ||
+            if (!config_token_ok(tunnel->gre_interface) || !config_token_ok(tunnel->gre_local_address) || !config_token_ok(tunnel->gre_remote_address) ||
                 (tunnel->gre_instance < -1 || tunnel->gre_instance > 1048575 || tunnel->gre_mtu < 0 || tunnel->gre_mtu > 65535)) {
                 set_error(error, error_len, 0, "gre_over_ipsec tunnel has invalid GRE settings");
                 return EN_ERR_INVALID_ARGUMENT;
             }
-            if ((tunnel->gre_outer_local_endpoint[0] != '\0' && !valid_config_token(tunnel->gre_outer_local_endpoint)) ||
-                (tunnel->gre_outer_remote_endpoint[0] != '\0' && !valid_config_token(tunnel->gre_outer_remote_endpoint))) {
+            if ((tunnel->gre_outer_local_endpoint[0] != '\0' && !config_token_ok(tunnel->gre_outer_local_endpoint)) ||
+                (tunnel->gre_outer_remote_endpoint[0] != '\0' && !config_token_ok(tunnel->gre_outer_remote_endpoint))) {
                 set_error(error, error_len, 0, "gre_over_ipsec tunnel has invalid outer endpoint");
                 return EN_ERR_INVALID_ARGUMENT;
             }
@@ -239,11 +239,11 @@ en_error_code_t en_yaml_config_validate(const en_yaml_config_t *config, char *er
             set_error(error, error_len, 0, "pubkey tunnel requires local_cert");
             return EN_ERR_INVALID_ARGUMENT;
         }
-        if (tunnel->local_cert[0] != '\0' && !valid_config_token(tunnel->local_cert)) {
+        if (tunnel->local_cert[0] != '\0' && !config_token_ok(tunnel->local_cert)) {
             set_error(error, error_len, 0, "tunnel local_cert contains invalid characters");
             return EN_ERR_INVALID_ARGUMENT;
         }
-        if (tunnel->remote_cacerts[0] != '\0' && !valid_config_token(tunnel->remote_cacerts)) {
+        if (tunnel->remote_cacerts[0] != '\0' && !config_token_ok(tunnel->remote_cacerts)) {
             set_error(error, error_len, 0, "tunnel remote_cacerts contains invalid characters");
             return EN_ERR_INVALID_ARGUMENT;
         }
@@ -264,7 +264,7 @@ en_error_code_t en_yaml_config_validate(const en_yaml_config_t *config, char *er
             set_error(error, error_len, 0, "path requires id, source, and destination");
             return EN_ERR_INVALID_ARGUMENT;
         }
-        if (!valid_config_token(path->path_id) || !valid_config_token(path->source) || !valid_config_token(path->destination) || path->priority == INT_MIN) {
+        if (!config_token_ok(path->path_id) || !config_token_ok(path->source) || !config_token_ok(path->destination) || path->priority == INT_MIN) {
             set_error(error, error_len, 0, "path identifier or priority is invalid");
             return EN_ERR_INVALID_ARGUMENT;
         }
@@ -286,10 +286,10 @@ en_error_code_t en_yaml_config_validate(const en_yaml_config_t *config, char *er
             return EN_ERR_INVALID_ARGUMENT;
         }
         for (size_t j = 0; j < path->segment_count; j++) {
-            if ((path->segments[j].segment_id[0] != '\0' && !valid_config_token(path->segments[j].segment_id)) ||
-                (path->segments[j].from_node[0] != '\0' && !valid_config_token(path->segments[j].from_node)) ||
-                (path->segments[j].to_node[0] != '\0' && !valid_config_token(path->segments[j].to_node)) ||
-                !valid_config_token(path->segments[j].tunnel_id)) {
+            if ((path->segments[j].segment_id[0] != '\0' && !config_token_ok(path->segments[j].segment_id)) ||
+                (path->segments[j].from_node[0] != '\0' && !config_token_ok(path->segments[j].from_node)) ||
+                (path->segments[j].to_node[0] != '\0' && !config_token_ok(path->segments[j].to_node)) ||
+                !config_token_ok(path->segments[j].tunnel_id)) {
                 set_error(error, error_len, 0, "path segment identifier contains invalid characters");
                 return EN_ERR_INVALID_ARGUMENT;
             }
@@ -314,10 +314,10 @@ en_error_code_t en_yaml_config_validate(const en_yaml_config_t *config, char *er
                 set_error(error, error_len, 0, "path route requires destination_prefix");
                 return EN_ERR_INVALID_ARGUMENT;
             }
-            if ((route->route_id[0] != '\0' && !valid_config_token(route->route_id)) ||
-                !valid_config_token(route->node_id) || !valid_config_token(route->destination_prefix) ||
-                !valid_config_token(route->next_hop) ||
-                (route->interface_name[0] != '\0' && !valid_config_token(route->interface_name))) {
+            if ((route->route_id[0] != '\0' && !config_token_ok(route->route_id)) ||
+                !config_token_ok(route->node_id) || !config_token_ok(route->destination_prefix) ||
+                !config_token_ok(route->next_hop) ||
+                (route->interface_name[0] != '\0' && !config_token_ok(route->interface_name))) {
                 set_error(error, error_len, 0, "path route contains invalid characters");
                 return EN_ERR_INVALID_ARGUMENT;
             }
@@ -374,7 +374,7 @@ en_error_code_t en_yaml_config_validate(const en_yaml_config_t *config, char *er
             set_error(error, error_len, 0, "intent requires id");
             return EN_ERR_INVALID_ARGUMENT;
         }
-        if (!valid_config_token(intent->intent_id)) {
+        if (!config_token_ok(intent->intent_id)) {
             set_error(error, error_len, 0, "intent identifier contains invalid characters");
             return EN_ERR_INVALID_ARGUMENT;
         }
@@ -460,7 +460,7 @@ en_error_code_t en_yaml_config_validate(const en_yaml_config_t *config, char *er
             }
         }
         for (size_t j = 0; j < intent->path_selection.constraints.required_capability_count; j++) {
-            if (!valid_config_token(intent->path_selection.constraints.required_capabilities[j])) {
+            if (!config_token_ok(intent->path_selection.constraints.required_capabilities[j])) {
                 set_error(error, error_len, 0, "required capability contains invalid characters");
                 return EN_ERR_INVALID_ARGUMENT;
             }
@@ -475,12 +475,12 @@ en_error_code_t en_yaml_config_validate(const en_yaml_config_t *config, char *er
     for (size_t i = 0; i < config->vpp_edge_count; i++) {
         const en_vpp_edge_t *edge = &config->vpp_edges[i];
         if (edge->node_id[0] == '\0' || edge->vpp_interface[0] == '\0' || edge->next_hop[0] == '\0' ||
-            !valid_config_token(edge->node_id) ||
-            (edge->port_id[0] != '\0' && !valid_config_token(edge->port_id))) {
+            !config_token_ok(edge->node_id) ||
+            (edge->port_id[0] != '\0' && !config_token_ok(edge->port_id))) {
             set_error(error, error_len, 0, "vpp edge requires node_id, vpp_interface, and next_hop");
             return EN_ERR_INVALID_ARGUMENT;
         }
-        if (edge->vpp_socket[0] != '\0' && !valid_config_token(edge->vpp_socket)) {
+        if (edge->vpp_socket[0] != '\0' && !config_token_ok(edge->vpp_socket)) {
             set_error(error, error_len, 0, "vpp edge has invalid vpp_socket");
             return EN_ERR_INVALID_ARGUMENT;
         }

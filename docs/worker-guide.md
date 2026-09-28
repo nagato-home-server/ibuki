@@ -167,7 +167,7 @@ fallback:
   - health probeでpathを検証する。
 - `transition_commit`
   - VPP adapterへforwarding切替を依頼する。
-  - gracefulの場合は短いpause/drainを挟む。
+  - Gracefulはflow-aware drain callbackへ委譲する。現在のcommand/VPP API adapterは未対応のため、既存Pathからの切替は明示的に拒否される。mockはflowが即時に0になるケースだけを模擬する。
 - `transition_confirm`
   - adapterがactive pathを報告できる場合、切替結果を確認する。
 - `rollback`
@@ -176,6 +176,7 @@ fallback:
 現在の注意:
 
 - これはcontroller内部モデルの状態遷移であり、VM上の実IPsec/VPP runtimeは主に生成scriptが担っています。
+- 現在の実VPP adapterにはflow count/pinningに基づくGraceful drainがないため、GracefulのC mockテストを実runtime機能の証拠として扱わないでください。
 
 ### Command rendering / apply plan
 

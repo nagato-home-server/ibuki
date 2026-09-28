@@ -70,7 +70,8 @@ typedef enum {
     EN_TRANSITION_VERIFYING,
     EN_TRANSITION_COMPLETED,
     EN_TRANSITION_ROLLING_BACK,
-    EN_TRANSITION_FAILED
+    EN_TRANSITION_FAILED,
+    EN_TRANSITION_ROLLED_BACK
 } en_transition_state_t;
 
 typedef enum {
@@ -307,10 +308,25 @@ typedef struct {
 } en_selection_result_t;
 
 typedef struct {
+    /* Elapsed wall-independent time per transition phase, in nanoseconds. */
+    unsigned long long decision_ns;
+    unsigned long long prepare_ns;
+    unsigned long long validate_ns;
+    unsigned long long commit_ns;
+    unsigned long long post_validation_ns;
+    unsigned long long rollback_ns;
+    /* Health probes include candidate probes and post-prepare revalidation. */
+    unsigned int health_probe_count;
+    unsigned long long health_probe_ns;
+} en_transition_metrics_t;
+
+typedef struct {
     char intent_id[EN_MAX_ID_LEN];
+    char traffic_key[EN_MAX_TRAFFIC_KEY_LEN];
     char selected_path[EN_MAX_ID_LEN];
     en_transition_state_t transition_state;
     en_selection_result_t explanation;
+    en_transition_metrics_t metrics;
 } en_reconcile_result_t;
 
 size_t en_path_hop_count(const en_path_t *path);

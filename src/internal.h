@@ -4,6 +4,12 @@
 #include "eventnet/controller.h"
 
 typedef struct {
+    char traffic_key[EN_MAX_TRAFFIC_KEY_LEN];
+    char intent_id[EN_MAX_ID_LEN];
+    en_transition_state_t state;
+} en_transition_status_t;
+
+typedef struct {
     en_node_t nodes[EN_MAX_NODES];
     size_t node_count;
     en_path_t paths[EN_MAX_PATHS];
@@ -19,8 +25,10 @@ typedef struct {
     char traffic_keys[EN_MAX_CANDIDATES][EN_MAX_TRAFFIC_KEY_LEN];
     char applied_paths[EN_MAX_CANDIDATES][EN_MAX_ID_LEN];
     long long applied_since_ms[EN_MAX_CANDIDATES];
+    bool applied_verified[EN_MAX_CANDIDATES];
     size_t applied_count;
-    en_transition_state_t transition_state;
+    en_transition_status_t transition_statuses[EN_MAX_CANDIDATES];
+    size_t transition_status_count;
     en_error_t errors[EN_MAX_ERRORS];
     size_t error_count;
 } en_controller_state_t;
@@ -35,8 +43,11 @@ struct en_controller {
 };
 
 long long en_now_ms(void);
+unsigned long long en_monotonic_ns(void);
 void en_copy_id(char *dst, size_t dst_len, const char *src);
 bool en_streq(const char *left, const char *right);
+bool en_transition_status_update(en_controller_t *controller, const char *traffic_key, const char *intent_id, en_transition_state_t state);
+bool en_transition_status_get(const en_controller_t *controller, const char *traffic_key, const char *intent_id, en_transition_state_t *state);
 void en_audit_append(en_controller_t *controller, const char *event_type, const char *message, const char *ref_id);
 void en_error_append(en_controller_t *controller, en_error_code_t code, const char *message);
 en_path_t *en_find_path(en_controller_t *controller, const char *path_id);
@@ -47,7 +58,10 @@ const en_node_t *en_find_node(const en_controller_t *controller, const char *nod
 const char *en_get_applied_path(en_controller_t *controller, const char *traffic_key);
 long long en_get_applied_since_ms(en_controller_t *controller, const char *traffic_key);
 void en_set_applied_path(en_controller_t *controller, const char *traffic_key, const char *path_id);
+bool en_applied_path_verified(en_controller_t *controller, const char *traffic_key);
+void en_invalidate_applied_path(en_controller_t *controller, const char *traffic_key);
+void en_clear_applied_path(en_controller_t *controller, const char *traffic_key);
 en_error_code_t en_select_path(en_controller_t *controller, const en_intent_t *intent, en_selection_result_t *result);
-en_error_code_t en_transition_path(en_controller_t *controller, const en_intent_t *intent, en_path_t *target_path);
+en_error_code_t en_transition_path(en_controller_t *controller, const en_intent_t *intent, en_path_t *target_path, en_transition_metrics_t *metrics);
 
 #endif

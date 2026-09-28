@@ -84,10 +84,10 @@ VLAN IDを持つIntentでは、親interface名だけのeventは不十分です�
 `eventnetd --status-jsonl`が出力する判断結果です。
 
 ```json
-{"schema":"ibuki.status.v1","timestamp_ms":1720000000000,"intent_id":"intent-a-b","selected_path":"path-via-hub","transition_state":"completed","reason":"active path path-direct failed; using fallback path-via-hub","excluded":[{"path_id":"path-direct","reason":"active path failed event"}]}
+{"schema":"ibuki.status.v1","timestamp_ms":1720000000000,"intent_id":"intent-a-b","traffic_key":"site-a->site-b","selected_path":"path-via-hub","transition_state":"completed","reason":"active path path-direct failed; using configured fallback path-via-hub","metrics_ns":{"decision":120000,"prepare":340000,"validate":180000,"commit":90000,"post_validation":45000,"rollback":0,"health_probe_count":3,"health_probe":110000},"excluded":[{"path_id":"path-direct","reason":"active path failed event"}]}
 ```
 
-statusは入力ではなく、Controllerの判断を再現・集計するための出力です。`excluded`には候補から除外したPathと理由を含みます。文字列値はJSON escapeされます。
+statusは入力ではなく、Controllerの判断を再現・集計するための出力です。`intent_id`と`traffic_key`で判断対象を特定します。`excluded`には候補から除外したPathと理由を含みます。`metrics_ns`は各phaseとhealth probeの所要時間をnanosecondで出力し、probe countは候補観測と準備後再検証の合計です。文字列値はJSON escapeされます。
 
 ## 7. Validation policy
 

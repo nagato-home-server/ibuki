@@ -10,7 +10,7 @@
 
 namespace v2では、strongSwan/XFRM backendのVPP GRE over IPsecと、比較用VPP Native IPIP/IPsec backendの双方について、双方向LAN疎通、暗号化・復号counter増加、停止後残留なし、再適用をGitHub Actionsで確認しました。成功実行はそれぞれ[36022032962](https://github.com/nagato-home-server/ibuki/actions/runs/36022032962)と[36022029474](https://github.com/nagato-home-server/ibuki/actions/runs/36022029474)です。Native構成はGREではなく、静的SA・鍵を用いたIPIP + `ipsec tunnel protect`であり、本番Backend完成とは扱いません。
 
-ここからの論文提出上の必須作業は、同一条件の反復測定、切替工程別時間と通信影響・resource使用量の取得、提出対象commitへ紐付く統合成果物の保存、図表生成、本文とPDFの仕上げです。VPP NativeのIKE／鍵更新／SA同期、VPP Binary APIの版依存codec、strongSwanのrekey／DPD運用、FRR／BGP／OSPF、VTI比較、HA、Flow Preserve、実trunk分離、GUIは未踏期間以降の拡張とします。Gracefulは制御ロジック済みですが実runtimeの定量評価が残っています。
+ここからの論文提出上の必須作業は、同一条件の反復測定、切替工程別時間と通信影響・resource使用量の取得、提出対象commitへ紐付く統合成果物の保存、図表生成、本文とPDFの仕上げです。VPP NativeのIKE／鍵更新／SA同期、VPP Binary APIの版依存codec、strongSwanのrekey／DPD運用、FRR／BGP／OSPF、VTI比較、HA、Flow Preserve、実trunk分離、GUIは未踏期間以降の拡張とします。Gracefulはflow-aware adapter契約とmock経路までで、実backendによるflow drainもruntime定量評価も未完了です。
 
 ## 1. プロジェクト概要
 
@@ -466,7 +466,7 @@ VPP edgeを含む経路はVPP-only runtimeとして生成でき、選択・統�
 
 ### 8.5 Graceful Transitionの範囲
 
-Gracefulでは、旧Pathをdraining状態にして短いpause/drain期間を設け、新Pathへのforwarding切替後に旧Pathのrouteと専用tunnelを撤去します。切替失敗時は既存rollbackへ戻ります。TCPフローの識別・保持を行うFlow Preserveや、Gracefulの通信影響を定量測定する評価は未実装です。
+Gracefulはcontrollerからflow-aware adapter callbackを呼ぶ契約まで実装していますが、現行command/VPP API adapterにはflow数観測・既存flow pinning・drain完了判定がありません。そのため実backendで既存PathからのGraceful切替はfail-closedで拒否します。mock callbackは既存flowが即時に0になるモデルであり、旧Pathをdrainingして実通信を保った証拠ではありません。Flow PreserveとGracefulの通信影響の定量評価も未実装です。
 
 ### 8.6 GRE over IPsecとVPP Native比較Backendの現在地
 

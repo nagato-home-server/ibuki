@@ -317,19 +317,19 @@ en_error_code_t en_apply_plan_write_swanctl_conf(
     if (lstat(filename, &existing_stat) == 0 && S_ISLNK(existing_stat.st_mode)) {
         return EN_ERR_STATE_CONFLICT;
     }
-    char temporary_filename[512] = {0};
-    if (snprintf(temporary_filename, sizeof(temporary_filename), "%s.tmp-plan-%ld", filename, (long)getpid()) >= (int)sizeof(temporary_filename)) {
+    char temp_file[512] = {0};
+    if (snprintf(temp_file, sizeof(temp_file), "%s.tmp-plan-%ld", filename, (long)getpid()) >= (int)sizeof(temp_file)) {
         return EN_ERR_INVALID_ARGUMENT;
     }
-    int file_descriptor = open(temporary_filename, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0600);
+    int file_descriptor = open(temp_file, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0600);
     FILE *file = file_descriptor < 0 ? NULL : fdopen(file_descriptor, "w");
     if (file == NULL && file_descriptor >= 0) {
         close(file_descriptor);
-        unlink(temporary_filename);
+        unlink(temp_file);
     }
     if (file != NULL && fchmod(file_descriptor, 0600) != 0) {
         fclose(file);
-        unlink(temporary_filename);
+        unlink(temp_file);
         return EN_ERR_STATE_CONFLICT;
     }
 #endif
@@ -340,13 +340,13 @@ en_error_code_t en_apply_plan_write_swanctl_conf(
     int close_status = fclose(file);
     if (write_status == EOF || close_status != 0) {
 #if !defined(_WIN32)
-        unlink(temporary_filename);
+        unlink(temp_file);
 #endif
         return EN_ERR_STATE_CONFLICT;
     }
 #if !defined(_WIN32)
-    if (rename(temporary_filename, filename) != 0) {
-        unlink(temporary_filename);
+    if (rename(temp_file, filename) != 0) {
+        unlink(temp_file);
         return EN_ERR_STATE_CONFLICT;
     }
 #endif

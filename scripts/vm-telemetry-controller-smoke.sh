@@ -15,6 +15,8 @@ if [ ! -x "$BUILD_DIR/eventnet_agent" ] || [ ! -x "$BUILD_DIR/eventnetd" ]; then
   --status-jsonl "$OUT_DIR/direct-status.jsonl" > "$OUT_DIR/direct.log"
 grep -q 'selected_path: path-direct' "$OUT_DIR/direct.log"
 grep -q '"schema":"ibuki.status.v1"' "$OUT_DIR/direct-status.jsonl"
+grep -q '"metrics_ns"' "$OUT_DIR/direct-status.jsonl"
+grep -q '"health_probe_count":' "$OUT_DIR/direct-status.jsonl"
 if [ "$(uname -s)" = "Linux" ]; then
   telemetry_target="$OUT_DIR/telemetry-target.jsonl"
   telemetry_link="$OUT_DIR/telemetry-link.jsonl"

@@ -8,17 +8,24 @@
 
 論文作成開始時点では、新しい機能を広げるよりも、現在のPrototypeの入力・判断・出力を固定する。YAMLでは`failure_threshold`、`recovery_threshold`、`hold_down_ms`、`hysteresis_percent`をユーザが変更できるようにし、Controllerが値を検証してPath Selectionへ渡す。Agentは閾値を判断せず、RTT、Packet Loss、Jitter、連続成功・失敗回数をtelemetryとして出力する。これにより、同じ実測値へ異なるPolicyを適用した比較実験が可能になる。
 
-この段階で完成させる範囲は、Direct／Hub／RelayのYAML route表現、Explicit／Priority／Evaluated selection、Failure／Recovery、Immediate／Gracefulの状態遷移、rollback、eventnetdの周期入力・socket入力・設定reload・state復元、strongSwan IPsec、VPP CLIのroute／VLAN／VRF／FIB反映、Explain JSONL、評価manifestである。VICIとVPP Binary APIは接続境界を維持し、対象SDK版に依存する具体codecは未完成として明示する。
+この段階で完成させる範囲は、Direct／Hub／RelayのYAML route表現、Explicit／Priority／Evaluated selection、Failure／Recovery、Immediateの状態遷移、rollback、eventnetdの周期入力・socket入力・設定reload・state復元、strongSwan IPsec、VPP CLIのroute／VLAN／VRF／FIB反映、Explain JSONL、評価manifestである。Gracefulはflow-aware adapter hookとmock制御のみで、実VPP backendによるdrainは未実装・未検証として扱う。VICIとVPP Binary APIは接続境界を維持し、対象SDK版に依存する具体codecは未完成として明示する。
 
 論文用の合格条件は、Linux VMで同一YAMLと同一telemetryから同じPath選択結果を得られること、Direct障害時にHubまたはRelayへ切り替えられること、ESP counterとVPP forwardingを確認できること、設定変更・不正設定・古いtelemetryを評価できることである。評価結果は`pass`、`partial`、`skip`、`fail`を混同せず、実験環境と作業ツリーの情報を保存する。
 
 ### 2026-09-25進捗
 
-- 制御層: CTest 27件がpassし、Path選択、failure/recovery、設定検証、telemetry、Graceful/rollbackの制御ロジックまで実装済み。
+- 制御層: CTest 27件がpassし、Path選択、failure/recovery、設定検証、telemetry、rollbackの制御ロジックを確認済み。Gracefulはmockのflow-aware hookまでで、実backend drainは未完了。
 - 実データパス: strongSwan/XFRM + VPP GREと、比較用VPP Native IPIP/IPsecで双方向疎通、暗号counter、cleanup、再適用を確認済み。
 - 論文本文: 章立てと初期結果は記述済み。旧評価値を現在参照できる証拠へ置き換えた。
 - 完了: 提出commit `253901f` でLinux Release build・CTest 27/27、root不要validation 12件、Windows build/CTestが成功。root不要成果は`out/paper-final-253901f/`に保存。
 - 未完了: root/VPP runtimeの同一commit再実行、反復した定量測定、工程別時間、最大通信断、RTT/reordering/TCP retransmission、CPU/メモリ、図表生成、PDF校正。
+
+### 2026-09-28状態遷移の品質・計測更新
+
+- Rollback失敗を呼び出し元へ返し、Intent／traffic pairごとにtransition stateと完了／rollback結果を保持するようにした。configured fallbackをactive Path障害時にController coreから選ぶ回帰も追加した。
+- 初回Priority選択では候補を順番に観測し、最初の使用可能Pathで止める。active Pathがあるfallback/recoveryとEvaluatedは候補観測を維持し、prepare後の再検証は省略しない。
+- `eventnetd` status JSONLにDecision／Prepare／Validate／Commit／Post Validation／Rollbackのnanosecond値とhealth probe数・時間が出る。抽出scriptで反復CSVへ変換できる。mockでの5回probe数は3候補時4回から2回に減ったが、これは制御層のmicrobenchmarkで、実backend・データパスの論文性能値ではない。
+- root不要CTestは29/29 pass。Gracefulの実flow drain、同一条件でのruntime反復、最大通信断・RTT／reordering／TCP retransmission・CPU／memory、提出対象commit上のLinux／Windows再現、図表とPDF校正は引き続き未完了。
 
 したがって、現在の主な不足は新しいBackendの追加ではなく、既存機能を同一条件で測って論文の主張へ結び付ける評価工程である。
 

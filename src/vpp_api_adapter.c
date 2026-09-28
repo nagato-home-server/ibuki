@@ -4,7 +4,7 @@
 #include <string.h>
 #include <ctype.h>
 
-static bool valid_observation_token(const char *value)
+static bool obs_token_ok(const char *value)
 {
     if (value == NULL || value[0] == '\0') return false;
     for (const unsigned char *cursor = (const unsigned char *)value; *cursor != '\0'; cursor++) {
@@ -107,10 +107,10 @@ static bool edge_matches_route(const en_vpp_edge_t *edge, const en_route_t *rout
 static bool valid_route_operation(const en_route_t *route)
 {
     return route != NULL && route->destination_prefix[0] != '\0' && route->next_hop[0] != '\0' &&
-        (route->route_id[0] == '\0' || valid_observation_token(route->route_id)) &&
-        (route->node_id[0] == '\0' || valid_observation_token(route->node_id)) &&
-        valid_observation_token(route->destination_prefix) && valid_observation_token(route->next_hop) &&
-        (route->interface_name[0] == '\0' || valid_observation_token(route->interface_name)) && route->table_id >= -1;
+        (route->route_id[0] == '\0' || obs_token_ok(route->route_id)) &&
+        (route->node_id[0] == '\0' || obs_token_ok(route->node_id)) &&
+        obs_token_ok(route->destination_prefix) && obs_token_ok(route->next_hop) &&
+        (route->interface_name[0] == '\0' || obs_token_ok(route->interface_name)) && route->table_id >= -1;
 }
 
 static void rollback_install(
@@ -282,9 +282,9 @@ en_error_code_t en_vpp_api_observe_route(en_vpp_api_ctx_t *ctx, const char *dest
     en_error_code_t err = ctx->observe_route(ctx->ctx, destination_prefix, observation);
     if (err != EN_ERR_NONE) return err;
     if (observation->destination_prefix[0] == '\0' || strcmp(observation->destination_prefix, destination_prefix) != 0 ||
-        !valid_observation_token(observation->destination_prefix) || observation->table_id < -1 ||
-        (observation->present && (!valid_observation_token(observation->next_hop) ||
-            (observation->interface_name[0] != '\0' && !valid_observation_token(observation->interface_name))))) {
+        !obs_token_ok(observation->destination_prefix) || observation->table_id < -1 ||
+        (observation->present && (!obs_token_ok(observation->next_hop) ||
+            (observation->interface_name[0] != '\0' && !obs_token_ok(observation->interface_name))))) {
         return EN_ERR_STATE_CONFLICT;
     }
     return EN_ERR_NONE;
@@ -293,11 +293,11 @@ en_error_code_t en_vpp_api_observe_route(en_vpp_api_ctx_t *ctx, const char *dest
 en_error_code_t en_vpp_api_observe_interface(en_vpp_api_ctx_t *ctx, const char *interface_name, en_vpp_interface_observation_t *observation)
 {
     if (ctx == NULL || ctx->observe_interface == NULL || interface_name == NULL || interface_name[0] == '\0' ||
-        !valid_observation_token(interface_name) || observation == NULL) return EN_ERR_INVALID_ARGUMENT;
+        !obs_token_ok(interface_name) || observation == NULL) return EN_ERR_INVALID_ARGUMENT;
     en_error_code_t err = ctx->observe_interface(ctx->ctx, interface_name, observation);
     if (err != EN_ERR_NONE) return err;
     if (observation->interface_name[0] == '\0' || strcmp(observation->interface_name, interface_name) != 0 ||
-        !valid_observation_token(observation->interface_name)) return EN_ERR_STATE_CONFLICT;
+        !obs_token_ok(observation->interface_name)) return EN_ERR_STATE_CONFLICT;
     return EN_ERR_NONE;
 }
 

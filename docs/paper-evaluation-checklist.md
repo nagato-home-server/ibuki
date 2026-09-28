@@ -32,9 +32,14 @@ VPP_PREFIX=/opt/vpp EVENTNET_ENABLE_VPP_API=ON sh scripts/vm-build.sh
 
 ## 2. 制御ロジック
 
+追加の回帰境界として、Linuxでは`ctest --test-dir build -R 'eventnet_telemetry_liveness|eventnet_paper_metric_validation|eventnet_tests' --output-on-failure`を実行する。無通知でのtelemetry失効、不正・過長socket行、受信途中のtimeout、parallel接続待ちtimeout、共有IPsecトンネル保護、削除失敗時にも旧経路を復元するRollback、保存stateの再適用を確認する。mock/command境界のテストであり、実backendでの障害注入試験の代替にはしない。
+
+`eventnetd --socket-timeout-ms N`は通常socketの接続待ち・完成行待ちの期限（既定30000 ms）。`--socket-accept-count 0`の常駐モードは接続待ちのtimeoutで終了せず、受信timeoutの接続を閉じて再受付する。不正JSONと過長行はその行を拒否する。Linuxのstreamでは`--max-age-ms`に基づき入力がなくても再評価する（0はreplay用の失効無効化）。Windowsの標準入力は引き続き同期読み取りで、無通知timerの対象外である。
+
 | 評価 | 実行 | 合格条件 |
 | --- | --- | --- |
 | Path選択 | `sh scripts/vm-evaluate.sh scenario samples/linux-vm-netns.yaml` | priority、failure fallback、evaluated、multi-step recoveryがpass |
+| Controller fallback replay | `ctest --test-dir build -R eventnet_controller_fallback_replay --output-on-failure` | Direct active failureでYAML指定Hub fallbackが他のhealthy priority candidateより優先され、status JSONLに結果とprobe計測が出る |
 | Agent telemetry | `sh scripts/vm-evaluate.sh telemetry samples/linux-vm-netns.yaml` | JSONL、stdin、socket、freshness、statusがpass |
 | Status output security | `sh scripts/vm-eventnetd-status-security-smoke.sh samples/linux-vm-netns.yaml` | status JSONLの通常出力、symlink拒否、危険権限拒否がpass |
 | 周期評価 | `LONG_COUNT=10 sh scripts/vm-evaluate.sh telemetry-long samples/linux-vm-netns.yaml` | 指定回数のreconcileとstate更新がpass |
@@ -145,6 +150,8 @@ ctest --test-dir build --output-on-failure -R 'eventnet_state_wrong_(intent|path
 
 ## 7. 論文執筆へ移る判定
 
+`vm-paper-collect-metrics.sh`の現在の出力は`out/runtime-smoke-metrics.csv`である。`smoke_duration_ms`を切替時間として扱わず、`generate-paper-graphs.py --metrics-csv`には連続通信と実障害注入から得た正式CSVだけを渡す。以下の履歴にある旧collectorの`transition_ms`はruntime smoke全体時間を指す。
+
 提出前に必要な成果物の一覧とPythonによる図生成方法は、`docs/paper-submission-minimum.md`に集約する。評価CSVから図を生成する例は次のとおりである。
 
 ```sh
@@ -164,7 +171,7 @@ root不要範囲で確認する項目は、C単体、全Path選択方式、route
 
 rootが必要なruntimeはnamespace v2 workflowでstrongSwan/XFRM GREとVPP Native IPsec/IPIPの両方を実行します。2026-09-25のcommit `69d8d9b`で双方向疎通、ESP counter、再適用、停止後残留確認が成功し、生成planとping/counterを含むjob logをActions artifactへ保存しました。[namespace runtime実行](https://github.com/nagato-home-server/ibuki/actions/runs/36107566451)。未完了の定量反復はroot runtime利用可能なUbuntu runnerで行い、CSVとログを保存します。
 
-2026-09-25にArch上のcommit `2a99f2d` ReleaseバイナリでPriority、Evaluated、direct/fallback/recoveryのplan生成を各5回実行した。平均CLIプロセス時間はそれぞれ25.8 ms、29.6 ms、47.2 ms、29.4 ms、58.2 ms。これらは制御系の初期測定で、実データパス切替時間ではない。Immediate/GracefulはCテストによる機能確認のみで個別反復値がなく、残りのruntime反復と通信・resource指標は引き続き未完了。
+2026-09-25にArch上のcommit `2a99f2d` ReleaseバイナリでPriority、Evaluated、direct/fallback/recoveryのplan生成を各5回実行した。記録された平均CLIプロセス時間はそれぞれ25.8 ms、29.6 ms、47.2 ms、29.4 ms、58.2 ms。Fallbackの5回の生値（28, 27, 27, 31, 34 ms）からの算術平均は29.4 msだが、`vm-evaluate.sh`のsummaryは整数除算により29 msとなる。これらは制御系の初期測定で、実データパス切替時間ではない。反復ごとの永続ログを確認できるのはFallbackのみであり、他4ケースは論文採用前にCSVへ保存して再測定する。Immediate/GracefulはCテストによる機能確認のみで個別反復値がなく、runtime反復と通信・resource指標も引き続き未完了。Controller結果と`eventnetd` status JSONLには現在phase計測欄があるが、既存のroot runtime metrics collectorはsmoke全体時間しか保存しないため、実runtime反復でphase値を保存する接続は未完了である。Graceful mockはzero-flow callbackに限られ、実backend drainの計測対象にはできない。
 
 ```sh
 sudo BUILD_DIR=build-paper-baseline RUN_RUNTIME=1 sh scripts/vm-paper-validation.sh samples/linux-vm-netns.yaml

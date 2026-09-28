@@ -4,7 +4,7 @@
 #include <ctype.h>
 #include <string.h>
 
-static int valid_command_token(const char *value)
+static int command_token_ok(const char *value)
 {
     if (value == NULL || value[0] == '\0') return 0;
     for (const unsigned char *cursor = (const unsigned char *)value; *cursor != '\0'; cursor++) {
@@ -16,11 +16,11 @@ static int valid_command_token(const char *value)
 static int valid_gre_tunnel(const en_tunnel_t *tunnel)
 {
     return tunnel != NULL && strcmp(tunnel->tunnel_type, "gre_over_ipsec") == 0 &&
-        valid_command_token(tunnel->local_endpoint) && valid_command_token(tunnel->remote_endpoint) &&
-        (tunnel->gre_outer_local_endpoint[0] == '\0' || valid_command_token(tunnel->gre_outer_local_endpoint)) &&
-        (tunnel->gre_outer_remote_endpoint[0] == '\0' || valid_command_token(tunnel->gre_outer_remote_endpoint)) &&
-        valid_command_token(tunnel->gre_interface) && valid_command_token(tunnel->gre_local_address) &&
-        valid_command_token(tunnel->gre_remote_address) && tunnel->gre_instance >= -1 && tunnel->gre_instance <= 1048575 &&
+        command_token_ok(tunnel->local_endpoint) && command_token_ok(tunnel->remote_endpoint) &&
+        (tunnel->gre_outer_local_endpoint[0] == '\0' || command_token_ok(tunnel->gre_outer_local_endpoint)) &&
+        (tunnel->gre_outer_remote_endpoint[0] == '\0' || command_token_ok(tunnel->gre_outer_remote_endpoint)) &&
+        command_token_ok(tunnel->gre_interface) && command_token_ok(tunnel->gre_local_address) &&
+        command_token_ok(tunnel->gre_remote_address) && tunnel->gre_instance >= -1 && tunnel->gre_instance <= 1048575 &&
         tunnel->gre_mtu >= 0 && tunnel->gre_mtu <= 65535;
 }
 
@@ -45,10 +45,10 @@ en_error_code_t en_render_swanctl_initiate_uri(
     size_t buf_len
 )
 {
-    if (tunnel == NULL || buf == NULL || buf_len == 0 || tunnel->tunnel_id[0] == '\0' || !valid_command_token(tunnel->tunnel_id)) {
+    if (tunnel == NULL || buf == NULL || buf_len == 0 || tunnel->tunnel_id[0] == '\0' || !command_token_ok(tunnel->tunnel_id)) {
         return EN_ERR_INVALID_ARGUMENT;
     }
-    if (uri != NULL && uri[0] != '\0' && !valid_command_token(uri)) return EN_ERR_INVALID_ARGUMENT;
+    if (uri != NULL && uri[0] != '\0' && !command_token_ok(uri)) return EN_ERR_INVALID_ARGUMENT;
     if (uri == NULL || uri[0] == '\0') {
         FORMAT_COMMAND(buf, buf_len, "swanctl --initiate --child %s", tunnel->tunnel_id);
     } else {
@@ -73,10 +73,10 @@ en_error_code_t en_render_swanctl_terminate_uri(
     size_t buf_len
 )
 {
-    if (tunnel == NULL || buf == NULL || buf_len == 0 || tunnel->tunnel_id[0] == '\0' || !valid_command_token(tunnel->tunnel_id)) {
+    if (tunnel == NULL || buf == NULL || buf_len == 0 || tunnel->tunnel_id[0] == '\0' || !command_token_ok(tunnel->tunnel_id)) {
         return EN_ERR_INVALID_ARGUMENT;
     }
-    if (uri != NULL && uri[0] != '\0' && !valid_command_token(uri)) return EN_ERR_INVALID_ARGUMENT;
+    if (uri != NULL && uri[0] != '\0' && !command_token_ok(uri)) return EN_ERR_INVALID_ARGUMENT;
     if (uri == NULL || uri[0] == '\0') {
         FORMAT_COMMAND(buf, buf_len, "swanctl --terminate --child %s", tunnel->tunnel_id);
     } else {
@@ -92,13 +92,13 @@ en_error_code_t en_render_swanctl_conf(
 )
 {
     if (tunnel == NULL || buf == NULL || buf_len == 0 || tunnel->tunnel_id[0] == '\0' ||
-        !valid_command_token(tunnel->tunnel_id) || !valid_command_token(tunnel->local_endpoint) ||
-        !valid_command_token(tunnel->remote_endpoint)) {
+        !command_token_ok(tunnel->tunnel_id) || !command_token_ok(tunnel->local_endpoint) ||
+        !command_token_ok(tunnel->remote_endpoint)) {
         return EN_ERR_INVALID_ARGUMENT;
     }
     const bool gre_over_ipsec = strcmp(tunnel->tunnel_type, "gre_over_ipsec") == 0;
-    if ((!gre_over_ipsec && (!valid_command_token(tunnel->local_traffic_selector) || !valid_command_token(tunnel->remote_traffic_selector))) ||
-        (gre_over_ipsec && (!valid_command_token(tunnel->gre_interface) || !valid_command_token(tunnel->gre_local_address) || !valid_command_token(tunnel->gre_remote_address)))) return EN_ERR_INVALID_ARGUMENT;
+    if ((!gre_over_ipsec && (!command_token_ok(tunnel->local_traffic_selector) || !command_token_ok(tunnel->remote_traffic_selector))) ||
+        (gre_over_ipsec && (!command_token_ok(tunnel->gre_interface) || !command_token_ok(tunnel->gre_local_address) || !command_token_ok(tunnel->gre_remote_address)))) return EN_ERR_INVALID_ARGUMENT;
     char local_ts_buffer[EN_MAX_ID_LEN + 16] = {0};
     char remote_ts_buffer[EN_MAX_ID_LEN + 16] = {0};
     const char *local_ts = tunnel->local_traffic_selector;
@@ -146,8 +146,8 @@ en_error_code_t en_render_swanctl_list_sas_uri(
     size_t buf_len
 )
 {
-    if (tunnel == NULL || buf == NULL || buf_len == 0 || tunnel->tunnel_id[0] == '\0' || !valid_command_token(tunnel->tunnel_id)) return EN_ERR_INVALID_ARGUMENT;
-    if (uri != NULL && uri[0] != '\0' && !valid_command_token(uri)) return EN_ERR_INVALID_ARGUMENT;
+    if (tunnel == NULL || buf == NULL || buf_len == 0 || tunnel->tunnel_id[0] == '\0' || !command_token_ok(tunnel->tunnel_id)) return EN_ERR_INVALID_ARGUMENT;
+    if (uri != NULL && uri[0] != '\0' && !command_token_ok(uri)) return EN_ERR_INVALID_ARGUMENT;
     if (uri == NULL || uri[0] == '\0') {
         FORMAT_COMMAND(buf, buf_len, "swanctl --list-sas --child %s", tunnel->tunnel_id);
     } else {
@@ -163,10 +163,10 @@ en_error_code_t en_render_swanctl_load_conns_uri(
     size_t buf_len
 )
 {
-    if (filename == NULL || filename[0] == '\0' || buf == NULL || buf_len == 0 || !valid_command_token(filename)) {
+    if (filename == NULL || filename[0] == '\0' || buf == NULL || buf_len == 0 || !command_token_ok(filename)) {
         return EN_ERR_INVALID_ARGUMENT;
     }
-    if (uri != NULL && uri[0] != '\0' && !valid_command_token(uri)) return EN_ERR_INVALID_ARGUMENT;
+    if (uri != NULL && uri[0] != '\0' && !command_token_ok(uri)) return EN_ERR_INVALID_ARGUMENT;
     if (uri == NULL || uri[0] == '\0') FORMAT_COMMAND(buf, buf_len, "swanctl --load-conns --file %s", filename);
     else FORMAT_COMMAND(buf, buf_len, "swanctl --uri %s --load-conns --file %s", uri, filename);
     return EN_ERR_NONE;
@@ -201,8 +201,8 @@ en_error_code_t en_render_vpp_route_replace_entry(
         return EN_ERR_INVALID_ARGUMENT;
     }
     if (route->destination_prefix[0] == '\0' || route->next_hop[0] == '\0' ||
-        !valid_command_token(route->destination_prefix) || !valid_command_token(route->next_hop) ||
-        (route->interface_name[0] != '\0' && !valid_command_token(route->interface_name))) {
+        !command_token_ok(route->destination_prefix) || !command_token_ok(route->next_hop) ||
+        (route->interface_name[0] != '\0' && !command_token_ok(route->interface_name))) {
         return EN_ERR_INVALID_ARGUMENT;
     }
 
@@ -263,7 +263,7 @@ en_error_code_t en_render_vpp_route_delete(
 )
 {
     if (path == NULL || buf == NULL || buf_len == 0 || path->route_destination_prefix[0] == '\0' ||
-        !valid_command_token(path->route_destination_prefix)) {
+        !command_token_ok(path->route_destination_prefix)) {
         return EN_ERR_INVALID_ARGUMENT;
     }
     FORMAT_COMMAND(buf, buf_len, "vppctl ip route del %s", path->route_destination_prefix);
@@ -293,9 +293,9 @@ en_error_code_t en_render_vpp_route_delete_entry(
 )
 {
     if (route == NULL || buf == NULL || buf_len == 0 || route->destination_prefix[0] == '\0' ||
-        !valid_command_token(route->destination_prefix) ||
-        (route->next_hop[0] != '\0' && !valid_command_token(route->next_hop)) ||
-        (route->interface_name[0] != '\0' && !valid_command_token(route->interface_name))) {
+        !command_token_ok(route->destination_prefix) ||
+        (route->next_hop[0] != '\0' && !command_token_ok(route->next_hop)) ||
+        (route->interface_name[0] != '\0' && !command_token_ok(route->interface_name))) {
         return EN_ERR_INVALID_ARGUMENT;
     }
     const char *interface_name = route->interface_name;
@@ -361,7 +361,7 @@ en_error_code_t en_render_vpp_gre_set_up(const en_tunnel_t *tunnel, char *buf, s
 en_error_code_t en_render_vpp_gre_route_replace(const en_path_t *path, const en_tunnel_t *tunnel, char *buf, size_t buf_len)
 {
     if (!valid_gre_tunnel(tunnel) || path == NULL || buf == NULL || buf_len == 0 || path->route_destination_prefix[0] == '\0' ||
-        !valid_command_token(path->route_destination_prefix)) return EN_ERR_INVALID_ARGUMENT;
+        !command_token_ok(path->route_destination_prefix)) return EN_ERR_INVALID_ARGUMENT;
     FORMAT_COMMAND(buf, buf_len, "vppctl ip route add %s via %s %s", path->route_destination_prefix, tunnel->gre_remote_address, tunnel->gre_interface);
     return EN_ERR_NONE;
 }
@@ -369,7 +369,7 @@ en_error_code_t en_render_vpp_gre_route_replace(const en_path_t *path, const en_
 en_error_code_t en_render_vpp_gre_route_delete(const en_path_t *path, const en_tunnel_t *tunnel, char *buf, size_t buf_len)
 {
     if (!valid_gre_tunnel(tunnel) || path == NULL || buf == NULL || buf_len == 0 || path->route_destination_prefix[0] == '\0' ||
-        !valid_command_token(path->route_destination_prefix)) return EN_ERR_INVALID_ARGUMENT;
+        !command_token_ok(path->route_destination_prefix)) return EN_ERR_INVALID_ARGUMENT;
     FORMAT_COMMAND(buf, buf_len, "vppctl ip route del %s via %s %s", path->route_destination_prefix, tunnel->gre_remote_address, tunnel->gre_interface);
     return EN_ERR_NONE;
 }

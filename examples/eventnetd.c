@@ -72,6 +72,75 @@ static bool shutdown_requested(void)
 #endif
 }
 
+static long long socket_timeout_ms = 30000;
+
+typedef struct {
+    char input[4096];
+    size_t position, available, length;
+    char line[1024];
+    bool oversized;
+    long long line_started_ms;
+} telemetry_reader_t;
+
+#if !defined(_WIN32)
+static long long monotonic_ms(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (long long)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+#endif
+
+/* 1: complete line, 0: timer, -1: EOF, -2: invalid line, -3: I/O/timeout.
+   Own the buffering so a partial line cannot block expiry processing. */
+static int telemetry_read_line(FILE *input, telemetry_reader_t *reader, char *line, int wait_ms, bool socket_input)
+{
+#if defined(_WIN32)
+    (void)reader; (void)wait_ms; (void)socket_input;
+    return fgets(line, 1024, input) != NULL ? 1 : -1;
+#else
+    long long deadline = monotonic_ms() + wait_ms;
+    for (;;) {
+        if (socket_input && reader->line_started_ms > 0 &&
+            monotonic_ms() - reader->line_started_ms >= socket_timeout_ms) return -3;
+        if (reader->position == reader->available) {
+            long long remaining = deadline - monotonic_ms();
+            if (remaining <= 0) return 0;
+            struct pollfd fd = { .fd = fileno(input), .events = POLLIN };
+            int ready = poll(&fd, 1, (int)remaining);
+            if (ready < 0) return errno == EINTR ? 0 : -3;
+            if (ready == 0) return 0;
+            ssize_t received = read(fd.fd, reader->input, sizeof(reader->input));
+            if (received < 0) return errno == EINTR || errno == EAGAIN ? 0 : -3;
+            if (received == 0) {
+                if (reader->length == 0 && !reader->oversized) return -1;
+                /* Accept an EOF-terminated record, but never a truncated one. */
+                if (reader->oversized) { reader->length = 0; reader->oversized = false; return -2; }
+                memcpy(line, reader->line, reader->length);
+                line[reader->length] = '\0';
+                reader->length = 0;
+                return 1;
+            }
+            reader->position = 0;
+            reader->available = (size_t)received;
+        }
+        char ch = reader->input[reader->position++];
+        if (reader->line_started_ms == 0) reader->line_started_ms = monotonic_ms();
+        if (ch == '\n') {
+            bool invalid = reader->oversized;
+            memcpy(line, reader->line, reader->length);
+            line[reader->length] = '\0';
+            reader->length = 0;
+            reader->oversized = false;
+            reader->line_started_ms = 0;
+            return invalid ? -2 : 1;
+        }
+        if (ch == '\0' || reader->length + 1 >= sizeof(reader->line)) reader->oversized = true;
+        else if (!reader->oversized) reader->line[reader->length++] = ch;
+    }
+#endif
+}
+
 static const en_intent_t *find_intent(const en_yaml_config_t *config, const char *intent_id)
 {
     for (size_t index = 0; index < config->intent_count; index++) {
@@ -136,13 +205,16 @@ static void sleep_ms(long long milliseconds)
 static void set_unknown_health(const en_yaml_config_t *config, en_health_probe_mock_t *health_mock)
 {
     bool require_interface_and_route = health_mock->require_interface_and_route;
+    long long max_age_ms = health_mock->max_age_ms;
     memset(health_mock, 0, sizeof(*health_mock));
     health_mock->require_interface_and_route = require_interface_and_route;
+    health_mock->max_age_ms = max_age_ms;
     for (size_t index = 0; index < config->path_count; index++) {
         en_path_health_t unknown = {0};
         snprintf(unknown.path_id, sizeof(unknown.path_id), "%s", config->paths[index].path_id);
         unknown.state = EN_HEALTH_FAILED;
         unknown.packet_loss_percent = 100.0;
+        unknown.consecutive_failures = INT_MAX;
         en_health_probe_mock_set(health_mock, unknown);
     }
 }
@@ -282,6 +354,7 @@ static int load_health(const char *filename, long long max_age_ms, const en_yaml
         return 1;
     }
     health_mock->require_interface_and_route = intent->traffic.has_vlan_id;
+    health_mock->max_age_ms = max_age_ms;
     set_unknown_health(config, health_mock);
     size_t accepted_count = 0;
     long long current_time_ms = now_ms();
@@ -302,8 +375,13 @@ static int load_health(const char *filename, long long max_age_ms, const en_yaml
 
 static void print_result(const en_reconcile_result_t *result)
 {
-    printf("intent: %s\nselected_path: %s\ntransition_state: %s\nreason: %s\n",
-        result->intent_id, result->selected_path, en_transition_state_name(result->transition_state), result->explanation.reason);
+    printf("intent: %s\ntraffic_key: %s\nselected_path: %s\ntransition_state: %s\nreason: %s\n",
+        result->intent_id, result->traffic_key, result->selected_path,
+        en_transition_state_name(result->transition_state), result->explanation.reason);
+    printf("metrics_ns: decision=%llu prepare=%llu validate=%llu commit=%llu post_validation=%llu rollback=%llu health_probe_count=%u health_probe=%llu\n",
+        result->metrics.decision_ns, result->metrics.prepare_ns, result->metrics.validate_ns,
+        result->metrics.commit_ns, result->metrics.post_validation_ns, result->metrics.rollback_ns,
+        result->metrics.health_probe_count, result->metrics.health_probe_ns);
     for (size_t index = 0; index < result->explanation.excluded_count; index++) {
         printf("excluded: %s (%s)\n", result->explanation.excluded_path_ids[index], result->explanation.excluded_reasons[index]);
     }
@@ -315,13 +393,25 @@ static void write_status_json(FILE *output, const en_reconcile_result_t *result)
     yyjson_mut_doc *document = yyjson_mut_doc_new(NULL);
     yyjson_mut_val *root = document == NULL ? NULL : yyjson_mut_obj(document);
     yyjson_mut_val *excluded = root == NULL ? NULL : yyjson_mut_obj_add_arr(document, root, "excluded");
+    yyjson_mut_val *metrics = root == NULL ? NULL : yyjson_mut_obj_add_obj(document, root, "metrics_ns");
     bool valid = root != NULL && excluded != NULL &&
+        metrics != NULL &&
         yyjson_mut_obj_add_str(document, root, "schema", "ibuki.status.v1") &&
         yyjson_mut_obj_add_sint(document, root, "timestamp_ms", now_ms()) &&
         yyjson_mut_obj_add_str(document, root, "intent_id", result->intent_id) &&
+        yyjson_mut_obj_add_str(document, root, "traffic_key", result->traffic_key) &&
         yyjson_mut_obj_add_str(document, root, "selected_path", result->selected_path) &&
         yyjson_mut_obj_add_str(document, root, "transition_state", en_transition_state_name(result->transition_state)) &&
         yyjson_mut_obj_add_str(document, root, "reason", result->explanation.reason);
+    valid = valid &&
+        yyjson_mut_obj_add_uint(document, metrics, "decision", result->metrics.decision_ns) &&
+        yyjson_mut_obj_add_uint(document, metrics, "prepare", result->metrics.prepare_ns) &&
+        yyjson_mut_obj_add_uint(document, metrics, "validate", result->metrics.validate_ns) &&
+        yyjson_mut_obj_add_uint(document, metrics, "commit", result->metrics.commit_ns) &&
+        yyjson_mut_obj_add_uint(document, metrics, "post_validation", result->metrics.post_validation_ns) &&
+        yyjson_mut_obj_add_uint(document, metrics, "rollback", result->metrics.rollback_ns) &&
+        yyjson_mut_obj_add_uint(document, metrics, "health_probe_count", result->metrics.health_probe_count) &&
+        yyjson_mut_obj_add_uint(document, metrics, "health_probe", result->metrics.health_probe_ns);
     for (size_t index = 0; valid && index < result->explanation.excluded_count; index++) {
         yyjson_mut_val *item = yyjson_mut_arr_add_obj(document, excluded);
         valid = item != NULL && yyjson_mut_obj_add_str(document, item, "path_id", result->explanation.excluded_path_ids[index]) &&
@@ -405,40 +495,40 @@ static int persist_state(const char *filename, const en_intent_t *intent, const 
     if (filename == NULL) return 0;
     char traffic_key[EN_MAX_TRAFFIC_KEY_LEN] = {0};
     en_make_traffic_key(&intent->traffic, traffic_key, sizeof(traffic_key));
-    char temporary_filename[512] = {0};
+    char temp_file[512] = {0};
 #if defined(_WIN32)
-    if (snprintf(temporary_filename, sizeof(temporary_filename), "%s.tmp", filename) >= (int)sizeof(temporary_filename)) {
+    if (snprintf(temp_file, sizeof(temp_file), "%s.tmp", filename) >= (int)sizeof(temp_file)) {
 #else
-    if (snprintf(temporary_filename, sizeof(temporary_filename), "%s.tmp-eventnetd-%ld", filename, (long)getpid()) >= (int)sizeof(temporary_filename)) {
+    if (snprintf(temp_file, sizeof(temp_file), "%s.tmp-eventnetd-%ld", filename, (long)getpid()) >= (int)sizeof(temp_file)) {
 #endif
         fprintf(stderr, "state path too long: %s\n", filename);
         return 1;
     }
 #if defined(_WIN32)
-    FILE *output = fopen(temporary_filename, "w");
+    FILE *output = fopen(temp_file, "w");
 #else
-    int temporary_fd = open(temporary_filename, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0600);
-    FILE *output = temporary_fd < 0 ? NULL : fdopen(temporary_fd, "w");
+    int temp_fd = open(temp_file, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0600);
+    FILE *output = temp_fd < 0 ? NULL : fdopen(temp_fd, "w");
 #endif
     if (output == NULL) {
 #if !defined(_WIN32)
-        if (temporary_fd >= 0) close(temporary_fd);
-        unlink(temporary_filename);
+        if (temp_fd >= 0) close(temp_fd);
+        unlink(temp_file);
 #endif
         fprintf(stderr, "state save failed: %s\n", filename);
         return 1;
     }
     fprintf(output, "%s\t%s\n", traffic_key, result->selected_path);
     if (fflush(output) != 0 || fclose(output) != 0) {
-        remove(temporary_filename);
+        remove(temp_file);
         fprintf(stderr, "state save failed: %s\n", filename);
         return 1;
     }
 #if defined(_WIN32)
     remove(filename);
 #endif
-    if (rename(temporary_filename, filename) != 0) {
-        remove(temporary_filename);
+    if (rename(temp_file, filename) != 0) {
+        remove(temp_file);
         fprintf(stderr, "state replace failed: %s\n", filename);
         return 1;
     }
@@ -472,7 +562,7 @@ typedef struct {
     const en_intent_t *intent;
     en_health_probe_mock_t *health;
     FILE *status_output;
-    const char *state_filename;
+    const char *state_file;
     int event_count;
     int failure_count;
 } vici_monitor_context_t;
@@ -500,6 +590,8 @@ static void eventnetd_vici_event(void *context, const char *event_json)
     en_health_probe_mock_set(monitor->health, record);
     en_error_code_t status = en_controller_submit_intent(monitor->controller, monitor->intent, &result);
     if (status != EN_ERR_NONE) {
+        print_result(&result);
+        write_status_json(monitor->status_output, &result);
         monitor->failure_count++;
         fprintf(stderr, "vici event reconcile failed: %s\n", en_error_code_name(status));
         return;
@@ -507,7 +599,7 @@ static void eventnetd_vici_event(void *context, const char *event_json)
     monitor->event_count++;
     print_result(&result);
     write_status_json(monitor->status_output, &result);
-    if (persist_state(monitor->state_filename, monitor->intent, &result) != 0) monitor->failure_count++;
+    if (persist_state(monitor->state_file, monitor->intent, &result) != 0) monitor->failure_count++;
     fflush(stdout);
 }
 
@@ -520,7 +612,7 @@ static int run_vici_monitor(
     bool verify_vpp,
     bool apply,
     FILE *status_output,
-    const char *state_filename,
+    const char *state_file,
     const char *child_id,
     const char *path_id,
     long long duration_ms)
@@ -558,12 +650,15 @@ static int run_vici_monitor(
     controller = en_controller_create_with_nodes_and_tunnels(config->nodes, config->node_count, config->paths, config->path_count,
         config->tunnels, config->tunnel_count, en_strongswan_vici_adapter(&vici_context), en_vpp_command_adapter(&vpp_command),
         en_health_probe_mock_adapter(&health));
-    if (controller == NULL || restore_state(controller, intent, state_filename) != 0) {
+    if (controller == NULL || restore_state(controller, intent, state_file) != 0) {
         en_controller_destroy(controller);
         en_strongswan_vici_client_close(client);
         return 1;
     }
-    if (en_controller_submit_intent(controller, intent, &initial_result) != EN_ERR_NONE) {
+    en_error_code_t initial_status = en_controller_submit_intent(controller, intent, &initial_result);
+    if (initial_status != EN_ERR_NONE) {
+        print_result(&initial_result);
+        write_status_json(status_output, &initial_result);
         fprintf(stderr, "initial VICI reconcile failed\n");
         en_controller_destroy(controller);
         en_strongswan_vici_client_close(client);
@@ -571,7 +666,7 @@ static int run_vici_monitor(
     }
     print_result(&initial_result);
     write_status_json(status_output, &initial_result);
-    if (persist_state(state_filename, intent, &initial_result) != 0) {
+    if (persist_state(state_file, intent, &initial_result) != 0) {
         en_controller_destroy(controller);
         en_strongswan_vici_client_close(client);
         return 1;
@@ -582,7 +677,7 @@ static int run_vici_monitor(
         .intent = intent,
         .health = &health,
         .status_output = status_output,
-        .state_filename = state_filename,
+        .state_file = state_file,
     };
     printf("vici_monitor: child=%s path=%s duration_ms=%lld\n", child_id, path_id, duration_ms);
     en_error_code_t monitor_status = en_strongswan_vici_client_monitor_child_until(client, child_id, path_id, duration_ms,
@@ -600,11 +695,12 @@ static int run_vici_monitor(
 
 static int run_stream(FILE *input, const en_yaml_config_t *config, const en_intent_t *intent, long long max_age_ms, int count,
     int batch_size, const char *backend, const char *swanctl_uri, const char *swanctl_config_file, const char *vppctl_socket, bool verify_swanctl, bool verify_vpp, bool apply,
-    FILE *status_output, const char *state_filename, int max_records_per_second)
+    FILE *status_output, const char *state_file, int max_records_sec)
 {
     en_health_probe_mock_t health_mock = {0};
     en_vpp_mock_t vpp_mock = {0};
     health_mock.require_interface_and_route = intent->traffic.has_vlan_id;
+    health_mock.max_age_ms = max_age_ms;
     en_strongswan_command_ctx_t strongswan_command = {0};
     en_vpp_command_ctx_t vpp_command = {0};
     strongswan_command.dry_run = !apply;
@@ -623,6 +719,8 @@ static int run_stream(FILE *input, const en_yaml_config_t *config, const en_inte
     vpp_command.tunnels = config->tunnels;
     vpp_command.tunnel_count = config->tunnel_count;
     en_strongswan_adapter_t strongswan_adapter = en_strongswan_mock_adapter();
+    /* The mock models a zero-flow drain; production adapters must implement it. */
+    vpp_mock.supports_graceful_switch = strcmp(backend, "mock") == 0;
     en_vpp_adapter_t vpp_adapter = en_vpp_mock_adapter(&vpp_mock);
     if (strcmp(backend, "command") == 0) {
         strongswan_adapter = en_strongswan_command_adapter(&strongswan_command);
@@ -638,7 +736,7 @@ static int run_stream(FILE *input, const en_yaml_config_t *config, const en_inte
         fprintf(stderr, "controller create failed\n");
         return 1;
     }
-    if (restore_state(controller, intent, state_filename) != 0) {
+    if (restore_state(controller, intent, state_file) != 0) {
         en_controller_destroy(controller);
         return 1;
     }
@@ -650,44 +748,79 @@ static int run_stream(FILE *input, const en_yaml_config_t *config, const en_inte
     int successful_iterations = 0;
     long long rate_window_start_ms = 0;
     int rate_window_count = 0;
-    while (!shutdown_requested() && (count == 0 || iteration < count) && fgets(line, sizeof(line), input) != NULL) {
-        if (max_records_per_second > 0) {
+    telemetry_reader_t reader = {0};
+    bool socket_input = false;
+#if !defined(_WIN32)
+    int socket_type = 0;
+    socklen_t socket_type_len = sizeof(socket_type);
+    socket_input = getsockopt(fileno(input), SOL_SOCKET, SO_TYPE, &socket_type, &socket_type_len) == 0;
+    long long last_line_ms = monotonic_ms();
+#endif
+    int wait_ms = max_age_ms > 0 && max_age_ms < 1000 ? (int)max_age_ms : 1000;
+    if (socket_input && socket_timeout_ms < wait_ms) wait_ms = (int)socket_timeout_ms;
+    while (!shutdown_requested() && (count == 0 || iteration < count)) {
+        int read_status = telemetry_read_line(input, &reader, line, wait_ms, socket_input);
+        if (read_status == -1) break;
+#if !defined(_WIN32)
+        if (read_status == -3 || (socket_input && read_status == 0 && monotonic_ms() - last_line_ms >= socket_timeout_ms)) {
+            fprintf(stderr, "telemetry receive failed or timed out\n");
+            en_controller_destroy(controller);
+            return socket_input ? 3 : 1;
+        }
+        if (read_status == 1) last_line_ms = monotonic_ms();
+#endif
+        bool expired = en_health_probe_mock_expire(&health_mock, now_ms());
+        if (read_status == 0 && !expired) continue;
+        if (read_status == -2) {
+            fprintf(stderr, "telemetry line rejected: oversized or embedded NUL\n");
+            if (socket_input) { if (expired) goto reconcile_stream; continue; }
+            en_controller_destroy(controller);
+            return 1;
+        }
+        if (read_status == 1 && max_records_sec > 0) {
             long long current_time_ms = now_ms();
             if (rate_window_start_ms == 0 || current_time_ms - rate_window_start_ms >= 1000) {
                 rate_window_start_ms = current_time_ms;
                 rate_window_count = 0;
             }
-            if (rate_window_count >= max_records_per_second) {
+            if (rate_window_count >= max_records_sec) {
                 sleep_ms(1000 - (current_time_ms - rate_window_start_ms));
                 rate_window_start_ms = now_ms();
                 rate_window_count = 0;
             }
             rate_window_count++;
         }
-        en_path_health_t record = {0};
-        char error[256] = {0};
-        if (en_telemetry_parse_json_line(line, &record, error, sizeof(error)) != EN_ERR_NONE) {
-            fprintf(stderr, "telemetry parse failed: %s\n", error);
-            en_controller_destroy(controller);
-            return 1;
+        if (read_status == 1) {
+            en_path_health_t record = {0};
+            char error[256] = {0};
+            if (en_telemetry_parse_json_line(line, &record, error, sizeof(error)) != EN_ERR_NONE) {
+                fprintf(stderr, "telemetry parse failed: %s\n", error);
+                if (socket_input) { if (expired) goto reconcile_stream; continue; }
+                en_controller_destroy(controller);
+                return 1;
+            }
+            char identity_error[128] = {0};
+            if (!telemetry_identity_matches(config, intent, &record, identity_error, sizeof(identity_error))) {
+                fprintf(stderr, "telemetry identity rejected: %s\n", identity_error);
+                if (socket_input) { if (expired) goto reconcile_stream; continue; }
+                en_controller_destroy(controller);
+                return 1;
+            }
+            long long age_ms = now_ms() - record.last_updated_ms;
+            if (max_age_ms > 0 && (age_ms < 0 || age_ms > max_age_ms)) { if (expired) goto reconcile_stream; continue; }
+            if (batch_count < EN_MAX_PATHS) batch[batch_count++] = record;
+            if (batch_count < (size_t)batch_size) { if (expired) goto reconcile_stream; continue; }
+            for (size_t index = 0; index < batch_count; index++) en_health_probe_mock_set(&health_mock, batch[index]);
+            batch_count = 0;
+            iteration++;
         }
-        char identity_error[128] = {0};
-        if (!telemetry_identity_matches(config, intent, &record, identity_error, sizeof(identity_error))) {
-            fprintf(stderr, "telemetry identity rejected: %s\n", identity_error);
-            en_controller_destroy(controller);
-            return 1;
-        }
-        long long age_ms = now_ms() - record.last_updated_ms;
-        if (max_age_ms > 0 && (age_ms < 0 || age_ms > max_age_ms)) continue;
-        if (batch_count < EN_MAX_PATHS) batch[batch_count++] = record;
-        if (batch_count < (size_t)batch_size) continue;
-        for (size_t index = 0; index < batch_count; index++) en_health_probe_mock_set(&health_mock, batch[index]);
-        batch_count = 0;
-        iteration++;
+reconcile_stream:
         printf("eventnetd_iteration: %d/%s\n", iteration, count == 0 ? "stream" : "count");
         en_reconcile_result_t result = {0};
         en_error_code_t status = en_controller_submit_intent(controller, intent, &result);
         if (status != EN_ERR_NONE) {
+            print_result(&result);
+            write_status_json(status_output, &result);
             if (status == EN_ERR_NO_CANDIDATE) {
                 fprintf(stderr, "intent unavailable: no_candidate; waiting for next telemetry batch\n");
                 continue;
@@ -699,7 +832,8 @@ static int run_stream(FILE *input, const en_yaml_config_t *config, const en_inte
         print_result(&result);
         successful_iterations++;
         write_status_json(status_output, &result);
-        if (persist_state(state_filename, intent, &result) != 0) {
+        fflush(stdout);
+        if (persist_state(state_file, intent, &result) != 0) {
             en_controller_destroy(controller);
             return 1;
         }
@@ -715,7 +849,7 @@ static int run_stream(FILE *input, const en_yaml_config_t *config, const en_inte
 #if !defined(_WIN32)
 static int run_socket_parallel(int listener, const en_yaml_config_t *config, const en_intent_t *intent, long long max_age_ms,
     int batch_size, const char *backend, const char *swanctl_uri, const char *swanctl_config_file, const char *vppctl_socket, bool verify_swanctl, bool verify_vpp,
-    bool apply, FILE *status_output, const char *state_filename, int max_records_per_second, long long allowed_uid, int accept_count,
+    bool apply, FILE *status_output, const char *state_file, int max_records_sec, long long allowed_uid, int accept_count,
     long long timeout_ms)
 {
     if (accept_count < 2) return 2;
@@ -735,7 +869,15 @@ static int run_socket_parallel(int listener, const en_yaml_config_t *config, con
     }
     int status = 0;
     int connected = 0;
+    long long accept_started_ms = monotonic_ms();
     for (int index = 0; index < accept_count; index++) {
+        long long remaining = timeout_ms - (monotonic_ms() - accept_started_ms);
+        struct pollfd incoming = { .fd = listener, .events = POLLIN };
+        if (remaining <= 0 || poll(&incoming, 1, remaining > INT_MAX ? INT_MAX : (int)remaining) <= 0) {
+            fprintf(stderr, "telemetry parallel accept timed out or interrupted\n");
+            status = 1;
+            break;
+        }
         int client = accept4(listener, NULL, NULL, SOCK_CLOEXEC);
         if (client < 0) {
             perror("telemetry parallel accept");
@@ -769,10 +911,14 @@ static int run_socket_parallel(int listener, const en_yaml_config_t *config, con
     size_t total_bytes = 0;
     const size_t input_limit = 4U * 1024U * 1024U;
     int poll_timeout = timeout_ms > INT_MAX ? INT_MAX : (int)timeout_ms;
+    long long receive_started_ms = monotonic_ms();
     while (status == 0 && active > 0) {
+        long long remaining = timeout_ms - (monotonic_ms() - receive_started_ms);
+        if (remaining <= 0) { status = 1; break; }
+        poll_timeout = remaining > INT_MAX ? INT_MAX : (int)remaining;
         int poll_status = poll(poll_fds, (nfds_t)connected, poll_timeout);
         if (poll_status < 0) {
-            if (errno == EINTR) continue;
+            if (errno == EINTR && !shutdown_requested()) continue;
             perror("telemetry parallel poll");
             status = 1;
             break;
@@ -836,7 +982,7 @@ static int run_socket_parallel(int listener, const en_yaml_config_t *config, con
     if (status == 0) {
         rewind(shared_input);
         status = run_stream(shared_input, config, intent, max_age_ms, 0, batch_size, backend, swanctl_uri, swanctl_config_file, vppctl_socket,
-            verify_swanctl, verify_vpp, apply, status_output, state_filename, max_records_per_second);
+            verify_swanctl, verify_vpp, apply, status_output, state_file, max_records_sec);
     }
     fclose(shared_input);
     free(poll_fds);
@@ -847,7 +993,7 @@ static int run_socket_parallel(int listener, const en_yaml_config_t *config, con
 
 static int run_socket(const char *socket_path, const en_yaml_config_t *config, const en_intent_t *intent, long long max_age_ms, int count,
     int batch_size, const char *backend, const char *swanctl_uri, const char *swanctl_config_file, const char *vppctl_socket, bool verify_swanctl, bool verify_vpp, bool apply,
-    FILE *status_output, const char *state_filename, int accept_count, int max_records_per_second, long long allowed_uid,
+    FILE *status_output, const char *state_file, int accept_count, int max_records_sec, long long allowed_uid,
     int retry_count, long long retry_backoff_ms, bool parallel_socket, long long parallel_timeout_ms)
 {
 #if defined(_WIN32)
@@ -864,10 +1010,10 @@ static int run_socket(const char *socket_path, const en_yaml_config_t *config, c
     (void)verify_vpp;
     (void)apply;
     (void)status_output;
-    (void)state_filename;
+    (void)state_file;
     (void)batch_size;
     (void)accept_count;
-    (void)max_records_per_second;
+    (void)max_records_sec;
     (void)allowed_uid;
     (void)retry_count;
     (void)retry_backoff_ms;
@@ -907,7 +1053,7 @@ static int run_socket(const char *socket_path, const en_yaml_config_t *config, c
     if (parallel_socket) {
         printf("socket_mode: parallel-shared-batch\n");
         int parallel_status = run_socket_parallel(listener, config, intent, max_age_ms, batch_size, backend, swanctl_uri,
-            swanctl_config_file, vppctl_socket, verify_swanctl, verify_vpp, apply, status_output, state_filename, max_records_per_second,
+            swanctl_config_file, vppctl_socket, verify_swanctl, verify_vpp, apply, status_output, state_file, max_records_sec,
             allowed_uid, accept_count, parallel_timeout_ms);
         close(listener);
         unlink(socket_path);
@@ -929,6 +1075,15 @@ static int run_socket(const char *socket_path, const en_yaml_config_t *config, c
     int connection_count = 0;
     int reconnect_attempt = 0;
     while (!shutdown_signal_received && (accept_count == 0 || connection_count < accept_count)) {
+        struct pollfd incoming = { .fd = listener, .events = POLLIN };
+        int ready = poll(&incoming, 1, socket_timeout_ms > INT_MAX ? INT_MAX : (int)socket_timeout_ms);
+        if (ready == 0 && accept_count == 0) continue;
+        if (ready <= 0) {
+            if (shutdown_requested()) break;
+            fprintf(stderr, "telemetry accept timed out or failed\n");
+            status = 1;
+            break;
+        }
         int client = accept4(listener, NULL, NULL, SOCK_CLOEXEC);
         if (client < 0) {
             if (errno == EINTR && shutdown_signal_received) break;
@@ -957,25 +1112,32 @@ static int run_socket(const char *socket_path, const en_yaml_config_t *config, c
         int stream_status = 0;
         if (shared_batch) {
             char line[1024];
-            while (fgets(line, sizeof(line), input) != NULL) {
+            telemetry_reader_t reader = {0};
+            long long started = monotonic_ms();
+            for (;;) {
+                int read_status = telemetry_read_line(input, &reader, line, socket_timeout_ms < 1000 ? (int)socket_timeout_ms : 1000, true);
+                if (read_status == -1) break;
+                if (read_status < -1 || monotonic_ms() - started >= socket_timeout_ms) { stream_status = 1; break; }
+                if (read_status == 0) continue;
                 size_t line_length = strlen(line);
-                if (line_length > shared_input_limit - shared_input_bytes) {
+                if (line_length + 1 > shared_input_limit - shared_input_bytes) {
                     fprintf(stderr, "telemetry shared batch exceeds %zu bytes\n", shared_input_limit);
                     stream_status = 1;
                     break;
                 }
-                if (fputs(line, shared_input) == EOF) {
+                if (fputs(line, shared_input) == EOF || fputc('\n', shared_input) == EOF) {
                     stream_status = 1;
                     break;
                 }
-                shared_input_bytes += line_length;
+                shared_input_bytes += line_length + 1;
             }
             if (ferror(input)) stream_status = 1;
         } else {
-            stream_status = run_stream(input, config, intent, max_age_ms, count, batch_size, backend, swanctl_uri, swanctl_config_file, vppctl_socket, verify_swanctl, verify_vpp, apply, status_output, state_filename, max_records_per_second);
+            stream_status = run_stream(input, config, intent, max_age_ms, count, batch_size, backend, swanctl_uri, swanctl_config_file, vppctl_socket, verify_swanctl, verify_vpp, apply, status_output, state_file, max_records_sec);
         }
         fclose(input);
         if (stream_status != 0) {
+            if (stream_status == 3 && accept_count == 0) continue;
             if (reconnect_attempt < retry_count) {
                 reconnect_attempt++;
                 printf("socket_reconnect_retry: %d/%d\n", reconnect_attempt, retry_count);
@@ -995,7 +1157,7 @@ static int run_socket(const char *socket_path, const en_yaml_config_t *config, c
     if (shared_input != NULL) {
         if (status == 0) {
             rewind(shared_input);
-            status = run_stream(shared_input, config, intent, max_age_ms, 0, batch_size, backend, swanctl_uri, swanctl_config_file, vppctl_socket, verify_swanctl, verify_vpp, apply, status_output, state_filename, max_records_per_second);
+            status = run_stream(shared_input, config, intent, max_age_ms, 0, batch_size, backend, swanctl_uri, swanctl_config_file, vppctl_socket, verify_swanctl, verify_vpp, apply, status_output, state_file, max_records_sec);
         }
         fclose(shared_input);
     }
@@ -1008,7 +1170,7 @@ static int run_socket(const char *socket_path, const en_yaml_config_t *config, c
 int main(int argc, char **argv)
 {
     const char *yaml_filename = "samples/linux-vm-netns.yaml";
-    const char *telemetry_filename = NULL;
+    const char *telemetry_file = NULL;
     const char *socket_path = NULL;
     const char *status_filename = NULL;
     const char *intent_id = NULL;
@@ -1016,7 +1178,7 @@ int main(int argc, char **argv)
     const char *swanctl_uri = NULL;
     const char *swanctl_config_file = NULL;
     const char *vppctl_socket = NULL;
-    const char *state_filename = NULL;
+    const char *state_file = NULL;
     const char *vici_monitor_child = NULL;
     const char *vici_monitor_path = NULL;
     bool verify_swanctl = false;
@@ -1031,7 +1193,7 @@ int main(int argc, char **argv)
     int batch_size = 1;
     int socket_accept_count = 1;
     int socket_retry_count = 0;
-    int max_records_per_second = 0;
+    int max_records_sec = 0;
     long long socket_allowed_uid = -1;
     long long socket_retry_backoff_ms = 0;
     bool parallel_socket = false;
@@ -1040,7 +1202,7 @@ int main(int argc, char **argv)
     for (int index = 1; index < argc; index++) {
         if (strcmp(argv[index], "--telemetry") == 0) {
             if (index + 1 >= argc) { fprintf(stderr, "missing --telemetry value\n"); return 2; }
-            telemetry_filename = argv[++index];
+            telemetry_file = argv[++index];
         }
         else if (strcmp(argv[index], "--telemetry-socket") == 0) {
             if (index + 1 >= argc) { fprintf(stderr, "missing --telemetry-socket value\n"); return 2; }
@@ -1076,12 +1238,15 @@ int main(int argc, char **argv)
             if (index + 1 >= argc || !parse_long_long_argument(argv[++index], 0, LLONG_MAX, &socket_retry_backoff_ms)) { fprintf(stderr, "invalid --socket-retry-backoff-ms\n"); return 2; }
         }
         else if (strcmp(argv[index], "--max-records-per-second") == 0) {
-            if (index + 1 >= argc || !parse_int_argument(argv[++index], 0, INT_MAX, &max_records_per_second)) { fprintf(stderr, "invalid --max-records-per-second\n"); return 2; }
+            if (index + 1 >= argc || !parse_int_argument(argv[++index], 0, INT_MAX, &max_records_sec)) { fprintf(stderr, "invalid --max-records-per-second\n"); return 2; }
         }
         else if (strcmp(argv[index], "--socket-uid") == 0) {
             if (index + 1 >= argc || !parse_long_long_argument(argv[++index], -1, LLONG_MAX, &socket_allowed_uid)) { fprintf(stderr, "invalid --socket-uid\n"); return 2; }
         }
         else if (strcmp(argv[index], "--socket-parallel") == 0) parallel_socket = true;
+        else if (strcmp(argv[index], "--socket-timeout-ms") == 0) {
+            if (index + 1 >= argc || !parse_long_long_argument(argv[++index], 1, INT_MAX, &socket_timeout_ms)) { fprintf(stderr, "invalid --socket-timeout-ms\n"); return 2; }
+        }
         else if (strcmp(argv[index], "--socket-parallel-timeout-ms") == 0) {
             if (index + 1 >= argc || !parse_long_long_argument(argv[++index], 1, LLONG_MAX, &parallel_timeout_ms)) { fprintf(stderr, "invalid --socket-parallel-timeout-ms\n"); return 2; }
         }
@@ -1116,7 +1281,7 @@ int main(int argc, char **argv)
         else if (strcmp(argv[index], "--verify-vpp") == 0) verify_vpp = true;
         else if (strcmp(argv[index], "--state-file") == 0) {
             if (index + 1 >= argc) { fprintf(stderr, "missing --state-file value\n"); return 2; }
-            state_filename = argv[++index];
+            state_file = argv[++index];
         }
         else if (strcmp(argv[index], "--apply") == 0) apply = true;
         else if (strcmp(argv[index], "--telemetry-stdin") == 0) stdin_mode = true;
@@ -1124,18 +1289,19 @@ int main(int argc, char **argv)
         else if (strcmp(argv[index], "--reload-on-sighup") == 0) reload_on_sighup = true;
         else if (strcmp(argv[index], "--once") == 0) count = 1;
         else if (strcmp(argv[index], "--help") == 0) {
+            printf("socket deadlines: --socket-timeout-ms N (default 30000; normal socket accept and complete-line wait)\n");
             printf("usage: %s YAML [--telemetry FILE|--telemetry-stdin|--telemetry-socket PATH] [--status-jsonl FILE] [--state-file FILE] [--intent ID] [--backend mock|command] [--swanctl-uri URI] [--swanctl-config FILE] [--vppctl-socket PATH] [--vici-monitor-child CHILD] [--vici-monitor-path PATH] [--vici-monitor-duration-ms N] [--verify-swanctl] [--verify-vpp] [--batch-size N] [--socket-accept-count N] [--socket-parallel] [--socket-parallel-timeout-ms N] [--socket-retry-count N] [--socket-retry-backoff-ms N] [--socket-uid UID] [--max-records-per-second N] [--reload-config] [--reload-on-sighup] [--apply] [--interval-ms N] [--count N] [--max-age-ms N]\n", argv[0]);
             return 0;
         } else yaml_filename = argv[index];
     }
-    if ((!stdin_mode && telemetry_filename == NULL && socket_path == NULL) ||
-        (stdin_mode && (telemetry_filename != NULL || socket_path != NULL)) ||
-        (telemetry_filename != NULL && socket_path != NULL) || count < 0 || batch_size <= 0 || batch_size > EN_MAX_PATHS || interval_ms < 0 || max_age_ms < 0 || socket_accept_count < 0 || socket_retry_count < 0 || socket_retry_backoff_ms < 0 || max_records_per_second < 0 || socket_allowed_uid < -1 ||
-        ((socket_accept_count == 0 || socket_accept_count > 1) && state_filename == NULL) || (reload_config && (stdin_mode || socket_path != NULL || state_filename == NULL)) ||
+    if ((!stdin_mode && telemetry_file == NULL && socket_path == NULL) ||
+        (stdin_mode && (telemetry_file != NULL || socket_path != NULL)) ||
+        (telemetry_file != NULL && socket_path != NULL) || count < 0 || batch_size <= 0 || batch_size > EN_MAX_PATHS || interval_ms < 0 || max_age_ms < 0 || socket_accept_count < 0 || socket_retry_count < 0 || socket_retry_backoff_ms < 0 || max_records_sec < 0 || socket_allowed_uid < -1 ||
+        ((socket_accept_count == 0 || socket_accept_count > 1) && state_file == NULL) || (reload_config && (stdin_mode || socket_path != NULL || state_file == NULL)) ||
         (reload_on_sighup && (!reload_config || stdin_mode || socket_path != NULL)) || parallel_timeout_ms < 1 ||
         (parallel_socket && (socket_path == NULL || socket_accept_count < 2)) ||
         ((vici_monitor_child == NULL) != (vici_monitor_path == NULL)) ||
-        (vici_monitor_child != NULL && (stdin_mode || telemetry_filename != NULL || socket_path != NULL || reload_config))) {
+        (vici_monitor_child != NULL && (stdin_mode || telemetry_file != NULL || socket_path != NULL || reload_config))) {
         fprintf(stderr, "choose one telemetry input and use non-negative numeric options\n");
         return 2;
     }
@@ -1176,7 +1342,7 @@ int main(int argc, char **argv)
 #if defined(EVENTNET_ENABLE_STRONGSWAN_VICI)
     if (vici_monitor_child != NULL) {
         int status = run_vici_monitor(&config, intent, backend, swanctl_uri, vppctl_socket, verify_vpp, apply,
-            status_output, state_filename, vici_monitor_child, vici_monitor_path, vici_monitor_duration_ms);
+            status_output, state_file, vici_monitor_child, vici_monitor_path, vici_monitor_duration_ms);
         if (status_output != NULL) fclose(status_output);
         return status;
     }
@@ -1188,12 +1354,12 @@ int main(int argc, char **argv)
     }
 #endif
     if (stdin_mode) {
-        int status = run_stream(stdin, &config, intent, max_age_ms, count, batch_size, backend, swanctl_uri, swanctl_config_file, vppctl_socket, verify_swanctl, verify_vpp, apply, status_output, state_filename, max_records_per_second);
+        int status = run_stream(stdin, &config, intent, max_age_ms, count, batch_size, backend, swanctl_uri, swanctl_config_file, vppctl_socket, verify_swanctl, verify_vpp, apply, status_output, state_file, max_records_sec);
         if (status_output != NULL) fclose(status_output);
         return status;
     }
     if (socket_path != NULL) {
-        int status = run_socket(socket_path, &config, intent, max_age_ms, count, batch_size, backend, swanctl_uri, swanctl_config_file, vppctl_socket, verify_swanctl, verify_vpp, apply, status_output, state_filename, socket_accept_count, max_records_per_second, socket_allowed_uid, socket_retry_count, socket_retry_backoff_ms, parallel_socket, parallel_timeout_ms);
+        int status = run_socket(socket_path, &config, intent, max_age_ms, count, batch_size, backend, swanctl_uri, swanctl_config_file, vppctl_socket, verify_swanctl, verify_vpp, apply, status_output, state_file, socket_accept_count, max_records_sec, socket_allowed_uid, socket_retry_count, socket_retry_backoff_ms, parallel_socket, parallel_timeout_ms);
         if (status_output != NULL) fclose(status_output);
         return status;
     }
@@ -1224,14 +1390,14 @@ int main(int argc, char **argv)
                 if (status_output != NULL) fclose(status_output);
                 return 1;
             }
-            FILE *reloaded_input = en_telemetry_open_jsonl(telemetry_filename);
+            FILE *reloaded_input = en_telemetry_open_jsonl(telemetry_file);
             if (reloaded_input == NULL) {
-                fprintf(stderr, "telemetry open failed: %s\n", telemetry_filename);
+                fprintf(stderr, "telemetry open failed: %s\n", telemetry_file);
                 if (status_output != NULL) fclose(status_output);
                 return 1;
             }
             int reload_status = run_stream(reloaded_input, &active_config, reloaded_intent, max_age_ms, 1, batch_size, backend,
-                swanctl_uri, swanctl_config_file, vppctl_socket, verify_swanctl, verify_vpp, apply, status_output, state_filename, max_records_per_second);
+                swanctl_uri, swanctl_config_file, vppctl_socket, verify_swanctl, verify_vpp, apply, status_output, state_file, max_records_sec);
             fclose(reloaded_input);
             if (reload_status != 0) {
                 if (status_output != NULL) fclose(status_output);
@@ -1241,16 +1407,16 @@ int main(int argc, char **argv)
         if (status_output != NULL) fclose(status_output);
         return 0;
     }
-    if (telemetry_filename != NULL) {
-        FILE *telemetry_input = en_telemetry_open_jsonl(telemetry_filename);
+    if (telemetry_file != NULL) {
+        FILE *telemetry_input = en_telemetry_open_jsonl(telemetry_file);
         if (telemetry_input == NULL) {
-            fprintf(stderr, "telemetry open failed: %s\n", telemetry_filename);
+            fprintf(stderr, "telemetry open failed: %s\n", telemetry_file);
             if (status_output != NULL) fclose(status_output);
             return 1;
         }
         int stream_status = run_stream(telemetry_input, &config, intent, max_age_ms, count, batch_size,
             backend, swanctl_uri, swanctl_config_file, vppctl_socket, verify_swanctl, verify_vpp, apply,
-            status_output, state_filename, max_records_per_second);
+            status_output, state_file, max_records_sec);
         fclose(telemetry_input);
         if (status_output != NULL) fclose(status_output);
         return stream_status;
@@ -1290,28 +1456,30 @@ int main(int argc, char **argv)
         fprintf(stderr, "controller create failed\n");
         return 1;
     }
-    if (restore_state(controller, intent, state_filename) != 0) {
+    if (restore_state(controller, intent, state_file) != 0) {
         en_controller_destroy(controller);
         if (status_output != NULL) fclose(status_output);
         return 1;
     }
     for (int iteration = 0; iteration < count && !shutdown_requested(); iteration++) {
         printf("eventnetd_iteration: %d/%d\n", iteration + 1, count);
-        if (max_records_per_second > 0 && iteration > 0) sleep_ms(1000 / max_records_per_second);
-        if (load_health(telemetry_filename, max_age_ms, &config, intent, &health_mock) != 0) {
+        if (max_records_sec > 0 && iteration > 0) sleep_ms(1000 / max_records_sec);
+        if (load_health(telemetry_file, max_age_ms, &config, intent, &health_mock) != 0) {
             en_controller_destroy(controller);
             return 1;
         }
         en_reconcile_result_t result = {0};
         en_error_code_t status = en_controller_submit_intent(controller, intent, &result);
         if (status != EN_ERR_NONE) {
+            print_result(&result);
+            write_status_json(status_output, &result);
             fprintf(stderr, "intent failed: %s\n", en_error_code_name(status));
             en_controller_destroy(controller);
             return 1;
         }
         print_result(&result);
         write_status_json(status_output, &result);
-        if (persist_state(state_filename, intent, &result) != 0) {
+        if (persist_state(state_file, intent, &result) != 0) {
             en_controller_destroy(controller);
             if (status_output != NULL) fclose(status_output);
             return 1;

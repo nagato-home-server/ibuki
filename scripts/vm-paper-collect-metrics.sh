@@ -4,7 +4,7 @@ set -u
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 YAML=${1:-samples/linux-vm-netns.yaml}
 REPEAT=${REPEAT:-5}
-OUT_FILE=${OUT_FILE:-$ROOT_DIR/out/paper-metrics.csv}
+OUT_FILE=${OUT_FILE:-$ROOT_DIR/out/runtime-smoke-metrics.csv}
 BUILD_DIR=${BUILD_DIR:-$ROOT_DIR/build-paper-baseline}
 
 if [ "$(id -u)" != "0" ]; then
@@ -18,7 +18,8 @@ esac
 
 cd "$ROOT_DIR"
 mkdir -p "$(dirname -- "$OUT_FILE")"
-printf '%s\n' 'scenario,strategy,repetition,transition_ms,packet_loss,packet_reordering,tcp_retransmissions,cpu_percent,memory_mb' > "$OUT_FILE"
+# Refuse to overwrite previous evidence, including through a symlink.
+(set -C; printf '%s\n' 'scenario,runtime_mode,repetition,smoke_duration_ms,post_apply_packet_loss_percent,status,measurement_kind' > "$OUT_FILE") || exit 1
 overall=0
 
 now_ms() {
@@ -40,14 +41,16 @@ collect_case() {
   status=$?
   set -e
   end_ms=$(now_ms)
-  transition_ms=$((end_ms - start_ms))
+  smoke_duration_ms=$((end_ms - start_ms))
   packet_loss=$(awk '/packet loss/ { gsub(/%/, "", $6); print $6; exit }' "$log_file")
-  [ -n "$packet_loss" ] || packet_loss=100
+  case "$packet_loss" in ''|*[!0-9.]*) packet_loss= ;; esac
+  result=pass
   if [ "$status" -ne 0 ]; then
     printf 'metric collection failed: %s repetition %s (status %s), see %s\n' "$scenario" "$repetition" "$status" "$log_file" >&2
     overall=1
+    result=fail
   fi
-  printf '%s,%s,%s,%s,%s,,,,\n' "$scenario" "$mode" "$repetition" "$transition_ms" "$packet_loss" >> "$OUT_FILE"
+  printf '%s,%s,%s,%s,%s,%s,runtime_smoke\n' "$scenario" "$mode" "$repetition" "$smoke_duration_ms" "$packet_loss" "$result" >> "$OUT_FILE"
   sh scripts/vm-netns-ipsec-direct-stop.sh >/dev/null 2>&1 || true
   sh scripts/vm-netns-ipsec-hub-stop.sh >/dev/null 2>&1 || true
 }
@@ -60,5 +63,5 @@ for repetition in $(seq 1 "$REPEAT"); do
   collect_case hub-fallback fallback "$repetition"
 done
 
-printf 'metrics written: %s\n' "$OUT_FILE"
+printf 'runtime smoke metrics written (not live transition measurements): %s\n' "$OUT_FILE"
 exit "$overall"

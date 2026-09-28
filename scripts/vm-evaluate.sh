@@ -452,7 +452,7 @@ case_transition_policy() {
   ensure_build
   if "$BUILD_DIR/eventnet_tests" > "$log" 2>&1 &&
     grep -q 'all tests passed' "$log"; then
-    record_case "$name" "partial" "$(elapsed_ms "$start_ns")" "Immediate and Graceful transition behavior, draining, cleanup, and rollback are covered by C tests; Flow Preserve remains unimplemented; log: $log"
+    record_case "$name" "partial" "$(elapsed_ms "$start_ns")" "Immediate transition, mocked zero-flow Graceful hook, cleanup, and rollback are covered by C tests; command/VPP API adapters lack real flow drain; Flow Preserve remains unimplemented; log: $log"
   else
     record_case "$name" "fail" "$(elapsed_ms "$start_ns")" "transition policy unit checks failed; log: $log"
     return 1

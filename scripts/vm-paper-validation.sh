@@ -86,8 +86,8 @@ if [ "$RUN_RUNTIME" = "1" ]; then
     mkdir -p "$RUNTIME_OUT_DIR"
     export OUT_DIR="$RUNTIME_OUT_DIR"
     prepare_runtime_case() {
-        sh scripts/vm-netns-ipsec-direct-stop.sh >/dev/null 2>&1 || true
-        sh scripts/vm-netns-ipsec-hub-stop.sh >/dev/null 2>&1 || true
+        sh scripts/vm-netns-ipsec.sh direct stop >/dev/null 2>&1 || true
+        sh scripts/vm-netns-ipsec.sh hub stop >/dev/null 2>&1 || true
     }
     prepare_runtime_case
     run_root_case xfrm-policy-runtime "sh" scripts/vm-xfrm-policy-runtime-smoke.sh "$YAML"

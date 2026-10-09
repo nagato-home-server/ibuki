@@ -1,5 +1,9 @@
 # Security Audit Notes
 
+2026-10-09更新: 機能疎通成功は安全性監査の合格を意味しない。XFRM stateの生ログにはSA鍵が含まれ得るため、公開・artifact化前に秘密情報を除去する。PSK sampleとNative静的SAは実験用であり、本番用credential管理ではない。
+
+確認日、構成、測定制限の共通一覧: [現在の実装と検証状況](current-status.md)。
+
 Date: 2026-07-29
 
 この文書は、PathWeaver / EventNet controller と、連携先 OSS である strongSwan / VPP を見たときの「不安な場所」を整理するためのメモです。

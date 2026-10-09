@@ -12,7 +12,7 @@ VPP_NATIVE_IPSEC=${VPP_NATIVE_IPSEC:-}
 if [ "$(id -u)" != "0" ]; then printf 'Please run as root: sudo %s [yaml]\n' "$0" >&2; exit 1; fi
 cd "$ROOT_DIR"
 cleanup() {
-  GRE_RUN_BASE="$RUN_BASE" sh scripts/vm-netns-ipsec-gre-stop.sh >/dev/null 2>&1 || true
+  GRE_RUN_BASE="$RUN_BASE" sh scripts/vm-netns-ipsec.sh gre stop >/dev/null 2>&1 || true
   sh scripts/vm-vpp-ns-topology.sh clean >/dev/null 2>&1 || true
 }
 diagnose_datapath() {
@@ -39,7 +39,7 @@ diagnose_datapath() {
 }
 trap cleanup EXIT INT TERM
 
-if ! ip netns exec site-a true >/dev/null 2>&1 || ! ip netns exec site-b true >/dev/null 2>&1; then sh scripts/vm-netns-setup.sh; fi
+if ! ip netns exec site-a true >/dev/null 2>&1 || ! ip netns exec site-b true >/dev/null 2>&1; then sh scripts/vm-netns.sh setup; fi
 if [ "${SKIP_BUILD:-0}" != "1" ]; then
   printf 'Building the controller before generating the namespace plan...\n'
   FORCE_REBUILD="${FORCE_REBUILD:-1}" BUILD_DIR="$BUILD_DIR" sh scripts/vm-build-cc.sh
@@ -69,7 +69,7 @@ BUILD_DIR="$BUILD_DIR" OUT_DIR="$OUT_DIR" sh scripts/vm-generate-netns-runtime.s
 if [ "$VPP_NATIVE_IPSEC" = "1" ]; then
   printf 'Using VPP Native IPsec; strongSwan is not started for this smoke.\n'
 else
-  GRE_CHILD=gre-namespace-v2 GRE_OUTER_LOCAL_ENDPOINT=198.18.1.1 GRE_OUTER_REMOTE_ENDPOINT=198.18.2.1 GRE_RUN_BASE="$RUN_BASE" sh scripts/vm-netns-ipsec-gre-start.sh "$OUT_DIR"
+  GRE_CHILD=gre-namespace-v2 GRE_OUTER_LOCAL_ENDPOINT=198.18.1.1 GRE_OUTER_REMOTE_ENDPOINT=198.18.2.1 GRE_RUN_BASE="$RUN_BASE" sh scripts/vm-netns-ipsec.sh gre start "$OUT_DIR"
 fi
 DRY_RUN=0 sh "$OUT_DIR/vpp-netns-route-plan.sh"
 if [ "$VPP_NATIVE_IPSEC" = "1" ]; then

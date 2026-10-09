@@ -18,12 +18,12 @@ mkdir -p "$ROOT_DIR/out"
 
 if ! ip netns list | awk '{print $1}' | grep -qx site-a ||
    ! ip netns list | awk '{print $1}' | grep -qx site-b; then
-  sh scripts/vm-netns-setup.sh
+  sh scripts/vm-netns.sh setup
 fi
 
 for ns in site-a site-b; do
   ip netns list | awk '{print $1}' | grep -qx "$ns" || {
-    printf 'missing namespace: %s. Run sh scripts/vm-netns-setup.sh first.\n' "$ns" >&2
+    printf 'missing namespace: %s. Run sh scripts/vm-netns.sh setup first.\n' "$ns" >&2
     exit 1
   }
 done

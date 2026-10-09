@@ -297,6 +297,11 @@ add_test(NAME eventnet_namespace_runtime_plan
         -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
         -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/check-namespace-runtime.cmake)
 
+if(UNIX)
+    add_test(NAME eventnet_shell_dispatch
+        COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_shell_dispatch.sh)
+endif()
+
 install(TARGETS eventnetd
     RUNTIME DESTINATION libexec/ibuki
 )

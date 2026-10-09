@@ -51,7 +51,7 @@ require_root() {
 ensure_underlay() {
   if ! ip netns exec site-a true >/dev/null 2>&1 ||
      ! ip netns exec site-b true >/dev/null 2>&1; then
-    run 'namespace setup' sh scripts/vm-netns-setup.sh
+    run 'namespace setup' sh scripts/vm-netns.sh setup
   fi
 }
 
@@ -70,7 +70,7 @@ run_preflight() {
 
 run_underlay() {
   ensure_underlay
-  run 'namespace underlay smoke' sh scripts/vm-netns-smoke.sh
+  run 'namespace underlay smoke' sh scripts/vm-netns.sh smoke
 }
 
 run_vpp() {
@@ -117,7 +117,7 @@ case "$ACTION" in
   clean)
     require_root
     cleanup_runtime
-    sh scripts/vm-netns-clean.sh
+    sh scripts/vm-netns.sh clean
     ;;
   underlay)
     require_root

@@ -13,7 +13,7 @@ fi
 cd "$ROOT_DIR"
 
 if ! ip netns exec site-a true >/dev/null 2>&1 || ! ip netns exec site-b true >/dev/null 2>&1; then
-  sh scripts/vm-netns-setup.sh
+  sh scripts/vm-netns.sh setup
 fi
 BUILD_DIR="$BUILD_DIR" OUT_DIR="$OUT_DIR" sh scripts/vm-generate-netns-runtime.sh samples/linux-vm-netns.yaml --path path-direct >/dev/null
 mkdir -p "$OUT_DIR"

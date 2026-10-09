@@ -1,6 +1,14 @@
 #!/usr/bin/env sh
 set -eu
 
+ACTION=${1:-}
+[ "$#" -gt 0 ] && shift
+case "$ACTION" in
+  setup|status|clean) ;;
+  *) printf 'Usage: sh scripts/vm-vpp-netns.sh setup|status|clean\n' >&2; exit 2 ;;
+esac
+
+setup_runtime() (
 if [ "$(id -u)" != "0" ]; then
   printf 'Please run as root: sudo %s\n' "$0" >&2
   exit 1
@@ -23,18 +31,18 @@ esac
 
 for ns in site-a site-b; do
   ip netns exec "$ns" true >/dev/null 2>&1 || {
-    printf 'namespace missing: %s. Run sudo sh scripts/vm-netns-setup.sh first.\n' "$ns" >&2
+    printf 'namespace missing: %s. Run sudo sh scripts/vm-netns.sh setup first.\n' "$ns" >&2
     exit 1
   }
 done
 if [ "$VPP_TOPOLOGY" = "hub" ]; then
   ip netns exec hub-1 true >/dev/null 2>&1 || {
-    printf 'namespace missing: hub-1. Run sudo sh scripts/vm-netns-setup.sh first.\n' >&2
+    printf 'namespace missing: hub-1. Run sudo sh scripts/vm-netns.sh setup first.\n' >&2
     exit 1
   }
 fi
 
-sh "$(dirname -- "$0")/vm-vpp-netns-clean.sh"
+sh "$(dirname -- "$0")/vm-vpp-netns.sh" clean
 
 create_vpp_veth() {
   ns="$1"
@@ -84,7 +92,68 @@ Created VPP netns links:
   site-b:vpp-client 172.16.2.2/30 <-> VPP host-vpp-site-b 172.16.2.1/30
 
 Next:
-  sudo sh scripts/vm-vpp-netns-status.sh
+  sudo sh scripts/vm-vpp-netns.sh status
   sudo sh scripts/vm-vpp-netns-smoke.sh
 MSG
 fi
+)
+
+status_runtime() (
+if [ "$(id -u)" != "0" ]; then
+  printf 'Please run as root: sudo %s\n' "$0" >&2
+  exit 1
+fi
+
+printf '== Linux host links ==\n'
+ip addr show vpp-site-a 2>/dev/null || true
+ip addr show vpp-site-b 2>/dev/null || true
+
+for ns in site-a site-b; do
+  printf '\n== %s vpp-client ==\n' "$ns"
+  ip netns exec "$ns" ip addr show vpp-client 2>/dev/null || true
+  printf '\n== %s routes ==\n' "$ns"
+  ip netns exec "$ns" ip route 2>/dev/null || true
+done
+
+printf '\n== VPP interfaces ==\n'
+vppctl show interface
+
+printf '\n== VPP interface addresses ==\n'
+vppctl show interface address
+
+printf '\n== VPP IPv4 FIB ==\n'
+vppctl show ip fib
+)
+
+clean_runtime() (
+if [ "$(id -u)" != "0" ]; then
+  printf 'Please run as root: sudo %s\n' "$0" >&2
+  exit 1
+fi
+
+for ns in site-a site-b hub-1; do
+  ip netns exec "$ns" ip link del vpp-client 2>/dev/null || true
+  ip netns exec "$ns" ip link del vpp-client-a 2>/dev/null || true
+  ip netns exec "$ns" ip link del vpp-client-b 2>/dev/null || true
+done
+
+ip link del vpp-site-a 2>/dev/null || true
+ip link del vpp-site-b 2>/dev/null || true
+ip link del vpp-hub-a 2>/dev/null || true
+ip link del vpp-hub-b 2>/dev/null || true
+
+if command -v vppctl >/dev/null 2>&1; then
+  vppctl delete host-interface name vpp-site-a 2>/dev/null || true
+  vppctl delete host-interface name vpp-site-b 2>/dev/null || true
+  vppctl delete host-interface name vpp-hub-a 2>/dev/null || true
+  vppctl delete host-interface name vpp-hub-b 2>/dev/null || true
+fi
+
+printf 'Cleaned VPP netns veth links and host interfaces.\n'
+)
+
+case "$ACTION" in
+  setup) setup_runtime "$@" ;;
+  status) status_runtime "$@" ;;
+  clean) clean_runtime "$@" ;;
+esac

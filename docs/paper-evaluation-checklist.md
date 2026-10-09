@@ -1,5 +1,9 @@
 # Paper Evaluation Checklist
 
+2026-10-09更新: 現行client namespaceでDirect／Hub／GREの機能疎通を確認済み。初回ARP損失をwarm-upログに残している。実リンク障害検知、切替時間、最大通信断、反復統計、TCP再送、resource使用量は未完了の評価項目である。
+
+確認日、構成、測定制限の共通一覧: [現在の実装と検証状況](current-status.md)。
+
 この文書は、Ibukiの論文発表前評価を同じ順序で再現するためのチェックリストです。WindowsではC実装・設定・生成物を確認し、Linux VMではstrongSwan／VPPを含む実runtimeを確認します。
 
 ## 1. 共通準備
@@ -17,7 +21,7 @@ Linux VMでは、必要な権限と依存を確認した後、namespaceを準備
 ```sh
 sh scripts/vm-build-cc.sh
 sh scripts/vm-check.sh
-sudo sh scripts/vm-netns-setup.sh
+sudo sh scripts/vm-netns.sh setup
 ```
 
 VPP SDKを標準外prefixへ導入した場合は、`VPP_PREFIX`を指定してpreflightとbuildを実行します。
@@ -57,7 +61,7 @@ VPP_PREFIX=/opt/vpp EVENTNET_ENABLE_VPP_API=ON sh scripts/vm-build.sh
 ## 3. Runtime接合
 
 ```sh
-sudo sh scripts/vm-netns-ipsec-direct-smoke.sh
+sudo sh scripts/vm-netns-ipsec.sh direct smoke
 sudo sh scripts/vm-vpp-controller-netns-smoke.sh
 sudo MODE=direct sh scripts/vm-controller-integrated-runtime-smoke.sh samples/linux-vm-netns.yaml
 sudo MODE=fallback sh scripts/vm-controller-integrated-runtime-smoke.sh samples/linux-vm-netns.yaml

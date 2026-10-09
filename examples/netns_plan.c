@@ -347,15 +347,15 @@ static int write_apply_script(const char *filename, const char *out_dir, const e
     fprintf(file, "printf 'eventnet selected path: %s\\n'\n", path->path_id);
     fprintf(file, "printf 'eventnet runtime kind: %s\\n'\n\n", kind);
     if (strcmp(kind, "direct") == 0) {
-        fprintf(file, "sudo sh scripts/vm-netns-ipsec-hub-stop.sh 2>/dev/null || true\n");
-        fprintf(file, "sudo sh scripts/vm-netns-ipsec-direct-start.sh\n");
-        fprintf(file, "sudo sh scripts/vm-netns-ipsec-direct-smoke.sh\n");
+        fprintf(file, "sudo sh scripts/vm-netns-ipsec.sh hub stop 2>/dev/null || true\n");
+        fprintf(file, "sudo sh scripts/vm-netns-ipsec.sh direct start\n");
+        fprintf(file, "sudo sh scripts/vm-netns-ipsec.sh direct smoke\n");
     } else if (strcmp(kind, "hub") == 0) {
-        fprintf(file, "sudo sh scripts/vm-netns-ipsec-direct-stop.sh 2>/dev/null || true\n");
-        fprintf(file, "sudo sh scripts/vm-netns-ipsec-hub-start.sh\n");
-        fprintf(file, "sudo sh scripts/vm-netns-ipsec-hub-smoke.sh\n");
+        fprintf(file, "sudo sh scripts/vm-netns-ipsec.sh direct stop 2>/dev/null || true\n");
+        fprintf(file, "sudo sh scripts/vm-netns-ipsec.sh hub start\n");
+        fprintf(file, "sudo sh scripts/vm-netns-ipsec.sh hub smoke\n");
     } else if (strcmp(kind, "vpp") == 0) {
-        fprintf(file, "sudo sh scripts/%s\n", path_uses_namespaced_vpp(config, path) ? "vm-vpp-ns-topology.sh setup" : "vm-vpp-netns-setup.sh");
+        fprintf(file, "sudo sh scripts/%s\n", path_uses_namespaced_vpp(config, path) ? "vm-vpp-ns-topology.sh setup" : "vm-vpp-netns.sh setup");
         fprintf(file, "%sDRY_RUN=0 sh %s/vpp-netns-route-plan.sh\n", path_uses_namespaced_vpp(config, path) ? "sudo " : "", out_dir);
     } else {
         fprintf(file, "echo 'unsupported path for current netns runtime: %s' >&2\n", path->path_id);
@@ -434,22 +434,22 @@ static int write_integrated_script(const char *filename, const char *out_dir, co
     fprintf(file, "ensure_dummy_lan site-a 10.10.1.1/24\n");
     fprintf(file, "ensure_dummy_lan site-b 10.10.2.1/24\n\n");
     if (strcmp(kind, "direct") == 0) {
-        fprintf(file, "sh scripts/vm-netns-ipsec-hub-stop.sh 2>/dev/null || true\n");
-        fprintf(file, "sh scripts/vm-netns-ipsec-direct-start.sh\n");
-        fprintf(file, "sh scripts/vm-netns-ipsec-direct-smoke.sh\n");
+        fprintf(file, "sh scripts/vm-netns-ipsec.sh hub stop 2>/dev/null || true\n");
+        fprintf(file, "sh scripts/vm-netns-ipsec.sh direct start\n");
+        fprintf(file, "sh scripts/vm-netns-ipsec.sh direct smoke\n");
     } else if (strcmp(kind, "hub") == 0) {
-        fprintf(file, "sh scripts/vm-netns-ipsec-direct-stop.sh 2>/dev/null || true\n");
-        fprintf(file, "sh scripts/vm-netns-ipsec-hub-start.sh\n");
-        fprintf(file, "sh scripts/vm-netns-ipsec-hub-smoke.sh\n");
+        fprintf(file, "sh scripts/vm-netns-ipsec.sh direct stop 2>/dev/null || true\n");
+        fprintf(file, "sh scripts/vm-netns-ipsec.sh hub start\n");
+        fprintf(file, "sh scripts/vm-netns-ipsec.sh hub smoke\n");
     } else if (strcmp(kind, "vpp") == 0) {
-        fprintf(file, "%s sh scripts/%s\n", path_uses_namespaced_vpp(config, path) ? "sudo" : "", path_uses_namespaced_vpp(config, path) ? "vm-vpp-ns-topology.sh setup" : "vm-vpp-netns-setup.sh");
+        fprintf(file, "%s sh scripts/%s\n", path_uses_namespaced_vpp(config, path) ? "sudo" : "", path_uses_namespaced_vpp(config, path) ? "vm-vpp-ns-topology.sh setup" : "vm-vpp-netns.sh setup");
         if (path_has_gre_tunnel(config, path)) {
             const en_tunnel_t *tunnel = find_first_gre_tunnel(config, path);
             if (tunnel != NULL) {
                 const char *outer_local = tunnel->gre_outer_local_endpoint[0] == '\0' ? tunnel->local_endpoint : tunnel->gre_outer_local_endpoint;
                 const char *outer_remote = tunnel->gre_outer_remote_endpoint[0] == '\0' ? tunnel->remote_endpoint : tunnel->gre_outer_remote_endpoint;
                 if (path_uses_namespaced_vpp(config, path)) {
-                    fprintf(file, "sudo GRE_CHILD=%s GRE_IKE_LOCAL_ENDPOINT=%s GRE_IKE_REMOTE_ENDPOINT=%s GRE_OUTER_LOCAL_ENDPOINT=%s GRE_OUTER_REMOTE_ENDPOINT=%s GRE_LOCAL_ID=%s GRE_REMOTE_ID=%s OUT_DIR=%s sh scripts/vm-netns-ipsec-gre-start.sh\n",
+                    fprintf(file, "sudo GRE_CHILD=%s GRE_IKE_LOCAL_ENDPOINT=%s GRE_IKE_REMOTE_ENDPOINT=%s GRE_OUTER_LOCAL_ENDPOINT=%s GRE_OUTER_REMOTE_ENDPOINT=%s GRE_LOCAL_ID=%s GRE_REMOTE_ID=%s OUT_DIR=%s sh scripts/vm-netns-ipsec.sh gre start\n",
                         tunnel->tunnel_id, tunnel->local_endpoint, tunnel->remote_endpoint, outer_local, outer_remote,
                         tunnel->local_id[0] == '\0' ? tunnel->local_node : tunnel->local_id,
                         tunnel->remote_id[0] == '\0' ? tunnel->remote_node : tunnel->remote_id, out_dir);
@@ -493,9 +493,9 @@ static int write_rollback_script(const char *filename, const en_yaml_config_t *c
     fprintf(file, "if [ \"$(id -u)\" != \"0\" ]; then exec sudo sh \"$0\" \"$@\"; fi\n\n");
     fprintf(file, "printf 'eventnet runtime rollback: %s\\n'\n", kind);
     if (strcmp(kind, "direct") == 0) {
-        fprintf(file, "sh scripts/vm-netns-ipsec-direct-stop.sh\n");
+        fprintf(file, "sh scripts/vm-netns-ipsec.sh direct stop\n");
     } else if (strcmp(kind, "hub") == 0) {
-        fprintf(file, "sh scripts/vm-netns-ipsec-hub-stop.sh\n");
+        fprintf(file, "sh scripts/vm-netns-ipsec.sh hub stop\n");
     } else if (strcmp(kind, "vpp") == 0) {
         fprintf(file, "SWANCTL=\"${SWANCTL:-swanctl}\"\nSWANCTL_URI=\"${SWANCTL_URI:-}\"\n");
         fprintf(file, "run_swanctl() { if [ -n \"$SWANCTL_URI\" ]; then \"$SWANCTL\" --uri \"$SWANCTL_URI\" \"$@\"; else \"$SWANCTL\" \"$@\"; fi; }\n");
@@ -510,7 +510,7 @@ static int write_rollback_script(const char *filename, const en_yaml_config_t *c
                 else fprintf(file, "vppctl create gre tunnel src %s dst %s del 2>/dev/null || true\n", gre_local_endpoint, gre_remote_endpoint);
             }
         }
-        fprintf(file, "sh scripts/vm-vpp-netns-clean.sh\n");
+        fprintf(file, "sh scripts/vm-vpp-netns.sh clean\n");
     } else {
         fprintf(file, "printf '%%s\\n' 'unsupported runtime rollback' >&2\nexit 1\n");
     }

@@ -24,7 +24,7 @@ cd "$ROOT_DIR"
 
 for ns in site-a site-b; do
   ip netns exec "$ns" true >/dev/null 2>&1 || {
-    printf 'namespace missing: %s. Run sudo sh scripts/vm-netns-setup.sh first.\n' "$ns" >&2
+    printf 'namespace missing: %s. Run sudo sh scripts/vm-netns.sh setup first.\n' "$ns" >&2
     exit 1
   }
 done
@@ -35,7 +35,7 @@ ensure_dummy_lan site-b 10.10.2.1/24
 sh scripts/vm-generate-netns-runtime.sh "$YAML"
 grep -q '^selected_path: path-direct$' out/netns-runtime/selected-path.txt
 
-sh scripts/vm-vpp-netns-setup.sh
+sh scripts/vm-vpp-netns.sh setup
 DRY_RUN=0 sh out/netns-runtime/vpp-netns-route-plan.sh
 
 ip netns exec site-a ip route replace 10.10.2.0/24 via 172.16.1.1

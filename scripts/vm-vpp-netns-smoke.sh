@@ -8,7 +8,7 @@ fi
 
 for ns in site-a site-b client-a client-b; do
   ip netns exec "$ns" true >/dev/null 2>&1 || {
-    printf 'namespace missing: %s. Run sudo sh scripts/vm-netns-setup.sh first.\n' "$ns" >&2
+    printf 'namespace missing: %s. Run sudo sh scripts/vm-netns.sh setup first.\n' "$ns" >&2
     exit 1
   }
 done

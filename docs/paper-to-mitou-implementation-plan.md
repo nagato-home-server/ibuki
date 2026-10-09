@@ -1,5 +1,9 @@
 # 論文提出から未踏期間までの実装計画
 
+2026-10-09更新: Direct／Hub統合とVPP GRE＋strongSwan/XFRMはVMで再確認済み。Native IPIP/IPsecの過去のCI成功とは分けて扱う。論文前は新機能より連続通信中の障害・復帰・反復評価を優先し、閾値はユーザ設定可能な設計を維持する。
+
+確認日、構成、測定制限の共通一覧: [現在の実装と検証状況](current-status.md)。
+
 ## 判断の前提
 
 Ibukiの制御入力は、Web UIが生成する検証済みの正規スキーマを中心にする。YAMLは宣言的な設定の持ち運び、CI、再現実験、バックアップのために残す。したがって、論文提出時点でYAML 1.2全体を実装することは目的にしない。Controllerは入力形式にかかわらず、未知の項目・範囲外の値・未対応機能を拒否する。
@@ -38,12 +42,12 @@ JSONLの処理は、入力・出力ともyyjsonを共通ライブラリとして
 5. Telemetry保存の抽象インターフェースを追加する。論文提出時はJSONLファイルを標準実装とし、必要になった場合だけSQLite等を差し替えられる形にする。
 6. VPP Binary APIとstrongSwan VICIを実機に接続するための最小adapterを完成させ、vppctl/CLIは診断用・互換用として残す。
 7. strongSwanのOS固有Backend（Linux XFRM、BSD PF_KEY等）をCapabilityとadapter境界へ整理し、Linux固有の補助処理を本体から分離する。
-8. VPP GRE + strongSwan/XFRMとVPP Native IPIP/IPsecの最小構成は決定・疎通確認済みである。次は同じ測定条件で、切替時間、通信断、CPU、メモリ、MTU影響を比較する。
+8. VPP GRE＋strongSwan/XFRMは今回のVMで再確認し、VPP Native IPIP/IPsecは過去のCIで疎通確認済みである。同じcommit・環境・設定で両方式を再実行してから、切替時間、通信断、CPU、メモリ、MTU影響を比較する。
 
 ## 未踏期間中
 
 1. 複数VM、物理機、クラウド拠点を含む実験環境を構築し、Direct、Hub、Relay、クラウドIPsecの切替を実測する。
-2. Telemetry DBを導入する。用途は履歴ダッシュボード、長期傾向、閾値調整、障害解析、イベント再生、複数Agentの時系列相関であり、Path選択そのものに必須ではない。小規模構成はSQLite、時系列・多拠点構成はPrometheus等を候補とする。
+2. Telemetry履歴保存は後段で必要性を確認して導入する。用途はダッシュボード、長期傾向、閾値調整、障害解析、イベント再生、複数Agentの時系列相関であり、Path選択に必須ではない。小規模構成はSQLite、時系列・多拠点構成はPrometheus等を候補とし、経路制御の実測を優先する。
 3. 証明書認証、鍵更新、失効確認、認証情報の安全な格納をstrongSwan VICI操作と結合する。
 4. VLAN/VRF/FIBをVPP Binary APIで実反映し、IPsec対象外通信の遮断とrollbackを実トラフィックで検証する。
 5. 実験済みのVPP Native IPIP/IPsecを、IKE、SA同期、鍵更新、継続観測、rollbackを含む独立Backendへ発展させる。

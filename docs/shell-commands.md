@@ -1,8 +1,22 @@
 # Shell Commands
 
-PathWeaver で使う `scripts/*.sh` の実行方法と引数一覧です。
+Ibukiで使う `scripts/*.sh` の実行方法と引数一覧です。更新日: 2026-10-09。現行構成と確認範囲は[現状一覧](current-status.md)を参照してください。
 
 基本的には repository root で実行します。
+
+## 2026-10-09のshell統合
+
+`scripts/`直下のshellを62本から48本へ削減した。個別操作を別ファイルへ委譲するだけではなく、namespaceの3操作、共有root VPPの3操作、IPsecの10操作をそれぞれ共通入口内の関数へ統合した。関数はsubshellで実行し、mode固有変数・helper関数・trapを他の操作へ漏らさない。
+
+| 対象 | 現行入口 | 操作 |
+| --- | --- | --- |
+| Linux namespace underlay | `sh scripts/vm-netns.sh ACTION` | `setup`、`smoke`、`clean` |
+| strongSwan IPsec | `sh scripts/vm-netns-ipsec.sh MODE ACTION` | `direct`／`hub`: `generate`、`start`、`smoke`、`stop`、`clean`、`status`、`logs`。`gre`: `start [out-dir]`、`stop`、`clean`、`status`、`logs` |
+| 共有root VPPの互換構成 | `sh scripts/vm-vpp-netns.sh ACTION` | `setup`、`status`、`clean` |
+
+旧個別ファイルの互換wrapperは残さない。旧版で生成した`out/`の計画は再生成して使う。node別VPPの標準構成は`vm-vpp-ns-runtime.sh`と`vm-vpp-ns-topology.sh`を維持する。目的が異なる評価・障害注入のsmokeは独立したまま残す。
+
+引数・失敗伝播の回帰試験は`sh tests/test_shell_dispatch.sh`。OS／VPP／strongSwan操作をmockへ置き換え、実ネットワークを変更せずに統合入口を確認する。実疎通試験の代替ではない。
 
 ```sh
 cd controller
@@ -106,8 +120,8 @@ cd controller
 | `scripts/vm-paper-validation.sh` | `sh scripts/vm-paper-validation.sh samples/linux-vm-netns.yaml` / `sudo RUN_RUNTIME=1 sh scripts/vm-paper-validation.sh samples/linux-vm-netns.yaml` | `[yaml]` | `BUILD_DIR`, `OUT_DIR`, `RUN_RUNTIME` | 論文前の基準検証を一括実行する。C単体、scenario、route YAML、Agent／telemetry、threshold、stability、event／reload、VLAN／VPP、出力security、Shell構文を個別ログへ保存し、root実行時はXFRM、cleartext遮断、rollback、統合direct／fallbackも追加する。1ケース失敗後も最後まで実行し、`summary.csv`の終了コードで失敗を通知する。root専用caseは通常ユーザー実行時にskipとして記録する。 |
 | `scripts/generate-paper-graphs.py` | `python3 scripts/generate-paper-graphs.py --summary-csv out/evaluation/YYYYMMDD-HHMMSS/summary.csv --metrics-csv out/paper-metrics.csv --out-dir out/paper-figures` | `--summary-csv`, `--metrics-csv`, `--out-dir` | なし | 評価summaryと実測metricsから論文用SVG、集計CSVを生成する。metricsを省略した場合は評価結果・処理時間の図だけを生成する。 |
 | `scripts/vm-paper-collect-metrics.sh` | `REPEAT=5 OUT_FILE=out/paper-metrics.csv sudo -E sh scripts/vm-paper-collect-metrics.sh samples/linux-vm-netns.yaml` | `[yaml]` | `REPEAT`, `OUT_FILE`, `BUILD_DIR` | Direct／Fallbackの統合runtimeを反復実行し、遷移時間とpingのpacket lossをCSVへ保存する。各回のログも保存する。 |
-| `scripts/vm-vpp-ns-runtime.sh` | `sudo sh scripts/vm-vpp-ns-runtime.sh start|status|stop` | `start`, `status`, `stop` | `VPP`, `VPPCTL`, `VPP_NS_RUN_BASE`, `VPP_NS_NODES` | VPPを拠点名前空間ごとに起動し、CLI/API socketとPIDを分離する。namespace runtime v2の基盤。 |
-| `scripts/vm-vpp-ns-topology.sh` | `sudo sh scripts/vm-vpp-ns-topology.sh setup|status|clean` | `setup`, `status`, `clean` | `VPP_NS_RUN_BASE`, `VPPCTL` | `client-a`/`client-b`を含むVPP LAN、専用direct/Hub transit veth、Linux/XFRMへ渡すTAPを構成する。IPsec外側underlay linkはVPP transitと分離する。 |
+| `scripts/vm-vpp-ns-runtime.sh` | `sudo sh scripts/vm-vpp-ns-runtime.sh start|status|stop` | `start`, `status`, `stop` | `VPP`, `VPPCTL`, `VPP_NS_RUN_BASE`, `VPP_NS_NODES`, `VPP_READY_ATTEMPTS`, `VPP_NS_POLL_SLEEP_USEC` | node別CLI/API/stats socketとPIDを分離する。ready確認は既定120回、試験用poll sleepは既定1000µs。CLI待機を含むため厳密な120秒deadlineではない。 |
+| `scripts/vm-vpp-ns-topology.sh` | `sudo sh scripts/vm-vpp-ns-topology.sh setup|status|clean` | `setup`, `status`, `clean` | `VPP_NS_RUN_BASE`, `VPPCTL`, `VPP_TOPOLOGY_MODE`, `SKIP_GRE`, `SKIP_IPSEC_TAP`, `VPP_NS_NODES` | 独立client LAN、node別VPP、underlayを構成する。modeは`direct`／`hub`／`all`／`ipsec`。`ipsec`では平文transitなし、TAPは`SKIP_IPSEC_TAP=1`で省略。GRE試験は`SKIP_GRE=1`で生成計画に作成を任せる。 |
 | `scripts/vm-gre-namespace-v2-smoke.sh` | `sudo sh scripts/vm-gre-namespace-v2-smoke.sh samples/gre-namespace-v2.yaml` | `[yaml]` | `BUILD_DIR`, `OUT_DIR`, `GRE_RUN_BASE` | VPPとstrongSwanを同一namespaceへ置いたv2構成で、生成計画・暗号化GRE・双方向LAN pingを確認する。 |
 | `scripts/vm-paper-validation.sh` | `sh scripts/vm-paper-validation.sh samples/linux-vm-netns.yaml` / `sudo RUN_RUNTIME=1 sh scripts/vm-paper-validation.sh samples/linux-vm-netns.yaml` | `[yaml]` | `BUILD_DIR`, `OUT_DIR`, `RUN_RUNTIME` | 論文前の基準検証を一括実行する。C単体、scenario、route YAML、Agent／telemetry、threshold、stability、event／reload、VLAN／VPP、出力security、Shell構文を個別ログへ保存し、root実行時はXFRM、cleartext遮断、rollback、統合direct／fallbackも追加する。1ケース失敗後も最後まで実行し、`summary.csv`の終了コードで失敗を通知する。 |
 | `vm-evaluate.sh vici-runtime` | `VICI_URI=unix:///run/strongswan/charon.vici VICI_CHILD=tun-a-b VICI_PATH=path-direct VICI_BUILD_DIR=build-vici sh scripts/vm-evaluate.sh vici-runtime samples/linux-vm-netns.yaml` | `VICI_URI`, `VICI_CHILD`, `VICI_PATH`, `VICI_DURATION_MS`, `VICI_RETRY_COUNT`, `VICI_BACKOFF_MS`, `VICI_BUILD_DIR` | libvici probe、VICI socket、対象CHILD | version、`list-sas` observe、有限`child-updown` monitorと再接続を評価する。duration／retry／backoffは厳格な数値検証を行う。probe未構築または必須環境変数未指定時はskipする。 |
@@ -129,9 +143,9 @@ cd controller
 
 | script | 実行例 | 引数 | 主な環境変数 | 内容 |
 | --- | --- | --- | --- | --- |
-| `scripts/vm-netns-setup.sh` | `sudo sh scripts/vm-netns-setup.sh` | なし | なし | `site-a`、`site-b`、`hub-1`、`relay-c` namespace と underlay link を作る。 |
-| `scripts/vm-netns-smoke.sh` | `sudo sh scripts/vm-netns-smoke.sh` | なし | なし | direct、hub、relay のL3疎通をpingで確認する。 |
-| `scripts/vm-netns-clean.sh` | `sudo sh scripts/vm-netns-clean.sh` | なし | なし | 作成した namespace を削除する。 |
+| `scripts/vm-netns.sh setup` | `sudo sh scripts/vm-netns.sh setup` | なし | なし | `site-a`、`site-b`、`hub-1`、`relay-c` namespace と underlay link を作る。 |
+| `scripts/vm-netns.sh smoke` | `sudo sh scripts/vm-netns.sh smoke` | なし | なし | direct、hub、relay のL3疎通をpingで確認する。 |
+| `scripts/vm-netns.sh clean` | `sudo sh scripts/vm-netns.sh clean` | なし | なし | 作成した namespace を削除する。 |
 
 ## 5. IPsec Direct / Hub
 
@@ -159,17 +173,17 @@ sudo sh scripts/vm-netns-ipsec.sh hub clean
 
 | script | 実行例 | 引数 | 主な環境変数 | 内容 |
 | --- | --- | --- | --- | --- |
-| `scripts/vm-netns-ipsec.sh` | `sudo sh scripts/vm-netns-ipsec.sh hub status` / `sudo env GRE_OUT_DIR=out/gre-runtime sh scripts/vm-netns-ipsec.sh gre start` | `<direct\|hub> <generate\|start\|status\|logs\|smoke\|stop\|clean>`、GREは`start/status/logs/stop/clean` | `RUN_BASE`, `SWANCTL_WORK_BASE`, `GRE_*` | direct/hub/GRE IPsec操作の共通入口。個別shellは互換用の内部実装として直接実行できる。 |
-| `scripts/vm-netns-ipsec-direct-generate.sh` | `sh scripts/vm-netns-ipsec-direct-generate.sh` | なし | `OUT_DIR`, `PSK` | direct用 `swanctl.conf` を生成する。通常は `vm-netns-ipsec.sh direct generate` 経由で使う。 |
-| `scripts/vm-netns-ipsec-direct-start.sh` | `sudo sh scripts/vm-netns-ipsec-direct-start.sh` | なし | `OUT_DIR`, `RUN_BASE`, `SWANCTL_WORK_BASE`, `CHARON` | direct IPsec用charonをnamespace内で起動し、接続をload/initiateする。通常は `vm-netns-ipsec.sh direct start` 経由。 |
-| `scripts/vm-netns-ipsec-direct-smoke.sh` | `sudo sh scripts/vm-netns-ipsec-direct-smoke.sh` | なし | `RUN_BASE` | direct IPsecのpingとESP counter増加を確認する。通常は `vm-netns-ipsec.sh direct smoke` 経由。 |
-| `scripts/vm-netns-ipsec-direct-stop.sh` | `sudo sh scripts/vm-netns-ipsec-direct-stop.sh` | なし | `RUN_BASE`, `SWANCTL_WORK_BASE` | direct IPsec用charon停止とXFRM掃除。通常は `vm-netns-ipsec.sh direct stop` 経由。 |
-| `scripts/vm-netns-ipsec-hub-generate.sh` | `sh scripts/vm-netns-ipsec-hub-generate.sh` | なし | `OUT_DIR`, `PSK` | hub用 `swanctl.conf` を生成する。通常は `vm-netns-ipsec.sh hub generate` 経由。 |
-| `scripts/vm-netns-ipsec-hub-start.sh` | `sudo sh scripts/vm-netns-ipsec-hub-start.sh` | なし | `OUT_DIR`, `RUN_BASE`, `SWANCTL_WORK_BASE`, `DIRECT_RUN_BASE`, `CHARON` | hub IPsec用charonとXFRM interfaceを起動する。通常は `vm-netns-ipsec.sh hub start` 経由。 |
-| `scripts/vm-netns-ipsec-hub-smoke.sh` | `sudo sh scripts/vm-netns-ipsec-hub-smoke.sh` | なし | `RUN_BASE` | hub IPsecのpingとESP counter増加を確認する。通常は `vm-netns-ipsec.sh hub smoke` 経由。 |
-| `scripts/vm-netns-ipsec-hub-stop.sh` | `sudo sh scripts/vm-netns-ipsec-hub-stop.sh` | なし | `RUN_BASE`, `SWANCTL_WORK_BASE` | hub IPsec用charon停止、route/XFRM掃除。通常は `vm-netns-ipsec.sh hub stop` 経由。 |
-| `scripts/vm-netns-ipsec-gre-start.sh` | `sudo env GRE_OUT_DIR=out/gre-runtime sh scripts/vm-netns-ipsec.sh gre start` | `[out-dir]` | `GRE_OUT_DIR`, `GRE_RUN_BASE`, `GRE_SWANCTL_WORK_BASE`, `GRE_*`, `CHARON` | GRE計画からnamespace内charonを起動し、site-a/site-bのVICI設定ロードとGRE CHILD_SA開始を行う。通常は共通入口経由。 |
-| `scripts/vm-netns-ipsec-gre-stop.sh` | `sudo sh scripts/vm-netns-ipsec.sh gre stop` | なし | `GRE_RUN_BASE` | GRE用charon停止とXFRM掃除。通常は共通入口経由。 |
+| `scripts/vm-netns-ipsec.sh` | `sudo sh scripts/vm-netns-ipsec.sh hub status` / `sudo sh scripts/vm-netns-ipsec.sh gre start out/gre-runtime` | `<direct\|hub> <generate\|start\|status\|logs\|smoke\|stop\|clean>`、GREは`start [out-dir]/status/logs/stop/clean` | `RUN_BASE`, `SWANCTL_WORK_BASE`, `GRE_*` | direct/hub/GREの操作実装を共通入口内へ統合。旧個別shellは削除済み。GREのstatus／logsも`GRE_RUN_BASE`を参照する。 |
+| `scripts/vm-netns-ipsec.sh direct generate` | `sh scripts/vm-netns-ipsec.sh direct generate` | なし | `OUT_DIR`, `PSK` | direct用 `swanctl.conf` を生成する。通常は `vm-netns-ipsec.sh direct generate` 経由で使う。 |
+| `scripts/vm-netns-ipsec.sh direct start` | `sudo sh scripts/vm-netns-ipsec.sh direct start` | なし | `OUT_DIR`, `RUN_BASE`, `SWANCTL_WORK_BASE`, `CHARON` | direct IPsec用charonをnamespace内で起動し、接続をload/initiateする。通常は `vm-netns-ipsec.sh direct start` 経由。 |
+| `scripts/vm-netns-ipsec.sh direct smoke` | `sudo sh scripts/vm-netns-ipsec.sh direct smoke` | なし | `RUN_BASE` | direct IPsecのpingとESP counter増加を確認する。通常は `vm-netns-ipsec.sh direct smoke` 経由。 |
+| `scripts/vm-netns-ipsec.sh direct stop` | `sudo sh scripts/vm-netns-ipsec.sh direct stop` | なし | `RUN_BASE`, `SWANCTL_WORK_BASE` | direct IPsec用charon停止とXFRM掃除。通常は `vm-netns-ipsec.sh direct stop` 経由。 |
+| `scripts/vm-netns-ipsec.sh hub generate` | `sh scripts/vm-netns-ipsec.sh hub generate` | なし | `OUT_DIR`, `PSK` | hub用 `swanctl.conf` を生成する。通常は `vm-netns-ipsec.sh hub generate` 経由。 |
+| `scripts/vm-netns-ipsec.sh hub start` | `sudo sh scripts/vm-netns-ipsec.sh hub start` | なし | `OUT_DIR`, `RUN_BASE`, `SWANCTL_WORK_BASE`, `DIRECT_RUN_BASE`, `CHARON` | hub IPsec用charonとXFRM interfaceを起動する。通常は `vm-netns-ipsec.sh hub start` 経由。 |
+| `scripts/vm-netns-ipsec.sh hub smoke` | `sudo sh scripts/vm-netns-ipsec.sh hub smoke` | なし | `RUN_BASE` | hub IPsecのpingとESP counter増加を確認する。通常は `vm-netns-ipsec.sh hub smoke` 経由。 |
+| `scripts/vm-netns-ipsec.sh hub stop` | `sudo sh scripts/vm-netns-ipsec.sh hub stop` | なし | `RUN_BASE`, `SWANCTL_WORK_BASE` | hub IPsec用charon停止、route/XFRM掃除。通常は `vm-netns-ipsec.sh hub stop` 経由。 |
+| `scripts/vm-netns-ipsec.sh gre start` | `sudo env GRE_OUT_DIR=out/gre-runtime sh scripts/vm-netns-ipsec.sh gre start` | `[out-dir]` | `GRE_OUT_DIR`, `GRE_RUN_BASE`, `GRE_SWANCTL_WORK_BASE`, `GRE_*`, `CHARON` | GRE計画からnamespace内charonを起動し、site-a/site-bのVICI設定ロードとGRE CHILD_SA開始を行う。通常は共通入口経由。 |
+| `scripts/vm-netns-ipsec.sh gre stop` | `sudo sh scripts/vm-netns-ipsec.sh gre stop` | なし | `GRE_RUN_BASE` | GRE用charon停止とXFRM掃除。通常は共通入口経由。 |
 
 ## 6. VPP
 
@@ -179,10 +193,10 @@ sudo sh scripts/vm-netns-ipsec.sh hub clean
 | `scripts/vm-install-vpp-fdio.sh` | `sudo DRY_RUN=0 sh scripts/vm-install-vpp-fdio.sh` | なし | `DRY_RUN=0\|1`, `CHANNEL`, `PACKAGECLOUD_SCRIPT_URL` | FD.io packagecloud repositoryを使ってVPPをinstallする補助。既定はdry-run。 |
 | `scripts/vm-vpp-route-plan-smoke.sh` | `sh scripts/vm-vpp-route-plan-smoke.sh samples/linux-vm-netns.yaml` | `[yaml]` 省略時 `samples/linux-vm-netns.yaml` | なし | directとhub fallbackに加え、`samples/vpp-vlan-hub-netns.yaml`のwaypoint VLAN sub-interface・ACL planをdry-runで確認する。 |
 | `scripts/vm-relay-route-plan-smoke.sh` | `sh scripts/vm-relay-route-plan-smoke.sh samples/route-examples.yaml` | `[yaml]` | `BUILD_DIR`, `OUT_DIR` | Relay直列Pathのnode別route 4本が生成されることを確認する。実VPP forwardingではなくplan検証。 |
-| `scripts/vm-vpp-netns-setup.sh` | `sudo sh scripts/vm-vpp-netns-setup.sh` | なし | なし | VPP host-interface と namespace veth を作る。 |
-| `scripts/vm-vpp-netns-status.sh` | `sudo sh scripts/vm-vpp-netns-status.sh` | なし | なし | VPP interface/FIB とnetns側interfaceを表示する。 |
+| `scripts/vm-vpp-netns.sh setup` | `sudo sh scripts/vm-vpp-netns.sh setup` | なし | なし | VPP host-interface と namespace veth を作る。 |
+| `scripts/vm-vpp-netns.sh status` | `sudo sh scripts/vm-vpp-netns.sh status` | なし | なし | VPP interface/FIB とnetns側interfaceを表示する。 |
 | `scripts/vm-vpp-netns-smoke.sh` | `sudo sh scripts/vm-vpp-netns-smoke.sh` | なし | `REQUIRE_LOCAL_VPP_PING=1` | VPP経由の双方向LAN疎通を主判定とし、VPP自身のlocal address pingは補助確認として扱う。VPP実装やaf_packet構成によってlocal addressが応答しない場合も、実データ転送が成功すれば通過する。`REQUIRE_LOCAL_VPP_PING=1`で従来どおりlocal pingを必須化する。 |
-| `scripts/vm-vpp-netns-clean.sh` | `sudo sh scripts/vm-vpp-netns-clean.sh` | なし | なし | VPP netns接続用のveth/interfaceを削除する。 |
+| `scripts/vm-vpp-netns.sh clean` | `sudo sh scripts/vm-vpp-netns.sh clean` | なし | なし | VPP netns接続用のveth/interfaceを削除する。 |
 | `scripts/vm-vpp-controller-netns-smoke.sh` | `sudo sh scripts/vm-vpp-controller-netns-smoke.sh samples/linux-vm-netns.yaml` | `[yaml]` 省略時 `samples/linux-vm-netns.yaml` | `VPPCTL`, `VPPCTL_SOCKET` | controller-generated VPP netns route planを実VPPへ適用し、LAN疎通を確認する。生成planは`VPPCTL_SOCKET`指定時に`vppctl -s SOCKET`で接続する。 |
 | `scripts/vm-real-smoke.sh` | `sudo sh scripts/vm-real-smoke.sh samples/linux-vm-netns.yaml [preflight\|underlay\|vpp\|ipsec\|gre\|integrated\|all\|clean]` | `[yaml]`, `[action]` | `KEEP_RUNTIME` | 実環境検証の統一入口。VPP namespace、strongSwan direct IPsec、controller-generated GRE、統合runtimeを個別または一括で実行し、終了時にruntimeを掃除する。`preflight`のみroot不要、`KEEP_RUNTIME=1`で状態を保持する。 |
 | `scripts/vm-vpp-routes-yaml-netns-smoke.sh` | `sudo sh scripts/vm-vpp-routes-yaml-netns-smoke.sh samples/vpp-netns-routes.yaml` | `[yaml]` 省略時 `samples/vpp-netns-routes.yaml` | `OUT_DIR` | YAML `routes[]`から生成したtable 100（VRF）の明示的な双方向VPP routeでLAN疎通を確認し、planのtable準備、VRF・各prefix・期待next-hopのVPP FIB出現も記録する。 |
@@ -212,7 +226,7 @@ sh scripts/demo-mitou.sh samples/linux-vm-netns.yaml
 
 ```sh
 cd controller
-sudo sh scripts/vm-netns-setup.sh
+sudo sh scripts/vm-netns.sh setup
 sudo sh scripts/vm-netns-ipsec.sh direct start
 sudo sh scripts/vm-netns-ipsec.sh direct smoke
 sudo sh scripts/vm-netns-ipsec.sh direct stop
@@ -226,7 +240,7 @@ sudo sh scripts/vm-netns-ipsec.sh hub stop
 ```sh
 cd controller
 sh scripts/vm-vpp-preflight.sh
-sudo sh scripts/vm-vpp-netns-setup.sh
+sudo sh scripts/vm-vpp-netns.sh setup
 sudo sh scripts/vm-vpp-controller-netns-smoke.sh samples/linux-vm-netns.yaml
 sudo sh scripts/vm-vpp-routes-yaml-netns-smoke.sh samples/vpp-netns-routes.yaml
 sudo RUN_RUNTIME=1 sh scripts/vm-evaluate.sh all samples/linux-vm-netns.yaml

@@ -1,6 +1,10 @@
 # 未踏提出向け 実装到達点 詳細版
 
-この文書は、PathWeaver の現時点の実装を、未踏提出・共同作業・デモ説明でそのまま使える粒度に整理したものです。
+2026-10-09更新: Direct／Hub統合とVPP GRE＋strongSwan/XFRMをVMで再検証した。ARP warm-up後の双方向疎通とESP進行は確認済みだが、実リンク障害の検知・切替時間と反復評価は未完了。以下の2026-09-25のCTest／CI結果は過去の確認記録であり、最新コミットのCI結果ではない。
+
+確認日、構成、測定制限の共通一覧: [現在の実装と検証状況](current-status.md)。
+
+この文書は、Ibuki（旧称PathWeaver）の実装を、未踏提出・共同作業・デモ説明で使える粒度に整理したものです。日付付きの検証結果は当時の状態を示します。
 
 単に「どの機能があるか」を列挙するだけでなく、なぜその機能を実装したのか、どのような操作で何を確認できるのか、そして本番実装へ進む際に何が残っているのかを明確にします。
 
@@ -14,7 +18,7 @@ namespace v2では、strongSwan/XFRM backendのVPP GRE over IPsecと、比較用
 
 ## 1. プロジェクト概要
 
-PathWeaver は、strongSwan、VPP、将来的には FRRouting などの既存ネットワークOSSを、宣言的なIntentとイベント駆動の制御ロジックで束ねるためのネットワーク制御基盤です。
+Ibukiは、strongSwan、VPP、将来的にはFRRoutingなどの既存ネットワークOSSを、宣言的なIntentとイベント駆動の制御ロジックで束ねるためのネットワーク制御基盤です。
 
 本プロジェクトの目的は、新しいVPNプロトコルや独自データプレーンを作ることではありません。IPsec、VPP forwarding、Linux network namespace など、既に存在する標準的な仕組みを利用し、その上位に「どの経路を選ぶか」「いつ切り替えるか」「なぜその経路を選んだか」を扱う制御プレーンを作ることを狙っています。
 
@@ -81,7 +85,7 @@ controller core は `src/` と `include/eventnet/` にあります。
 - `Selection result`
   - 選ばれたPath、除外されたPath、選択理由を表します。
 
-この段階では、controllerは本番daemonとして常駐するのではなく、CLIやscriptから呼び出して使います。これは実装を小さく保ち、選択ロジックやruntime生成を先に検証するためです。
+ControllerはCLI／生成scriptでの試験に加え、eventnetdによる周期評価・Unix socket入力・reload・state復元を持ちます。常駐入口の存在と、HA・認証・長時間運用を備えた本番daemon完成は区別します。
 
 ### 3.2 YAML parser
 
@@ -90,6 +94,7 @@ YAML parser は `src/yaml_config.c` にあります。
 現在読めるtop-level key:
 
 - `tunnels`
+- `nodes`
 - `vpp_edges`
 - `paths`
 - `intents`
@@ -99,12 +104,13 @@ YAML parser は `src/yaml_config.c` にあります。
 ```yaml
 vpp_edges:
   - node_id: site-a
-    vpp_interface: host-vpp-site-a
-    namespace_address: 172.16.1.2/30
-    next_hop: 172.16.1.2
+    vpp_interface: host-ib-lan-a
+    namespace_address: 10.10.1.2/24
+    next_hop: 10.10.1.2
+    vpp_socket: /run/ibuki-vpp-ns/site-a/cli.sock
 ```
 
-この情報により、Cコードに `172.16.x.x` のnext-hopを固定せず、YAML側でVPP接続点を定義できます。
+この情報により、YAML側でVPP LAN接続点とnode別socketを定義できます。統合IPsecの対向LAN向け経路はPathの`routes[]`でTAP next-hopを指定します。
 
 YAML parserは本格的なYAMLライブラリではなく、現在の実証に必要なindentation-based parserです。将来的にYAML表現が複雑になる場合は、libyaml等への置き換え候補があります。
 
@@ -269,11 +275,11 @@ VPPをLinux namespaceと接続し、VPPがL3 forwarding planeとして動作す�
 構成:
 
 ```text
-site-a:vpp-client 172.16.1.2/30
-  <-> VPP host-vpp-site-a 172.16.1.1/30
+client-a:eth0 10.10.1.2/24
+  <-> site-a VPP host-ib-lan-a 10.10.1.1/24
 
-site-b:vpp-client 172.16.2.2/30
-  <-> VPP host-vpp-site-b 172.16.2.1/30
+client-b:eth0 10.10.2.2/24
+  <-> site-b VPP host-ib-lan-b 10.10.2.1/24
 ```
 
 確認内容:
@@ -281,8 +287,8 @@ site-b:vpp-client 172.16.2.2/30
 - VPP host-interfaceを作成。
 - namespace側vethとVPP host-interfaceを接続。
 - controller生成のVPP routeを `DRY_RUN=0` で実適用。
-- `site-a` / `site-b` のLAN routeをVPP edgeへ向ける。
-- `10.10.1.1 <-> 10.10.2.1` のpingがVPP経由で成功。
+- 独立clientのdefault routeをVPP gatewayへ向ける。
+- `10.10.1.2 <-> 10.10.2.2` のpingがVPP経由で成功。
 
 ### 4.4 Integrated runtime
 
@@ -320,7 +326,7 @@ Controller integrated runtime smoke passed: MODE=direct
 Controller integrated runtime smoke passed: MODE=fallback
 ```
 
-注意点として、現段階では「同じcontroller-generated planでIPsecとVPPを連続制御する」統合です。同一packetがIPsec復号後にVPP forwarding pipelineを連続通過する本番gateway pipelineは、次段階の設計・実装課題です。
+現行構成は同じcontroller-generated planでIPsecとVPPを制御し、独立client通信をVPP、TAP、Linux/XFRM、対向VPPへ転送します。双方向client疎通とESP進行を確認済みですが、本番gatewayの鍵更新・連続通信・障害復旧を定量評価した結果ではありません。
 
 ## 5. 代表デモ
 

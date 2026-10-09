@@ -1,5 +1,9 @@
 # Linux VM Smoke Test
 
+2026-10-09更新: 標準の実疎通はclient-a／client-bからsite内VPPとstrongSwan/XFRMへ流す構成で確認した。Direct／Hub統合とGREはいずれもARP warm-up後に双方向3/3。初回損失、2 vCPU、offload無効化、poll sleepを測定条件として残す。性能反復と最新CIは別途確認する。
+
+確認日、構成、測定制限の共通一覧: [現在の実装と検証状況](../docs/current-status.md)。
+
 共有フォルダ上の `controller` を Linux VM から実行するための最小手順です。
 
 ## AF_PACKET の送信互換性
@@ -43,6 +47,8 @@ Controller 統合・GRE smoke は、測定用の3回pingの前にneighbor warm-u
 
 ## Script Map
 
+shellは62本から48本に統合した。underlayは`vm-netns.sh setup|smoke|clean`、IPsecは`vm-netns-ipsec.sh direct|hub|gre ACTION`、共有root VPPの互換操作は`vm-vpp-netns.sh setup|status|clean`を使う。旧個別shellは削除済みなので、古い生成計画は再生成する。node別VPPと各評価試験は責務が異なるため維持する。
+
 まず迷ったら、次の順に使います。
 
 | 目的 | スクリプト |
@@ -52,7 +58,7 @@ Controller 統合・GRE smoke は、測定用の3回pingの前にneighbor warm-u
 | build | `vm-build-cc.sh`, `vm-build.sh` |
 | 一発デモ | `demo-mitou.sh` |
 | scenario実験 | `vm-eventnet-scenario-smoke.sh` |
-| netns underlay | `vm-netns-setup.sh`, `vm-netns-smoke.sh`, `vm-netns-clean.sh` |
+| netns underlay | `vm-netns.sh setup`, `vm-netns.sh smoke`, `vm-netns.sh clean` |
 | IPsec direct/hub/GRE | `vm-netns-ipsec.sh direct|hub <action>` / `sudo env GRE_OUT_DIR=out/gre-runtime sh scripts/vm-netns-ipsec.sh gre start` |
 | VPP準備 | `vm-vpp-preflight.sh`, `vm-install-vpp-fdio.sh` |
 | VPP netns | `vm-vpp-netns-*.sh`, `vm-vpp-controller-netns-smoke.sh` |
@@ -78,10 +84,11 @@ sudo sh scripts/vm-real-smoke.sh samples/linux-vm-netns.yaml ipsec
 sudo sh scripts/vm-real-smoke.sh samples/gre-namespace-v2.yaml gre
 ```
 
-一括実行:
+Direct／Hub統合とGREは、それぞれ対応するYAMLで実行します。`all`は同一YAMLを各試験へ渡すため、Direct用sampleをそのままGRE試験まで流す一括検証の推奨手順にはしません。
 
 ```sh
-sudo sh scripts/vm-real-smoke.sh samples/linux-vm-netns.yaml all
+sudo sh scripts/vm-real-smoke.sh samples/linux-vm-netns.yaml integrated
+sudo sh scripts/vm-real-smoke.sh samples/gre-namespace-v2.yaml gre
 ```
 
 統合実行は、VPP namespace と direct IPsec を準備してから、controller が生成した
@@ -160,7 +167,7 @@ sh scripts/vm-generate-plan.sh samples/linux-vm-netns.yaml
 ## 4. Namespace Underlay
 
 ```sh
-sudo sh scripts/vm-netns-setup.sh
+sudo sh scripts/vm-netns.sh setup
 ```
 
 基本疎通:
@@ -176,7 +183,7 @@ sudo ip netns exec site-b ping -c 1 203.0.113.17
 IPsec/VPP の前に、Direct / Hub / Relay の L3 経路が namespace 内で成立するか確認します。
 
 ```sh
-sudo sh scripts/vm-netns-smoke.sh
+sudo sh scripts/vm-netns.sh smoke
 ```
 
 このテストは `10.10.1.1/24` と `10.10.2.1/24` の dummy LAN を作り、経路を direct → hub → relay に切り替えながら ping します。
@@ -184,7 +191,7 @@ sudo sh scripts/vm-netns-smoke.sh
 片付け:
 
 ```sh
-sudo sh scripts/vm-netns-clean.sh
+sudo sh scripts/vm-netns.sh clean
 ```
 
 ## Current Runtime Shape
@@ -398,8 +405,8 @@ sudo DRY_RUN=0 sh out/netns-runtime/vpp-route-plan.sh
 VPP 導入後、Linux namespace と VPP を veth + AF_PACKET host-interface で接続します。
 
 ```sh
-sudo sh scripts/vm-vpp-netns-setup.sh
-sudo sh scripts/vm-vpp-netns-status.sh
+sudo sh scripts/vm-vpp-netns.sh setup
+sudo sh scripts/vm-vpp-netns.sh status
 sudo sh scripts/vm-vpp-netns-smoke.sh
 ```
 
@@ -416,7 +423,7 @@ sudo sh scripts/vm-vpp-netns-smoke.sh
 片付け:
 
 ```sh
-sudo sh scripts/vm-vpp-netns-clean.sh
+sudo sh scripts/vm-vpp-netns.sh clean
 ```
 
 この smoke test は IPsec とは独立して、client namespace間をVPPがL3 forwardingすることを確認します。

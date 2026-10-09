@@ -14,7 +14,7 @@ fi
 cd "$ROOT_DIR"
 
 cleanup() {
-  sh scripts/vm-netns-ipsec-direct-stop.sh >/dev/null 2>&1 || true
+  sh scripts/vm-netns-ipsec.sh direct stop >/dev/null 2>&1 || true
 }
 trap cleanup EXIT INT TERM
 
@@ -25,14 +25,14 @@ apply_block() {
   ip netns exec site-b ip xfrm policy add dir in src "$SOURCE_PREFIX" dst "$DESTINATION_PREFIX" priority "$BLOCK_PRIORITY" action block
 }
 
-sh scripts/vm-netns-ipsec-hub-stop.sh >/dev/null 2>&1 || true
-sh scripts/vm-netns-ipsec-direct-start.sh
-sh scripts/vm-netns-ipsec-direct-smoke.sh
+sh scripts/vm-netns-ipsec.sh hub stop >/dev/null 2>&1 || true
+sh scripts/vm-netns-ipsec.sh direct start
+sh scripts/vm-netns-ipsec.sh direct smoke
 apply_block
 printf '%s\n' '== IPsec remains usable with lower-priority cleartext block =='
-sh scripts/vm-netns-ipsec-direct-smoke.sh
+sh scripts/vm-netns-ipsec.sh direct smoke
 
-sh scripts/vm-netns-ipsec-direct-stop.sh
+sh scripts/vm-netns-ipsec.sh direct stop
 ip netns exec site-a ip route replace "$DESTINATION_PREFIX" via 203.0.113.9
 ip netns exec site-b ip route replace "$SOURCE_PREFIX" via 203.0.113.10
 apply_block

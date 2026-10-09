@@ -1,5 +1,9 @@
 # Ibuki Cコード関数リファレンス
 
+2026-10-09更新: API／関数の説明と実環境確認は別の範囲である。`examples/netns_plan.c`の統合生成計画はnode別VPPへ引数を保持して送信し、独立client間pingをARP warm-upと測定に分ける。現行構成ではsite-a／site-bのVPPとcharonが同居する。
+
+確認日、構成、測定制限の共通一覧: [現在の実装と検証状況](current-status.md)。
+
 ## 1. 目的と読み方
 
 この文書は、IbukiのC実装を「どの関数が、どの入力を受け、どの状態または外部ネットワークを変更するか」という単位で整理したコードリファレンスである。設計書の用語と実装の対応を確認するときは、次の順に読む。
@@ -287,7 +291,7 @@ VICIの本番接続点は実装済みだが、証明書配置、鍵更新、権�
 |---|---|---|
 | `vm-vpp-ns-runtime.sh` | `start`、`stop`、`status` | site namespace内でVPP process、CLI socket、API socket、pid/logを分離する。 |
 | `vm-vpp-ns-topology.sh` | `setup`、`clean` | LAN/underlay veth、VPP host-interface、underlay routeを構築・撤去する。 |
-| `vm-netns-ipsec-gre-start.sh` | `start` | site namespace内charonとVICI socketを起動する。 |
+| `vm-netns-ipsec.sh gre start` | `start` | site namespace内charonとVICI socketを起動する。 |
 | `vm-gre-namespace-v2-smoke.sh` | main sequence | topology、strongSwan、生成計画、VPP GRE、双方向pingを統合検証する。 |
 | `vm-build-cc.sh` | build stages | C23/yyjsonを含むC実装をコンパイルし、unit testを実行する。 |
 | `vm-paper-validation.sh` | case dispatcher | 論文用のunit、scenario、Telemetry、policy、runtime評価を分類実行する。 |

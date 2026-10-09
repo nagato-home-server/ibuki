@@ -26,9 +26,9 @@ nodes:
 
 ## GRE over IPsec
 
-実験的な計画生成として、VPPのL3 GRE interfaceをstrongSwanのIPsecで保護する`gre_over_ipsec`を指定できます。これは論文提出までの正式Backendではなく、VPP Native IPsecとの組合せを未踏期間に検証するための境界です。Linux GREは標準Backendにしません。`local_endpoint`と`remote_endpoint`はGREの外側endpoint、`gre_local_address`と`gre_remote_address`はGRE内側のL3アドレスです。`gre_interface`はVPPで生成されるinterface名と一致させ、複数トンネルを固定する場合は`gre_instance`を指定します。`mtu`はGRE interfaceへ設定する任意のMTUです。
+VPPのL3 GRE interfaceをstrongSwanのIPsecで保護する`gre_over_ipsec`を指定できます。namespace v2ではVPP GRE＋strongSwan/XFRMの双方向実疎通を確認済みです。本番用鍵管理や反復性能評価の完了を意味しません。Linux GREは標準Backendにしません。`local_endpoint`と`remote_endpoint`はIKE endpoint、`gre_outer_local_endpoint`と`gre_outer_remote_endpoint`は省略時にIKE endpointを使うGRE outer endpointです。`gre_local_address`と`gre_remote_address`はGRE内側のL3アドレスです。`gre_interface`はVPPで生成されるinterface名と一致させ、複数トンネルを固定する場合は`gre_instance`を指定します。`mtu`はGRE interfaceへ設定する任意のMTUです。
 
-GRE用のstrongSwan CHILD_SA計画は、GREプロトコルをouter endpointの`/32[gre]` selectorで保護します。GRE outer endpointがIKE endpointと一致する場合はtransport mode、異なる場合はtunnel modeで生成します。`local_endpoint`／`remote_endpoint`はstrongSwanのIKE endpoint、`gre_outer_local_endpoint`／`gre_outer_remote_endpoint`はVPP GRE outer endpointとして分離できます。統合runtimeではnamespace内のcharonを起動してVICIから設定をロードし、SA確立後にVPP GREと経路を適用します。ただし、VPPをroot namespace、XFRMをsite namespaceへ配置する現在の実験構成では、GRE復号後packetをVPPへ戻すforwarding pipelineが未完成です。詳細は`docs/gre-namespace-constraint.md`に記録しています。GREはL3カプセル化であり、GRETAP、VXLAN、EVPN、L2 bridgeによるL2延伸はこの指定に含まれません。BGP／OSPFによる動的経路交換とVPP Native IPsecは未踏期間の拡張です。
+GRE用のstrongSwan CHILD_SA計画は、GREプロトコルをouter endpointの`/32[gre]` selectorで保護します。GRE outer endpointがIKE endpointと一致する場合はtransport mode、異なる場合はtunnel modeで生成します。統合runtimeではsite namespace内にVPPとcharonを同居させ、VICIから設定をロードし、SA確立後にVPP GREと経路を適用します。LAN端末は独立したclient namespaceに置きます。詳細は[Namespace Runtime v2](namespace-runtime-v2.md)を参照してください。root VPPとsite XFRMを分けた旧構成の問題は[移行前の記録](gre-namespace-constraint.md)です。GREはL3カプセル化であり、GRETAP、VXLAN、EVPN、L2 bridgeによるL2延伸は含みません。BGP／OSPFとVPP Nativeの動的鍵管理は未踏期間の拡張です。
 
 VPP Native IPsecを試す場合は、Tunnelへ `vpp_local_sa_id`、`vpp_remote_sa_id`、`vpp_local_spi`、`vpp_remote_spi`、`vpp_crypto_algorithm`、`vpp_crypto_key`、`vpp_integrity_algorithm`、`vpp_integrity_key`を追加します。`gre_interface`には`ipsec-gre0`のようなNative IPsec-GRE interface名を指定します。生成器は両方向のVPP SAと`create ipsec gre tunnel`によるinterface生成を計画します。これはstrongSwanのIKE・鍵更新とは別の静的SA Backendであり、実運用の鍵同期を意味しません。
 
@@ -118,7 +118,7 @@ paths:
 vppctl ip route add 10.10.2.0/24 via 10.255.0.2 gre0
 ```
 
-`gre_over_ipsec`は現在、計画生成とroute egress解決の検証対象です。VPP GREとLinux XFRMを接続した実データパス、およびVPP Native IPsecは未踏期間の検証対象です。
+`gre_over_ipsec`は計画生成、route egress解決に加え、VPP GREとLinux XFRMを接続した双方向実データパスを確認済みです。VPP Native IPIP/IPsecは過去のCIで静的SAの疎通を確認した別方式であり、今回再検証したGREではありません。反復性能、鍵更新、運用安全性は追加評価対象です。確認日と条件は[現状一覧](current-status.md)を参照してください。
 
 ## 3. 明示的な単一route
 
@@ -286,7 +286,7 @@ VPPが使えるLinux VMでは、明示的な双方向routeを実際のVPP forwar
 ```sh
 cd controller
 sh scripts/vm-build-cc.sh
-sudo sh scripts/vm-netns-setup.sh
+sudo sh scripts/vm-netns.sh setup
 sudo sh scripts/vm-vpp-routes-yaml-netns-smoke.sh samples/vpp-netns-routes.yaml
 ```
 
@@ -316,7 +316,7 @@ Relay直列の全route生成は次で確認できます。
 sh scripts/vm-relay-route-plan-smoke.sh samples/route-examples.yaml
 ```
 
-現状の `vm-vpp-netns-setup.sh` はsite-a/site-bを1つのVPP FIBへ接続する構成です。Relayの実forwardingには、RelayごとのFIBまたはVPP instanceを分離する実行モデルが必要であり、route plan生成と分けて次段で実装します。
+現状の `vm-vpp-netns.sh setup` はsite-a/site-bを1つのVPP FIBへ接続する構成です。Relayの実forwardingには、RelayごとのFIBまたはVPP instanceを分離する実行モデルが必要であり、route plan生成と分けて次段で実装します。
 
 ## 7. strongSwan証明書認証
 

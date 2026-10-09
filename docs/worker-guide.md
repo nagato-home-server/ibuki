@@ -208,7 +208,7 @@ fallback:
 
 Pathのrouteは、外側endpointを直接参照するのではなく、Tunnelが提供する論理L3 egressへ解決してから適用します。通常のIPsecではrouteの`next_hop`を優先し、未指定時だけTunnelの`remote_endpoint`を使用します。`gre_over_ipsec`では未指定の`next_hop`を`gre_remote_address`、未指定の`interface_name`を`gre_interface`で補完します。明示されたroute値はBackendの既定値より優先されます。
 
-この境界により、将来VTIやVPP Native IPsecを追加しても、Path Selectionと共通のroute rendererを変更せず、Backend側のegress解決だけを追加できます。論文提出までの正式BackendはstrongSwan＋Linux XFRMであり、GREの実データパスは未踏期間の検証対象です。
+この境界により、将来VTIやVPP Native IPsecを追加しても、Path Selectionと共通のroute rendererを変更せず、Backend側のegress解決を拡張できます。論文の基準BackendはstrongSwan＋Linux XFRMであり、VPP GREの実データパスもnamespace v2で双方向疎通を確認済みです。反復性能と運用検証は別課題です。現行client配置と確認範囲は[現状一覧](current-status.md)を参照してください。
 
 ### Netns runtime generator
 
@@ -305,8 +305,8 @@ Integrated controller runtime passed: IPsec path and VPP forwarding were control
 
 注意:
 
-- 現段階では「同じ生成planでIPsecとVPPを連続制御する」統合です。
-- 同一packetがIPsec復号後にVPP forwardingへ入る本番pipelineは次段階です。
+- 現行namespace構成は同じ生成planでIPsecとVPPを制御し、独立client通信をVPP→TAP→Linux/XFRM→対向VPPへ転送する統合です。
+- Direct／Hubの双方向client疎通とESP進行は確認済みですが、本番運用の再鍵交換・障害復旧・連続通信品質まで確認した結果ではありません。
 
 ### `vpp-route-plan.sh`
 
@@ -327,8 +327,10 @@ Linux VMのVPP host-interface構成向けroute planです。
 出力例:
 
 ```text
-[dry-run] vppctl ip route add 10.10.1.0/24 via 172.16.1.2
-[dry-run] vppctl ip route add 10.10.2.0/24 via 172.16.2.2
+# site-b VPP（node別CLI socket）
+[dry-run] vppctl ip route add 10.10.1.0/24 via 169.254.100.2 tap0
+# site-a VPP（node別CLI socket）
+[dry-run] vppctl ip route add 10.10.2.0/24 via 169.254.100.2 tap0
 ```
 
 `DRY_RUN=0` を指定すると実際に `vppctl` を実行します。
@@ -345,11 +347,11 @@ Linux VMのVPP host-interface構成向けroute planです。
 
 ### Namespace underlay
 
-- `scripts/vm-netns-setup.sh`
+- `scripts/vm-netns.sh setup`
   - `site-a` / `site-b` / `hub-1` / `relay-c` namespaceとveth underlayを作る。
-- `scripts/vm-netns-smoke.sh`
+- `scripts/vm-netns.sh smoke`
   - IPsec/VPPなしでdirect/hub/relay L3疎通を確認する。
-- `scripts/vm-netns-clean.sh`
+- `scripts/vm-netns.sh clean`
   - namespaceを削除する。
 
 ### strongSwan direct
@@ -384,7 +386,7 @@ Linux VMのVPP host-interface構成向けroute planです。
   - `vpp` / `vppctl` / service状態を見る。
 - `scripts/vm-install-vpp-fdio.sh`
   - FD.io packagecloud repositoryからVPPをinstallするhelper。
-- `scripts/vm-vpp-netns-setup.sh`
+- `scripts/vm-vpp-netns.sh setup`
   - VPP host-interfaceとnamespace側vethを作る。
 - `scripts/vm-vpp-netns-smoke.sh`
   - VPP forwarding単体を確認する。
@@ -500,7 +502,7 @@ cd controller
 git pull
 sh scripts/demo-mitou.sh samples/linux-vm-netns.yaml
 sh scripts/vm-build-cc.sh
-sudo sh scripts/vm-netns-setup.sh
+sudo sh scripts/vm-netns.sh setup
 sudo sh scripts/vm-controller-integrated-runtime-smoke.sh samples/linux-vm-netns.yaml
 sudo MODE=fallback sh scripts/vm-controller-integrated-runtime-smoke.sh samples/linux-vm-netns.yaml
 ```

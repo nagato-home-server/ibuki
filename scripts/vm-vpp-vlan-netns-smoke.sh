@@ -65,7 +65,7 @@ check_fib_route() {
     END { exit matched ? 0 : 1 }
   ' wanted_table="$table_id" "$OUT_DIR/show-ip-fib.txt"
 }
-sh scripts/vm-vpp-netns-setup.sh
+sh scripts/vm-vpp-netns.sh setup
 
 OUT_DIR="${OUT_DIR:-$ROOT_DIR/out/vpp-vlan-netns}"
 mkdir -p "$OUT_DIR"

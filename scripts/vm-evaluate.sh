@@ -469,7 +469,7 @@ case_rollback() {
     (OUT_DIR="$OUT_DIR/rollback-runtime" sh "$ROOT_DIR/scripts/vm-generate-netns-runtime.sh" "$YAML" --active-path path-direct --fail-path path-direct) >> "$log" 2>&1 &&
     grep -q 'selected_path: path-via-hub' "$OUT_DIR/rollback-runtime/selected-path.txt" &&
     test -x "$OUT_DIR/rollback-runtime/rollback-selected.sh" &&
-    grep -q 'vm-netns-ipsec-hub-stop.sh' "$OUT_DIR/rollback-runtime/rollback-selected.sh"; then
+    grep -q 'vm-netns-ipsec.sh hub stop' "$OUT_DIR/rollback-runtime/rollback-selected.sh"; then
     record_case "$name" "partial" "$(elapsed_ms "$start_ns")" "controller rollback unit test, fallback plan, and explicit rollback executor generation passed; runtime failure injection remains; log: $log"
   else
     record_case "$name" "fail" "$(elapsed_ms "$start_ns")" "rollback-related fallback plan generation failed; log: $log"

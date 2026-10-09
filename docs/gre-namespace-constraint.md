@@ -35,7 +35,7 @@ root namespace: VPP
 
 これはplugin不足やPSK認証の失敗ではなく、VPPとXFRMの責任境界をnamespace間で正しく接続できていない構成問題である。Direct／HubのLinux XFRM runtimeと、root namespace VPPの通常L3 forwardingは別々に成立しているため、GRE over IPsecの失敗をIbukiのPath Selection失敗とは扱わない。
 
-論文提出時点では、GRE over IPsecを正式な実データパス評価から外し、次の範囲に限定して報告する。
+以下は移行前の構成で定めた報告範囲である。現在はnamespace v2で暗号化GREの双方向疎通を確認済みであり、この旧制限を現行の論文評価へ適用しない。最新条件は[現状一覧](current-status.md)を参照する。
 
 - YAMLからGRE over IPsec planを生成できる。
 - namespace内strongSwanをVICIから操作できる。
@@ -45,7 +45,7 @@ root namespace: VPP
 
 ## 解決案
 
-未踏期間以降に実データパスを完成させる場合は、次のいずれかを採用する。
+移行前に検討した対策は次のとおり。現在は1の同一namespace方式を採用済みである。
 
 1. VPPとstrongSwan／XFRMを同一namespaceまたは同一host forwarding domainに配置する。
 2. Linux XFRM interfaceをroot namespaceへ公開し、VPPとXFRM interfaceを明示的に接続する。

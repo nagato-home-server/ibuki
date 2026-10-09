@@ -1,5 +1,9 @@
 # eventnetd Service Deployment
 
+2026-10-09更新: VM smokeは生成計画による機能確認であり、systemd常駐serviceの長時間運用確認ではない。再起動復旧、認証、権限分離、過負荷時の振る舞いは本番化の検証対象である。
+
+確認日、構成、測定制限の共通一覧: [現在の実装と検証状況](current-status.md)。
+
 `deploy/ibuki-eventnetd.service`は、eventnetdをLinuxのsystemdサービスとして起動するための最小unitです。起動前にバイナリの実行権限とYAMLのreadable状態を検査します。これは本番環境へそのまま適用する完成品ではなく、配置先と権限を環境に合わせて確認するためのテンプレートです。
 
 ## 前提

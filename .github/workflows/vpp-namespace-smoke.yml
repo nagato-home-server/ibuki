@@ -6,7 +6,8 @@ on:
       - '.github/workflows/vpp-namespace-smoke.yml'
       - 'scripts/vm-gre-namespace-v2-smoke.sh'
       - 'scripts/vm-vpp-ns-*.sh'
-      - 'scripts/vm-netns-ipsec-gre-*.sh'
+      - 'scripts/vm-netns-ipsec.sh'
+      - 'scripts/vm-netns.sh'
       - 'samples/gre-namespace-v2.yaml'
       - 'samples/gre-namespace-v2-vpp-native.yaml'
   workflow_dispatch:

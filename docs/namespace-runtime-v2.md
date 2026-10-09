@@ -1,5 +1,7 @@
 # Namespace Runtime v2
 
+更新日: 2026-10-09。独立clientのLAN、site内VPP／charon、Direct／HubのTAP接続、GREのunderlay接続を現行構成とする。過去のCI結果と今回のVM再検証は[現状一覧](current-status.md)で区別する。
+
 ## 目的
 
 GRE over IPsecの実データパスでは、VPPがroot名前空間、strongSwanがサイト名前空間に分かれている構成を採用しない。各拠点のデータプレーンプロセスを同じネットワーク名前空間へ置き、GREの外側パケットとXFRM処理を同一の経路に通す。
@@ -7,12 +9,16 @@ GRE over IPsecの実データパスでは、VPPがroot名前空間、strongSwan�
 ## 新しい配置
 
 ```text
+client-a namespace (10.10.1.2/24)
+  eth0 -- veth -- site-a VPP LAN (10.10.1.1/24)
 site-a namespace
   strongSwan/charon-a
   VPP-a (CLI/API socket: /run/ibuki-vpp-ns/site-a/)
   underlay interface
   LAN attachment
 
+client-b namespace (10.10.2.2/24)
+  eth0 -- veth -- site-b VPP LAN (10.10.2.1/24)
 site-b namespace
   strongSwan/charon-b
   VPP-b (CLI/API socket: /run/ibuki-vpp-ns/site-b/)
@@ -32,7 +38,9 @@ sudo sh scripts/vm-vpp-ns-runtime.sh status
 sudo sh scripts/vm-vpp-ns-runtime.sh stop
 ```
 
-`scripts/vm-vpp-ns-topology.sh` は各サイトnamespace内にLAN/underlay veth、テスト用LANアドレス、VPP host-interfaceとunderlay経路を作成する。単独実行時はGREも構成できるが、統合試験では`SKIP_GRE=1`としてGRE interfaceの所有者を生成計画だけにする。二重作成すると古いFIB経路参照が残り、LAN宛てパケットがdropされる。`scripts/vm-gre-namespace-v2-smoke.sh` は通常Controllerをビルドしてから、このトポロジ、生成計画、namespace内strongSwanを起動する。CIでは先にターゲットだけをビルドし、`SKIP_BUILD=1`で再ビルドを省く。通常のCビルドでも、Git切替後などに`FORCE_REBUILD=1 BUILD_DIR=build-ns-v2 sh scripts/vm-build-cc.sh`を使えば共通オブジェクトを全て作り直せる。既存のroot VPPスクリプトは互換性確認用に残す。
+`scripts/vm-vpp-ns-topology.sh` は独立clientのLAN veth、site内VPP host-interface、Linux underlay peerを作成する。`VPP_TOPOLOGY_MODE=direct|hub|all`では専用VPP transitを作り、`ipsec`では平文transitを作らない。Direct／Hub IPsec統合はTAPからLinux/XFRMへ渡す。GRE統合は`SKIP_GRE=1 SKIP_IPSEC_TAP=1`としてGREを生成計画だけで作る。`scripts/vm-gre-namespace-v2-smoke.sh`は通常Controllerをビルドしてから構成・計画・strongSwanを適用する。事前ビルド済みなら`SKIP_BUILD=1`で省略できる。Git切替後に古いobjectを疑う場合は`FORCE_REBUILD=1 BUILD_DIR=build-ns-v2 sh scripts/vm-build-cc.sh`を使う。共有root VPPのsocket省略動作は互換用であり、標準試験と混同しない。
+
+VPP起動は既定120回のready確認を行い、`VPP_READY_ATTEMPTS`で変更できる。試験用の`VPP_NS_POLL_SLEEP_USEC`は既定1000で、2 vCPU環境の競合を緩和する。性能比較ではpoll設定と同居daemonを記録する。120回はCLI実行時間も含むため、厳密な120秒deadlineではない。
 
 ## 移行順
 
@@ -71,25 +79,27 @@ sudo sh scripts/vm-vpp-ns-runtime.sh stop
 | IKE underlay | `203.0.113.10` | `203.0.113.9` |
 | VPP underlay | `198.18.1.1/30` | `198.18.2.1/30` |
 | Linux underlay peer | `198.18.1.2/30` | `198.18.2.2/30` |
-| VPP LAN attachment | `172.16.1.1/30` | `172.16.2.1/30` |
-| Linux LAN peer | `172.16.1.2/30` | `172.16.2.2/30` |
-| テスト LAN アドレス | `10.10.1.1/24` | `10.10.2.1/24` |
+| VPP LAN gateway | `10.10.1.1/24` | `10.10.2.1/24` |
+| 独立client namespace | `client-a` | `client-b` |
+| client LAN アドレス | `10.10.1.2/24` | `10.10.2.2/24` |
+| IPsec統合時のVPP TAP | `169.254.100.1/30` | `169.254.100.1/30` |
+| IPsec統合時のLinux TAP peer | `169.254.100.2/30` | `169.254.100.2/30` |
 | GRE inner | `10.255.0.1/30` | `10.255.0.2/30` |
 | VPP CLI socket | `/run/ibuki-vpp-ns/site-a/cli.sock` | `/run/ibuki-vpp-ns/site-b/cli.sock` |
 
 `198.18.1.1` と `198.18.2.1` はVPPが生成するGRE outer endpointであり、Linux側のunderlay peerを経由して既存の `a-direct`/`b-direct` へ転送する。namespace実験ではIKE endpointが`203.0.113.10`／`203.0.113.9`と別なので、strongSwanはtunnel modeと固定の`/32[gre]` selectorを使用する。`dynamic[gre]` は実パケットから別の外側アドレスを選択するため、この構成では使用しない。
 
-pingの送信元・宛先となる`10.10.1.1`／`10.10.2.1`は各namespaceのdummy interface `ib-lan-src`に割り当てる。Linuxは対向LAN宛てを`ib-lan-*-peer`経由でVPPに転送し、VPPはローカルLANへの戻り経路を同peerへ、対向LANへの経路をGREへ向ける。VPP AF_PACKET host-interfaceのMACはLinux vethのMACと異なるため、Linux側の固定近隣表には`show hardware-interfaces`から取得したVPP MACを登録する。
+pingの送信元・宛先は独立したclient namespaceの`10.10.1.2`／`10.10.2.2`であり、VPP gatewayの`.1`とは区別する。clientの`eth0`からvethでVPP LAN host-interfaceへ入り、ローカルLANの戻りはVPP connected routeを使う。固定neighborを前提にせず動的ARPを試験する。AF_PACKET作成時の`cksum-gso-disable`により、今回のLinux／VPP環境でARP応答がclientへ届かない問題を回避した。Linux側のethtool設定だけでは解消しなかった。
 
 ## 起動順序
 
-1. `vm-netns-setup.sh` がsite namespaceと既存underlayを作成する
+1. `vm-netns.sh setup` がsite namespaceと既存underlayを作成する
 2. `vm-vpp-ns-runtime.sh start` がsiteごとのVPPを起動する
 3. `SKIP_GRE=1 vm-vpp-ns-topology.sh setup` がLAN/underlay veth、LAN送信元、VPP host-interfaceを作成する
 4. `eventnet_netns_plan` がYAMLを解析し、`gre-swanctl.conf` とVPP計画を生成する
-5. `vm-netns-ipsec-gre-start.sh` が両siteのcharonを起動し、VICI経由で設定をロードする
+5. `vm-netns-ipsec.sh gre start` が両siteのcharonを起動し、VICI経由で設定をロードする
 6. `vpp-netns-route-plan.sh` が `run_vpp_node` 経由でsiteごとのVPPへGRE・経路を適用する
-7. site namespaceのLAN routeからVPP host-interfaceへ入り、GRE、Linux XFRM、underlayの順に転送する。このデータパスは2026-09-25に双方向LAN pingとESP送受信counterで検証済みである
+7. client namespaceからVPP LAN host-interfaceへ入り、GRE、Linux XFRM、underlayの順に転送する。2026-10-09に双方向client pingとESP送受信の進行をVMで再確認した。ARP warm-upと測定pingは分けて保存する
 
 ## 停止順序
 
@@ -128,4 +138,4 @@ GRE自体の暗号化データパスを試す場合は、strongSwan/XFRM経路�
 sudo sh scripts/vm-gre-namespace-v2-smoke.sh samples/gre-namespace-v2.yaml
 ```
 
-このBackendは静的SAを使う実験用であり、strongSwan VICIからVPP Binary APIへSAを同期する本番連携は未実装である。VPPのバージョンによって暗号アルゴリズム名やCLIの対応が異なるため、失敗時は生成された計画と `show ipsec all` を記録する。
+Native IPIP/IPsec Backendは静的SAを使う実験用であり、strongSwan VICIからVPP Binary APIへSAを同期する本番連携は未実装である。一方、上記strongSwan/XFRM GRE BackendではIKEでSAを確立する。VPPの版によって暗号名やCLIの対応が異なるため、Native失敗時は生成計画と `show ipsec all` を記録する。鍵を含む表示は公開前に秘匿する。

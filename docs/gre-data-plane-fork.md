@@ -1,32 +1,21 @@
-# GREデータパス フォーク
+# GREデータパス作業線の統合
 
-このフォークは、GREの実データパスを段階的に成立させるための作業線です。
+GREの実データパス開発はmainのnamespace v2ランタイムへ統合済みであり、独立したフォーク構成を利用する必要はない。この文書は旧作業線からの案内を残す。
 
-## 第一段階
+## 現行の入口
 
-旧root名前空間向けのVPP GRE smokeは整理し、現在はnamespace v2の統合入口で検証します。コントローラ生成の経路計画、VPP Native IPsecまたはstrongSwan、サイト間LAN通信を一つの実験入口から扱います。
+```sh
+sudo sh scripts/vm-gre-namespace-v2-smoke.sh samples/gre-namespace-v2.yaml
+```
+
+VPPとstrongSwanは同じsite namespaceで動作し、独立したclient間のLAN通信をVPP GREとLinux XFRMで転送する。両siteのGRE interfaceはそれぞれのVPP内のgre0である。2026-10-09に双方向疎通、ESP進行、終了後cleanupを確認した。GREはL3トンネルであり、L2延伸ではない。
+
+## 比較用Native実験
 
 ```sh
 sudo sh scripts/vm-gre-namespace-v2-smoke.sh samples/gre-namespace-v2-vpp-native.yaml
 ```
 
-この試験では、サイト名前空間ごとにVPPを起動し、VPP Native IPsecではstrongSwanを起動せず、VPPのSAとIPIP保護を使用します。strongSwan/XFRMを検証する場合は `samples/gre-namespace-v2.yaml` を入力にします。
+こちらはGREではなく、静的SAを使用するVPP IPIP/IPsec。過去のCIに成功記録があるが、今回のVM再検証対象ではない。IKE／SA同期／鍵更新の本番連携は未完了である。
 
-## 成功条件
-
-- `gre0` が site-a から site-b への外側宛先を持つ
-- `gre1` が site-b から site-a への外側宛先を持つ
-- 両方向のLAN pingが成功する
-- VPPのGREインターフェースがupになる
-
-## strongSwanとの接続
-
-第一段階はVPP GRE単体のデータパス確認であり、暗号化を成功条件に含めません。既存のGRE over IPsec試験は、strongSwan/XFRMをサイト名前空間、VPP GREをroot名前空間に置いているため、IKE/CHILD_SA確立と実パケット転送を同時に成立させるには名前空間境界の再設計が必要です。
-
-次段階では、次のいずれかを選択します。
-
-1. VPPとstrongSwanを同一名前空間で動作させる
-2. XFRM interfaceをroot名前空間へ公開する
-3. VPP Native IPsecで暗号化し、strongSwanは鍵・SA管理に限定する
-
-このフォークではまず暗号化前のGRE経路を固定し、その後に暗号化バックエンドを差し替えます。
+構成は[Namespace Runtime v2](namespace-runtime-v2.md)、確認範囲・測定制限は[現状一覧](current-status.md)、旧root VPP構成の問題は[移行前の記録](gre-namespace-constraint.md)を参照する。

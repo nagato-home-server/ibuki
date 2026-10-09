@@ -1,5 +1,9 @@
 # Transport Adapter Guide
 
+2026-10-09更新: 実疎通確認はCLI／swanctlを使用するnamespace runtimeで行った。任意SDKのtransport境界があることと、VPP版依存のroute／VLAN／VRF codecが完成したことは同一ではない。
+
+確認日、構成、測定制限の共通一覧: [現在の実装と検証状況](current-status.md)。
+
 この文書は、実際のstrongSwan VICIまたはVPP Binary APIをIbukiへ接続する作業者向けの実装境界を定義します。controller本体はtransport固有の型を持たず、観測値を既存のobserver型へ変換してからeventnetdへ渡します。
 
 ## 共通方針

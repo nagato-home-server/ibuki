@@ -1,5 +1,9 @@
 # Scenario Harness と Production eventnetd の差分
 
+2026-10-09更新: 障害イベント入力によるDirect→Hub選択・実適用は確認済み。ただし連続通信中のリンク切断とAgentの検知から切替までを測る試験とは区別する。常駐APIの認証、鍵管理、HAを含む本番完成を主張しない。
+
+確認日、構成、測定制限の共通一覧: [現在の実装と検証状況](current-status.md)。
+
 この文書は、次に追加する `eventnet_scenario` の位置付けを明確にするためのものです。
 
 `eventnet_scenario` は本番daemonではありません。Path selection、fallback、recovery、evaluated policyを安全かつ高速に実験するためのテストハーネスです。

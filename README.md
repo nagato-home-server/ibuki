@@ -20,7 +20,15 @@ Ibukiは、複数の拠点間通信経路を選択し、安全に切り替える
 - Direct Path、Hub Fallback、Relay PathなどのScenarioを再現する。
 - Linux Network Namespace上でIPsecとVPPを組み合わせた試験を行う。
 
-GUI、Cloud VPN連携、完全なController Federation、Active-Active転送、Graceful Transition、Flow Preserveは今後の実装対象です。
+簡易GracefulとRollbackは制御ロジック・mock試験まで実装済みです。実通信中の継続性と失敗復旧の定量評価は残っています。GUI、Cloud VPN固有API、完全なController Federation、Active-Active転送、Flow Preserveは今後の実装対象です。
+
+### 現在の確認範囲（2026-10-09）
+
+Controller生成計画によるDirect／Hub統合と、VPP GRE＋strongSwan/XFRMの暗号化データパスをLinux VMで再検証しました。LAN端末は独立した`client-a`／`client-b` namespaceに置き、VPPとcharonはsite namespaceで同居します。全構成でARP事前解決後の双方向ping各3/3とESPの進行を確認しました。
+
+初回ARP解決時の損失は残っています。Fallbackは障害イベント入力による確認であり、実リンク障害の検知時間や無損失切替を示す結果ではありません。反復性能測定、簡易Graceful比較、VLAN／VRF実パケット分離、本番用鍵管理は未完了です。最新コミットのCI結果は別途確認が必要です。
+
+詳細と測定条件は[`docs/current-status.md`](docs/current-status.md)を参照してください。
 
 ## 2. 基本的な設計方針
 
@@ -124,6 +132,8 @@ Controllerとの通信が失われても、Agentは現在のActive Pathを直ち
 ## 4. 最初に試す方法
 
 ### 4.1 Linux VM
+
+namespaceとIPsecの操作は、`scripts/vm-netns.sh`、`scripts/vm-netns-ipsec.sh`へ統合しました。node別VPPは従来のnamespace v2入口を使います。操作ごとの引数と旧ファイルからの移行は[Shell一覧](docs/shell-commands.md)を参照してください。旧版の生成計画は再生成が必要です。
 
 Repositoryの`controller`Directoryへ移動し、Shell Scriptの確認、Build、Scenario試験を順番に実行します。
 
@@ -448,6 +458,8 @@ strongSwan変更後は、CHILD SAの状態と実際のEnd-to-End通信を確認�
 
 ## 9. 関連Document
 
+[文書の読み方と一覧](docs/README.md)から、現行仕様・実装境界・研究評価・過去資料を辿れます。
+
 ### 利用・運用
 
 - [`docs/yaml-routes.md`](docs/yaml-routes.md): YAML Route記法とValidation Rule
@@ -458,6 +470,7 @@ strongSwan変更後は、CHILD SAの状態と実際のEnd-to-End通信を確認�
 
 ### 設計・実装状況
 
+- [`docs/current-status.md`](docs/current-status.md): 現行構成、確認済み範囲、測定条件、未完了項目
 - [`実装方針.md`](実装方針.md): Ibuki全体の実装方針
 - [`docs/future-implementation-map.md`](docs/future-implementation-map.md): 今後の実装場所と優先順位
 - [`docs/scenario-vs-production.md`](docs/scenario-vs-production.md): Scenarioと本番Controllerの差

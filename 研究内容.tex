@@ -260,7 +260,7 @@ Transition Strategyは，状態機械とは分離して扱う．Immediateは既�
 Strategy & 旧Path & 新Path & flow単位制御 & 実装状況 \\
 \midrule
 Immediate & 既存通信を含めて即時切替 & 直ちに利用 & しない & 初期実装相当 \\
-Graceful & 条件またはTimeoutまで維持 & 検証後に利用 & しない & 未実装 \\
+Graceful & 条件またはTimeoutまで維持 & 検証後に利用 & しない & 簡易制御実装，実通信評価は未完了 \\
 Flow Preserve & 既存flowを維持 & 新規flowから利用 & する & 未実装 \\
 \bottomrule
 \end{tabular}
@@ -535,7 +535,7 @@ network namespaceを用いる理由は，一台のVM上で複数の拠点やGate
 
 \begin{table}[h]
 \centering
-\caption{自動評価scriptによる確認結果}
+\caption{2026年9月25日時点の自動評価scriptによる確認結果}
 \label{tab:evaluation}
 \begin{tabular}{lll}
 \toprule
@@ -550,9 +550,16 @@ VPP Native IPIP/IPsec & pass & 双方向疎通，VPP ESP counter，再適用，c
 \end{tabular}
 \end{table}
 
+\subsubsection{2026年10月9日のVM再検証}
+コミット\texttt{0e27496}へ反映した修正では，LAN端末を独立した\texttt{client-a}／\texttt{client-b}名前空間に置き，各site名前空間へVPPとcharonを同居させた．端末アドレスは10.10.1.2／10.10.2.2，VPP LAN gatewayは10.10.1.1／10.10.2.1である．Direct／Hub統合はVPPからTAPを介してLinux XFRMへ転送し，GRE構成ではVPPが生成したGRE outer通信をstrongSwan/XFRMで保護する．これはL3制御であり，L2延伸ではない．
+
+Ubuntu VM（Linux 7.0.0-34，VPP 26.06，2 vCPU）で，AF\_PACKET host-interfaceへ\texttt{cksum-gso-disable}を指定し，試験用poll sleepを1000マイクロ秒とした．各方向1回のARP warm-up後，双方向各3回のpingは全構成で成功した．往路／復路の平均RTTはDirect統合29.130／37.600 ms，Hub統合18.051／20.172 ms，GRE over IPsec 22.950／16.649 msであった．ESPの送受信進行と終了後cleanupも確認した．Native IPIP/IPsecはこのVM再検証に含まない．
+
+各構成の初回往路warm-upは1パケット損失した．warm-upの出力は測定pingと分けて保存しており，上記の損失0\%は事前解決後の機能疎通に限る．3標本の平均RTTは性能優位を示すものではない．Fallbackは障害イベント入力による選択・適用であり，連続通信中の実リンク障害検知，切替時間，最大通信断を測定した結果ではない．反復評価，Graceful比較，TCP再送，帯域，CPU・メモリ，VLAN／VRF実パケット分離は追加評価対象である．過去のCTest／CI成功を最新コードの成功として読み替えない．
+
 Scenario Harnessでは，Direct選択，Direct障害によるHub Fallback，評価値に基づくRelay選択，multi-step scenarioを確認した．Integrated Directでは，Controllerが選択したDirect Pathについて，IPsec runtime起動，ESP counter確認，VPP forwarding設定，LAN疎通確認までを完了した．Integrated Fallbackでは，Direct Path障害イベントを注入した場合にHub Pathを選択し，IPsecとVPP forwardingを組み合わせたruntimeでLAN通信の疎通を確認した．
 
-これらの結果が示すのは，Ibukiが単に「どの経路を選ぶか」を表示するだけではなく，選択結果を実際のruntime操作へ接続できるという点である．例えばintegrated-fallbackでは，Direct障害を検出した後，ControllerがHub Pathを選択し，その経路に必要なIPsecとForwarding設定を生成し，最終的にLAN通信が疎通することを確認した．したがって，試作実装は研究全体のうち，経路抽象化，Path Selection，Explain，strongSwan/VPPへのruntime反映までの一連の流れを実証している．
+これらの結果が示すのは，Ibukiが単に「どの経路を選ぶか」を表示するだけではなく，選択結果を実際のruntime操作へ接続できるという点である．例えばintegrated-fallbackでは，Direct障害イベントを入力した後，ControllerがHub Pathを選択し，必要なIPsecとForwarding設定を生成してLAN通信の疎通を確認した．これは実リンク障害の自動検知を測った試験ではない．したがって，試作実装は経路抽象化，Path Selection，Explain，strongSwan/VPPへのruntime反映までの一連の流れを機能的に実証している．
 
 \subsection{Research Questionに対する初期結果}
 RQ1について，試作実装は同一のYAMLおよびPath Selection coreから，strongSwan向けswanctl設定とVPP/netns向けplanを生成できることを確認した．これは，Tunnel／経路抽象化により一部の上位論理を実装から分離できる可能性を示す．ただし，正式なAdapter API，Capability Model，plugin interface，異なるTunnel Backend間の共通test suiteは未完成である．したがって，現時点の結論は「strongSwan/VPPを題材として抽象化の実装可能性を示した」という範囲に留める．

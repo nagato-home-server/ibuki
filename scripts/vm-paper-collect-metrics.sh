@@ -48,8 +48,8 @@ collect_case() {
     overall=1
   fi
   printf '%s,%s,%s,%s,%s,,,,\n' "$scenario" "$mode" "$repetition" "$transition_ms" "$packet_loss" >> "$OUT_FILE"
-  sh scripts/vm-netns-ipsec-direct-stop.sh >/dev/null 2>&1 || true
-  sh scripts/vm-netns-ipsec-hub-stop.sh >/dev/null 2>&1 || true
+  sh scripts/vm-netns-ipsec.sh direct stop >/dev/null 2>&1 || true
+  sh scripts/vm-netns-ipsec.sh hub stop >/dev/null 2>&1 || true
 }
 
 set -e

@@ -44,7 +44,7 @@ check_fib_route() {
 
 for ns in site-a site-b; do
   ip netns exec "$ns" true >/dev/null 2>&1 || {
-    printf 'namespace missing: %s. Run sudo sh scripts/vm-netns-setup.sh first.\n' "$ns" >&2
+    printf 'namespace missing: %s. Run sudo sh scripts/vm-netns.sh setup first.\n' "$ns" >&2
     exit 1
   }
 done
@@ -55,7 +55,7 @@ ensure_dummy_lan site-b 10.10.2.1/24
 OUT_DIR="$OUT_DIR" sh scripts/vm-generate-netns-runtime.sh "$YAML" --path path-vpp-explicit-bidirectional
 grep -q '^selected_path: path-vpp-explicit-bidirectional$' "$OUT_DIR/selected-path.txt"
 
-sh scripts/vm-vpp-netns-setup.sh
+sh scripts/vm-vpp-netns.sh setup
 vppctl ip table add 100 2>/dev/null || true
 DRY_RUN=0 sh "$OUT_DIR/vpp-netns-route-plan.sh"
 vppctl show ip fib > "$OUT_DIR/show-ip-fib.txt"

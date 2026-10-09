@@ -1,5 +1,9 @@
 # Future Implementation Map
 
+2026-10-09更新: GRE実データパスの成立は完了し、現行の優先課題は連続通信中の障害注入、切替工程別計測、Graceful／Rollback評価、VLAN／VRF実パケット分離である。Binary API codec、証明書運用、FRR／HAは後段とする。
+
+確認日、構成、測定制限の共通一覧: [現在の実装と検証状況](current-status.md)。
+
 この文書は、今後どこに何を実装するかを迷わないための作業地図です。
 
 現時点の実装は、YAMLからIntent / Path / Tunnel / VPP edgeを読み、controllerがPathを選び、strongSwan / VPP向けruntime scriptを生成し、Linux VM上でdirect / hub fallback / VPP forwarding / integrated runtime smokeまで確認できています。
@@ -302,7 +306,7 @@ build-linux-cc/eventnetd samples/linux-vm-netns.yaml \
 3. `eventnetd`の周期入力、reload、state復元、安全な入力境界を評価する。
 4. strongSwan／VPP CLI runtime、rollback、IPsec対象外遮断を評価する。
 5. strongSwanのLinux XFRM依存をBackend境界へ閉じ込め、BSD PF_KEY等のOS差分をCapabilityとして整理する。
-6. 論文前のVPP GRE計画生成は実データパス未検証として明記し、論文用の合格条件から外す。
+6. VPP GRE＋strongSwan/XFRMの実データパスは確認済みとして扱い、機能疎通と未完了の反復性能・切替品質評価を分ける。
 7. 実装済み範囲とVICI／VPP Binary APIの未完了codec範囲を文書へ分離する。
 8. 論文用に同一telemetryへ異なる閾値を適用する比較手順を固定する。
 

@@ -1,5 +1,9 @@
 # VPP Binary API Implementation
 
+2026-10-09更新: VMでのVPP実疎通成功はCLI backendの確認であり、Binary API codecの完成ではない。版依存route／VLAN／VRF codecとイベントtransportは引き続き追加実装対象である。
+
+確認日、構成、測定制限の共通一覧: [現在の実装と検証状況](current-status.md)。
+
 この文書は、既存の`vppctl` backendを壊さずにVPP Binary API transportを追加するための作業手順です。現在の実装は`en_vpp_api_ctx_t`と`en_vpp_api_adapter()`でcallback境界までを提供し、VPP SDK固有のmessage生成はこの境界の外側に置きます。
 
 ## 現在の境界

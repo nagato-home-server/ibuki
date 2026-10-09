@@ -1,5 +1,9 @@
 # Ibuki Event Schemas
 
+2026-10-09更新: JSONL入出力はyyjsonを共通利用する。Schema検証、鮮度、重複、測定ラウンドの扱いはIbuki側の責務であり、JSON parser導入だけで解決しない。実疎通の再検証はSchemaや上限値を変更していない。
+
+確認日、構成、測定制限の共通一覧: [現在の実装と検証状況](current-status.md)。
+
 Telemetry JSONLの構文解析は、`third_party/yyjson`を利用している。JSONLのフレーミングは`eventnetd`と`en_telemetry_load_jsonl()`が担当し、1行のJSON構文解析はyyjsonが担当する。Ibuki固有のschema、Path/Tunnel/Route identity、数値範囲、timestamp、freshnessの検証はController側で継続して行う。
 
 yyjsonはリポジトリ内に同梱しているため、外部ライブラリの事前インストールなしにCMakeビルドと`vm-build-cc.sh`の両方を実行できる。

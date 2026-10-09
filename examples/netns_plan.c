@@ -361,6 +361,9 @@ static int write_apply_script(const char *filename, const char *out_dir, const e
         fprintf(file, "echo 'unsupported path for current netns runtime: %s' >&2\n", path->path_id);
         fprintf(file, "exit 1\n");
     }
+    if (path_uses_namespaced_vpp(config, path) && strcmp(kind, "vpp") != 0) {
+        fprintf(file, "sudo DRY_RUN=0 sh %s/vpp-netns-route-plan.sh\n", out_dir);
+    }
     if (intent->block_non_ipsec) {
         fprintf(file, "\n# Block cleartext traffic outside the selected IPsec selectors.\n");
         write_xfrm_block_runtime(file, config, path);
@@ -409,12 +412,22 @@ static int write_integrated_script(const char *filename, const char *out_dir, co
     fprintf(file, "  ip netns exec \"$ns\" ip link set lan0 up\n");
     fprintf(file, "}\n\n");
     fprintf(file, "apply_vpp_netns_runtime() {\n");
-    fprintf(file, "  ip netns exec site-a ip route replace 10.10.2.0/24 via 172.16.1.1\n");
-    fprintf(file, "  ip netns exec site-b ip route replace 10.10.1.0/24 via 172.16.2.1\n");
-    fprintf(file, "  printf '\\n== integrated VPP forwarding: site-a -> site-b ==\\n'\n");
-    fprintf(file, "  ip netns exec site-a ping -c 3 -I 10.10.1.1 10.10.2.1\n");
-    fprintf(file, "  printf '\\n== integrated VPP forwarding: site-b -> site-a ==\\n'\n");
-    fprintf(file, "  ip netns exec site-b ping -c 3 -I 10.10.2.1 10.10.1.1\n");
+    if (path_uses_namespaced_vpp(config, path)) {
+        fprintf(file, "  printf '\\n== neighbor warm-up (excluded from measured pings) ==\\n'\n");
+        fprintf(file, "  ip netns exec client-a ping -c 1 -W 5 -I 10.10.1.2 10.10.2.2 || true\n");
+        fprintf(file, "  ip netns exec client-b ping -c 1 -W 5 -I 10.10.2.2 10.10.1.2 || true\n");
+        fprintf(file, "  printf '\\n== integrated VPP/IPsec forwarding: client-a -> client-b ==\\n'\n");
+        fprintf(file, "  ip netns exec client-a ping -c 3 -I 10.10.1.2 10.10.2.2\n");
+        fprintf(file, "  printf '\\n== integrated VPP/IPsec forwarding: client-b -> client-a ==\\n'\n");
+        fprintf(file, "  ip netns exec client-b ping -c 3 -I 10.10.2.2 10.10.1.2\n");
+    } else {
+        fprintf(file, "  ip netns exec site-a ip route replace 10.10.2.0/24 via 172.16.1.1\n");
+        fprintf(file, "  ip netns exec site-b ip route replace 10.10.1.0/24 via 172.16.2.1\n");
+        fprintf(file, "  printf '\\n== integrated VPP forwarding: site-a -> site-b ==\\n'\n");
+        fprintf(file, "  ip netns exec site-a ping -c 3 -I 10.10.1.1 10.10.2.1\n");
+        fprintf(file, "  printf '\\n== integrated VPP forwarding: site-b -> site-a ==\\n'\n");
+        fprintf(file, "  ip netns exec site-b ping -c 3 -I 10.10.2.1 10.10.1.1\n");
+    }
     fprintf(file, "}\n\n");
     fprintf(file, "printf 'eventnet integrated selected path: %s\\n'\n", path->path_id);
     fprintf(file, "printf 'eventnet integrated runtime kind: %s\\n'\n\n", kind);
@@ -452,6 +465,10 @@ static int write_integrated_script(const char *filename, const char *out_dir, co
     } else {
         fprintf(file, "echo 'unsupported path for current integrated runtime: %s' >&2\n", path->path_id);
         fprintf(file, "exit 1\n");
+    }
+    if (path_uses_namespaced_vpp(config, path) && strcmp(kind, "vpp") != 0) {
+        fprintf(file, "sudo env SKIP_GRE=1 VPP_TOPOLOGY_MODE=ipsec VPP_NS_NODES='site-a site-b' sh scripts/vm-vpp-ns-topology.sh setup\n");
+        fprintf(file, "sudo DRY_RUN=0 sh %s/vpp-netns-route-plan.sh\n", out_dir);
     }
     if (intent->block_non_ipsec) {
         fprintf(file, "\n# Block cleartext traffic outside the selected IPsec selectors.\n");
@@ -613,7 +630,7 @@ static int write_vpp_route_plan(const char *filename, const en_yaml_config_t *co
     fprintf(file, "  if [ \"$DRY_RUN\" = \"1\" ]; then\n");
     fprintf(file, "    if [ -n \"$VPPCTL_SOCKET\" ]; then printf '[dry-run] %%s -s %%s %%s\\n' \"$VPPCTL\" \"$VPPCTL_SOCKET\" \"$*\"; else printf '[dry-run] %%s %%s\\n' \"$VPPCTL\" \"$*\"; fi\n");
     fprintf(file, "  else\n");
-    fprintf(file, "    if [ -n \"$VPPCTL_SOCKET\" ]; then if output=$(\"$VPPCTL\" -s \"$VPPCTL_SOCKET\" \"$*\" 2>&1); then status=0; else status=$?; fi; else if output=$(\"$VPPCTL\" \"$*\" 2>&1); then status=0; else status=$?; fi; fi\n");
+    fprintf(file, "    if [ -n \"$VPPCTL_SOCKET\" ]; then if output=$(\"$VPPCTL\" -s \"$VPPCTL_SOCKET\" \"$@\" 2>&1); then status=0; else status=$?; fi; else if output=$(\"$VPPCTL\" \"$@\" 2>&1); then status=0; else status=$?; fi; fi\n");
     fprintf(file, "    printf '%%s\\n' \"$output\"\n");
     fprintf(file, "    if [ \"$status\" -ne 0 ] || printf '%%s\\n' \"$output\" | grep -Eiq 'unknown input|parse error|unknown interface|failed|error:'; then return 1; fi\n");
     fprintf(file, "  fi\n");
@@ -754,7 +771,7 @@ static int write_vpp_netns_route_plan(const char *filename, const en_yaml_config
     fprintf(file, "  if [ \"$DRY_RUN\" = \"1\" ]; then\n");
     fprintf(file, "    if [ -n \"$VPPCTL_SOCKET\" ]; then printf '[dry-run] %%s -s %%s %%s\\n' \"$VPPCTL\" \"$VPPCTL_SOCKET\" \"$*\"; else printf '[dry-run] %%s %%s\\n' \"$VPPCTL\" \"$*\"; fi\n");
     fprintf(file, "  else\n");
-    fprintf(file, "    if [ -n \"$VPPCTL_SOCKET\" ]; then if output=$(\"$VPPCTL\" -s \"$VPPCTL_SOCKET\" \"$*\" 2>&1); then status=0; else status=$?; fi; else if output=$(\"$VPPCTL\" \"$*\" 2>&1); then status=0; else status=$?; fi; fi\n");
+    fprintf(file, "    if [ -n \"$VPPCTL_SOCKET\" ]; then if output=$(\"$VPPCTL\" -s \"$VPPCTL_SOCKET\" \"$@\" 2>&1); then status=0; else status=$?; fi; else if output=$(\"$VPPCTL\" \"$@\" 2>&1); then status=0; else status=$?; fi; fi\n");
     fprintf(file, "    printf '%%s\\n' \"$output\"\n");
     fprintf(file, "    if [ \"$status\" -ne 0 ] || printf '%%s\\n' \"$output\" | grep -Eiq 'unknown input|parse error|unknown interface|failed|error:'; then return 1; fi\n");
     fprintf(file, "  fi\n");
@@ -868,6 +885,7 @@ static int write_vpp_netns_route_plan(const char *filename, const en_yaml_config
                 continue;
             }
             fprintf(file, "printf '# explicit netns route %s on node %s via %s\\n'\n", route->route_id, route->node_id, edge->vpp_interface);
+            fprintf(file, "run_vpp_node %s ip route del %s 2>/dev/null || true\n", route->node_id, route->destination_prefix);
             fprintf(file, "run_vpp_node %s ip route add %s", route->node_id, route->destination_prefix);
             if (route->table_id >= 0) fprintf(file, " table %d", route->table_id);
             fprintf(file, " via %s", route->next_hop);
@@ -901,8 +919,10 @@ static int write_vpp_netns_route_plan(const char *filename, const en_yaml_config
             fprintf(file, "run_vpp_node %s ip route add %s via %s %s.%d\n", path->source, source_prefix, source_next_hop, source_vpp_interface, intent->traffic.vlan_id);
             fprintf(file, "run_vpp_node %s ip route add %s via %s %s.%d\n", path->destination, destination_prefix, destination_next_hop, destination_vpp_interface, intent->traffic.vlan_id);
         } else {
-            fprintf(file, "run_vpp ip route add %s via %s\n", source_prefix, source_next_hop);
-            fprintf(file, "run_vpp ip route add %s via %s\n", destination_prefix, destination_next_hop);
+            fprintf(file, "run_vpp_node %s ip route del %s 2>/dev/null || true\n", path->source, destination_prefix);
+            fprintf(file, "run_vpp_node %s ip route add %s via %s %s\n", path->source, destination_prefix, source_next_hop, source_vpp_interface);
+            fprintf(file, "run_vpp_node %s ip route del %s 2>/dev/null || true\n", path->destination, source_prefix);
+            fprintf(file, "run_vpp_node %s ip route add %s via %s %s\n", path->destination, source_prefix, destination_next_hop, destination_vpp_interface);
         }
     }
     fclose(file);

@@ -56,20 +56,44 @@ tunnels:
 
 vpp_edges:
   - node_id: site-a
+    port_id: lan
     host_interface: vpp-site-a
-    vpp_interface: host-vpp-site-a
+    vpp_interface: host-ib-lan-a
     namespace_interface: vpp-client
     namespace_address: 172.16.1.2/30
     vpp_address: 172.16.1.1/30
     next_hop: 172.16.1.2
+    vpp_socket: /run/ibuki-vpp-ns/site-a/cli.sock
+  - node_id: site-a
+    port_id: ipsec
+    vpp_interface: tap0
+    next_hop: 169.254.100.2
+    vpp_socket: /run/ibuki-vpp-ns/site-a/cli.sock
 
   - node_id: site-b
+    port_id: lan
     host_interface: vpp-site-b
-    vpp_interface: host-vpp-site-b
+    vpp_interface: host-ib-lan-b
     namespace_interface: vpp-client
     namespace_address: 172.16.2.2/30
     vpp_address: 172.16.2.1/30
     next_hop: 172.16.2.2
+    vpp_socket: /run/ibuki-vpp-ns/site-b/cli.sock
+  - node_id: site-b
+    port_id: ipsec
+    vpp_interface: tap0
+    next_hop: 169.254.100.2
+    vpp_socket: /run/ibuki-vpp-ns/site-b/cli.sock
+  - node_id: hub-1
+    port_id: site-a
+    vpp_interface: host-ib-ha
+    next_hop: 172.17.1.1
+    vpp_socket: /run/ibuki-vpp-ns/hub-1/cli.sock
+  - node_id: hub-1
+    port_id: site-b
+    vpp_interface: host-ib-hb
+    next_hop: 172.17.2.2
+    vpp_socket: /run/ibuki-vpp-ns/hub-1/cli.sock
 
 paths:
   - id: path-via-hub
@@ -90,6 +114,17 @@ paths:
         from: hub-1
         to: site-b
         tunnel_id: tun-hub-b
+    routes:
+      - id: route-hub-site-a
+        node_id: site-a
+        destination_prefix: 10.10.2.0/24
+        next_hop: 169.254.100.2
+        interface: tap0
+      - id: route-hub-site-b
+        node_id: site-b
+        destination_prefix: 10.10.1.0/24
+        next_hop: 169.254.100.2
+        interface: tap0
 
   - id: path-direct
     source: site-a
@@ -103,6 +138,17 @@ paths:
         from: site-a
         to: site-b
         tunnel_id: tun-a-b
+    routes:
+      - id: route-direct-site-a
+        node_id: site-a
+        destination_prefix: 10.10.2.0/24
+        next_hop: 169.254.100.2
+        interface: tap0
+      - id: route-direct-site-b
+        node_id: site-b
+        destination_prefix: 10.10.1.0/24
+        next_hop: 169.254.100.2
+        interface: tap0
 
   - id: path-via-relay-c
     source: site-a

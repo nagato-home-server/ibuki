@@ -1,0 +1,32 @@
+if(NOT DEFINED EVENTNETD OR NOT DEFINED YAML OR NOT DEFINED INTENT OR NOT DEFINED TELEMETRY)
+    message(FATAL_ERROR "EVENTNETD, YAML, INTENT, and TELEMETRY are required")
+endif()
+
+string(RANDOM LENGTH 12 RANDOM_STRING)
+set(TEMP_DIR "/tmp/eventnet-file-replay-${RANDOM_STRING}")
+file(MAKE_DIRECTORY "${TEMP_DIR}")
+get_filename_component(TELEMETRY_BASENAME "${TELEMETRY}" NAME)
+file(COPY "${TELEMETRY}" DESTINATION "${TEMP_DIR}"
+    FILE_PERMISSIONS OWNER_READ OWNER_WRITE)
+
+set(COMMAND_LINE
+    "${EVENTNETD}" "${YAML}"
+    "--intent" "${INTENT}"
+    "--telemetry" "${TEMP_DIR}/${TELEMETRY_BASENAME}"
+    "--batch-size" "${BATCH_SIZE}"
+    "--count" "${COUNT}"
+    "--max-age-ms" "${MAX_AGE_MS}")
+if(DEFINED STATE_FILE AND NOT STATE_FILE STREQUAL "")
+    list(APPEND COMMAND_LINE "--state-file" "${STATE_FILE}")
+endif()
+
+execute_process(
+    COMMAND ${COMMAND_LINE}
+    RESULT_VARIABLE RESULT
+    OUTPUT_VARIABLE OUTPUT
+    ERROR_VARIABLE ERROR_OUTPUT)
+message("${OUTPUT}${ERROR_OUTPUT}")
+file(REMOVE_RECURSE "${TEMP_DIR}")
+if(NOT RESULT EQUAL 0)
+    message(FATAL_ERROR "eventnetd exited with status ${RESULT}")
+endif()

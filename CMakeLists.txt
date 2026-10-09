@@ -135,6 +135,7 @@ target_link_libraries(eventnet_vpp_interface_observer PRIVATE eventnet_controlle
 enable_testing()
 add_executable(eventnet_tests tests/test_controller.c)
 target_link_libraries(eventnet_tests PRIVATE eventnet_controller)
+
 add_test(NAME eventnet_tests COMMAND eventnet_tests)
 set_tests_properties(eventnet_tests PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 add_test(NAME eventnet_scenario_direct
@@ -196,49 +197,76 @@ add_test(NAME eventnet_agent_yaml_legacy_no_segment_simulated
 set_tests_properties(eventnet_agent_yaml_legacy_no_segment_simulated PROPERTIES
     PASS_REGULAR_EXPRESSION "192.0.2.2")
 add_test(NAME eventnet_file_replay_legacy_no_segment
-    COMMAND eventnetd ${CMAKE_CURRENT_SOURCE_DIR}/samples/agent-legacy-no-segment.yaml
-        --intent intent-legacy-no-segment
-        --telemetry ${CMAKE_CURRENT_SOURCE_DIR}/samples/telemetry-legacy-no-segment.jsonl
-        --batch-size 1 --count 1 --max-age-ms 0)
+    COMMAND ${CMAKE_COMMAND}
+        -DEVENTNETD=$<TARGET_FILE:eventnetd>
+        -DYAML=${CMAKE_CURRENT_SOURCE_DIR}/samples/agent-legacy-no-segment.yaml
+        -DINTENT=intent-legacy-no-segment
+        -DTELEMETRY=${CMAKE_CURRENT_SOURCE_DIR}/samples/telemetry-legacy-no-segment.jsonl
+        -DBATCH_SIZE=1 -DCOUNT=1 -DMAX_AGE_MS=0
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/run-file-replay.cmake)
 set_tests_properties(eventnet_file_replay_legacy_no_segment PROPERTIES
     PASS_REGULAR_EXPRESSION "selected_path: path-legacy-no-segment")
 add_test(NAME eventnet_file_replay
-    COMMAND eventnetd ${CMAKE_CURRENT_SOURCE_DIR}/samples/linux-vm-netns.yaml
-        --intent intent-a-b --telemetry ${CMAKE_CURRENT_SOURCE_DIR}/samples/telemetry-replay.jsonl
-        --batch-size 3 --count 1 --max-age-ms 0)
+    COMMAND ${CMAKE_COMMAND}
+        -DEVENTNETD=$<TARGET_FILE:eventnetd>
+        -DYAML=${CMAKE_CURRENT_SOURCE_DIR}/samples/linux-vm-netns.yaml
+        -DINTENT=intent-a-b
+        -DTELEMETRY=${CMAKE_CURRENT_SOURCE_DIR}/samples/telemetry-replay.jsonl
+        -DBATCH_SIZE=3 -DCOUNT=1 -DMAX_AGE_MS=0
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/run-file-replay.cmake)
 set_tests_properties(eventnet_file_replay PROPERTIES
     PASS_REGULAR_EXPRESSION "selected_path: path-direct")
 add_test(NAME eventnet_file_replay_fallback
-    COMMAND eventnetd ${CMAKE_CURRENT_SOURCE_DIR}/samples/linux-vm-netns.yaml
-        --intent intent-a-b --telemetry ${CMAKE_CURRENT_SOURCE_DIR}/samples/telemetry-replay-fallback.jsonl
-        --batch-size 3 --count 2 --max-age-ms 0)
+    COMMAND ${CMAKE_COMMAND}
+        -DEVENTNETD=$<TARGET_FILE:eventnetd>
+        -DYAML=${CMAKE_CURRENT_SOURCE_DIR}/samples/linux-vm-netns.yaml
+        -DINTENT=intent-a-b
+        -DTELEMETRY=${CMAKE_CURRENT_SOURCE_DIR}/samples/telemetry-replay-fallback.jsonl
+        -DBATCH_SIZE=3 -DCOUNT=2 -DMAX_AGE_MS=0
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/run-file-replay.cmake)
 set_tests_properties(eventnet_file_replay_fallback PROPERTIES
     PASS_REGULAR_EXPRESSION "selected_path: path-direct;selected_path: path-via-hub")
 add_test(NAME eventnet_file_replay_incomplete
-    COMMAND eventnetd ${CMAKE_CURRENT_SOURCE_DIR}/samples/linux-vm-netns.yaml
-        --intent intent-a-b --telemetry ${CMAKE_CURRENT_SOURCE_DIR}/samples/telemetry-replay.jsonl
-        --batch-size 3 --count 2 --max-age-ms 0)
+    COMMAND ${CMAKE_COMMAND}
+        -DEVENTNETD=$<TARGET_FILE:eventnetd>
+        -DYAML=${CMAKE_CURRENT_SOURCE_DIR}/samples/linux-vm-netns.yaml
+        -DINTENT=intent-a-b
+        -DTELEMETRY=${CMAKE_CURRENT_SOURCE_DIR}/samples/telemetry-replay.jsonl
+        -DBATCH_SIZE=3 -DCOUNT=2 -DMAX_AGE_MS=0
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/run-file-replay.cmake)
 set_tests_properties(eventnet_file_replay_incomplete PROPERTIES
     WILL_FAIL TRUE)
 add_test(NAME eventnet_state_wrong_intent
-    COMMAND eventnetd ${CMAKE_CURRENT_SOURCE_DIR}/samples/linux-vm-netns.yaml
-        --intent intent-a-b --telemetry ${CMAKE_CURRENT_SOURCE_DIR}/samples/telemetry-replay.jsonl
-        --batch-size 3 --count 1 --max-age-ms 0
-        --state-file ${CMAKE_CURRENT_SOURCE_DIR}/samples/state-wrong-intent.tsv)
+    COMMAND ${CMAKE_COMMAND}
+        -DEVENTNETD=$<TARGET_FILE:eventnetd>
+        -DYAML=${CMAKE_CURRENT_SOURCE_DIR}/samples/linux-vm-netns.yaml
+        -DINTENT=intent-a-b
+        -DTELEMETRY=${CMAKE_CURRENT_SOURCE_DIR}/samples/telemetry-replay.jsonl
+        -DSTATE_FILE=${CMAKE_CURRENT_SOURCE_DIR}/samples/state-wrong-intent.tsv
+        -DBATCH_SIZE=3 -DCOUNT=1 -DMAX_AGE_MS=0
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/run-file-replay.cmake)
 set_tests_properties(eventnet_state_wrong_intent PROPERTIES
     WILL_FAIL TRUE)
 add_test(NAME eventnet_state_wrong_path
-    COMMAND eventnetd ${CMAKE_CURRENT_SOURCE_DIR}/samples/route-examples.yaml
-        --intent intent-explicit-single-route --telemetry ${CMAKE_CURRENT_SOURCE_DIR}/samples/telemetry-replay.jsonl
-        --batch-size 1 --count 1 --max-age-ms 0
-        --state-file ${CMAKE_CURRENT_SOURCE_DIR}/samples/state-wrong-path.tsv)
+    COMMAND ${CMAKE_COMMAND}
+        -DEVENTNETD=$<TARGET_FILE:eventnetd>
+        -DYAML=${CMAKE_CURRENT_SOURCE_DIR}/samples/route-examples.yaml
+        -DINTENT=intent-explicit-single-route
+        -DTELEMETRY=${CMAKE_CURRENT_SOURCE_DIR}/samples/telemetry-replay.jsonl
+        -DSTATE_FILE=${CMAKE_CURRENT_SOURCE_DIR}/samples/state-wrong-path.tsv
+        -DBATCH_SIZE=1 -DCOUNT=1 -DMAX_AGE_MS=0
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/run-file-replay.cmake)
 set_tests_properties(eventnet_state_wrong_path PROPERTIES
     WILL_FAIL TRUE)
 add_test(NAME eventnet_state_disabled_node
-    COMMAND eventnetd ${CMAKE_CURRENT_SOURCE_DIR}/samples/state-disabled-node.yaml
-        --intent intent-a-b --telemetry ${CMAKE_CURRENT_SOURCE_DIR}/samples/telemetry-replay.jsonl
-        --batch-size 1 --count 1 --max-age-ms 0
-        --state-file ${CMAKE_CURRENT_SOURCE_DIR}/samples/state-disabled-node.tsv)
+    COMMAND ${CMAKE_COMMAND}
+        -DEVENTNETD=$<TARGET_FILE:eventnetd>
+        -DYAML=${CMAKE_CURRENT_SOURCE_DIR}/samples/state-disabled-node.yaml
+        -DINTENT=intent-a-b
+        -DTELEMETRY=${CMAKE_CURRENT_SOURCE_DIR}/samples/telemetry-replay.jsonl
+        -DSTATE_FILE=${CMAKE_CURRENT_SOURCE_DIR}/samples/state-disabled-node.tsv
+        -DBATCH_SIZE=1 -DCOUNT=1 -DMAX_AGE_MS=0
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/run-file-replay.cmake)
 set_tests_properties(eventnet_state_disabled_node PROPERTIES
     WILL_FAIL TRUE)
 add_test(NAME eventnet_yaml_vlan_vrf_isolation

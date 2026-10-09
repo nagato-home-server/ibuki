@@ -22,6 +22,16 @@ find_file() {
   return 1
 }
 
+check_cmd_or_file() {
+  label="$1"
+  shift
+  if command -v "$label" >/dev/null 2>&1; then
+    printf 'ok: %s -> %s\n' "$label" "$(command -v "$label")"
+    return 0
+  fi
+  find_file "$label" "$@"
+}
+
 check_service() {
   service="$1"
   if command -v systemctl >/dev/null 2>&1; then
@@ -32,7 +42,7 @@ check_service() {
 }
 
 check_cmd swanctl
-check_cmd charon || find_file charon /usr/lib/ipsec/charon /usr/lib/strongswan/charon /usr/libexec/ipsec/charon || true
+check_cmd_or_file charon /usr/lib/ipsec/charon /usr/lib/strongswan/charon /usr/libexec/ipsec/charon || true
 find_file starter /usr/lib/ipsec/starter /usr/lib/strongswan/starter /usr/libexec/ipsec/starter || true
 check_cmd vppctl
 check_cmd vpp

@@ -2,6 +2,45 @@
 
 共有フォルダ上の `controller` を Linux VM から実行するための最小手順です。
 
+## AF_PACKET の送信互換性
+
+`vm-vpp-ns-topology.sh` は LAN、Linux underlay 接続、VPP 間リンクを
+`create host-interface name <interface> cksum-gso-disable` で作成します。
+Linux 側の `ethtool -K` に加えて、VPP 側でもチェックサム/GSOオフロードを無効化します。
+VMware VM の Linux 7.0.0-34 / VPP 26.06 環境では、既定設定で ARP 応答が
+VPP の送信トレースに現れても client namespace に届かず、この設定で回復しました。
+ARP は動的に解決します。固定 neighbor の登録は不要です。
+
+変更を実機に反映し、ローカルゲートウェイと双方向 LAN 通信を確認する手順:
+
+```sh
+sudo env VPP_TOPOLOGY_MODE=hub SKIP_GRE=1 SKIP_IPSEC_TAP=1 sh scripts/vm-vpp-ns-topology.sh setup
+sudo env REQUIRE_LOCAL_VPP_PING=1 sh scripts/vm-vpp-netns-smoke.sh
+```
+
+`setup` はテスト用 client namespace とリンクを再作成します。
+Direct の検証では `VPP_TOPOLOGY_MODE=direct` を指定します。
+この設定はオフロードを使わない検証構成なので、性能測定では設定を記録してください。
+
+IPsec 統合試験では `VPP_TOPOLOGY_MODE=ipsec` を使い、平文の VPP 間リンクを
+作成せず、LAN から TAP / Linux XFRM へ転送します。VPP は site-a と site-b の
+2プロセスだけを起動し、Hub の暗号化転送は Linux XFRM が担当します。
+GRE 試験も同モードで LAN / underlay だけを作成し、TAP は省略します。
+GRE と保護経路は Controller の生成計画が作成します。
+
+VPP 起動待ちは `VPP_READY_ATTEMPTS`（既定120回、各回1秒待機）で調整します。
+小規模 VM での CPU 競合を抑えるため、namespace VPP は
+`VPP_NS_POLL_SLEEP_USEC=1000` を既定として使います。
+性能測定ではこの待機設定も記録し、ビジーポーリングでの評価は
+`VPP_NS_POLL_SLEEP_USEC=0` と十分な vCPU を用意して別に実行してください。
+
+Controller 統合・GRE smoke は、測定用の3回pingの前にneighbor warm-upを行います。
+初回ARP解決によるパケット損失もwarm-upログに残します。測定用pingの成功は、
+起動直後や切替直後の無損失を保証する結果ではありません。
+2026-10-09のVM再検証では、Direct／Hub統合とstrongSwanのGRE over IPsecの
+各双方向pingが、warm-up後に3/3・損失0%で成功しました。
+環境・途中失敗・ESP確認は `daily/20261009.md` に記録しています。
+
 ## Script Map
 
 まず迷ったら、次の順に使います。
@@ -19,10 +58,45 @@
 | VPP netns | `vm-vpp-netns-*.sh`, `vm-vpp-controller-netns-smoke.sh` |
 | controller netns | `vm-netns-controller-smoke.sh` |
 | controller統合 | `vm-controller-integrated-runtime-smoke.sh` |
+| 実環境検証の入口 | `vm-real-smoke.sh [yaml] [action]` |
 
 root が必要なスクリプトは `sudo sh scripts/<script>.sh` で実行します。
 通常ユーザーでよいものは `sh scripts/<script>.sh` で実行します。
 各shellの引数・環境変数は `docs/shell-commands.md` にまとめています。
+
+## Real Environment Smoke Test
+
+個別スクリプトを順番に呼び出す実環境検証の入口です。VPP、strongSwan、namespace
+を実際に起動するため、`preflight` 以外は root 権限が必要です。
+
+```sh
+cd controller
+sudo sh scripts/vm-real-smoke.sh samples/linux-vm-netns.yaml preflight
+sudo sh scripts/vm-real-smoke.sh samples/linux-vm-netns.yaml underlay
+sudo sh scripts/vm-real-smoke.sh samples/linux-vm-netns.yaml vpp
+sudo sh scripts/vm-real-smoke.sh samples/linux-vm-netns.yaml ipsec
+sudo sh scripts/vm-real-smoke.sh samples/gre-namespace-v2.yaml gre
+```
+
+一括実行:
+
+```sh
+sudo sh scripts/vm-real-smoke.sh samples/linux-vm-netns.yaml all
+```
+
+統合実行は、VPP namespace と direct IPsec を準備してから、controller が生成した
+direct/fallback runtime を適用します。
+
+```sh
+sudo sh scripts/vm-real-smoke.sh samples/linux-vm-netns.yaml integrated
+```
+
+通常は終了時にVPP、IPsec、namespaceの実行状態を片付けます。失敗後の調査用に
+状態を残す場合は `KEEP_RUNTIME=1` を指定します。終了後の掃除は次で行います。
+
+```sh
+sudo sh scripts/vm-real-smoke.sh samples/linux-vm-netns.yaml clean
+```
 
 ## 0. One-shot Demo
 
@@ -317,7 +391,7 @@ DRY_RUN=1 sh out/netns-runtime/vpp-route-plan.sh
 sudo DRY_RUN=0 sh out/netns-runtime/vpp-route-plan.sh
 ```
 
-現在の VPP 準備段階では route command generation までです。次の段階で VPP interface と namespace / XFRM interface の接続を詰めます。
+この構成では VPP route command generation に加え、VPP と Linux/XFRM の間を TAP interface で接続します。
 
 ## 11. VPP Netns Host-Interface Smoke
 
@@ -331,8 +405,10 @@ sudo sh scripts/vm-vpp-netns-smoke.sh
 
 構成:
 
-- `site-a:vpp-client 172.16.1.2/30` <-> `VPP host-vpp-site-a 172.16.1.1/30`
-- `site-b:vpp-client 172.16.2.2/30` <-> `VPP host-vpp-site-b 172.16.2.1/30`
+- `client-a:10.10.1.2/24` <-> `site-a VPP host-ib-lan-a:10.10.1.1/24`
+- `client-b:10.10.2.2/24` <-> `site-b VPP host-ib-lan-b:10.10.2.1/24`
+- standalone VPP forwarding は専用 veth `ib-dir-a` / `ib-dir-b` を使う。
+- IPsec 統合時は VPP `tap0` と Linux `ib-ipsec-a` / `ib-ipsec-b` を使い、Linux のXFRM interfaceへ引き渡す。
 
 この VPP edge 情報は `samples/linux-vm-netns.yaml` の `vpp_edges:` にも定義します。
 `eventnet_netns_plan` が生成する `vpp-netns-route-plan.sh` は、この YAML mapping の `node_id` と `next_hop` を使って VPP route を作ります。
@@ -343,7 +419,7 @@ sudo sh scripts/vm-vpp-netns-smoke.sh
 sudo sh scripts/vm-vpp-netns-clean.sh
 ```
 
-この smoke test は IPsec とは独立して、VPP が netns 間の L3 forwarding plane として使えるかを確認します。
+この smoke test は IPsec とは独立して、client namespace間をVPPがL3 forwardingすることを確認します。
 
 controller-generated VPP route plan を VPP netns 接続へ実適用する smoke test:
 
@@ -380,7 +456,7 @@ sudo MODE=both sh scripts/vm-controller-integrated-runtime-smoke.sh samples/linu
 - YAML `vpp_edges` から生成した VPP route 適用
 - VPP forwarding smoke
 
-まだ「同一packetをIPsec復号後にVPPで転送する本番gateway pipeline」ではありません。そこは次段階で、Linux/VPP interface設計とXFRM/VPP接続を詰めます。
+統合smokeでは、client namespaceからVPPへ入ったpacketを`tap0`でLinuxへ渡し、選択されたdirectまたはHub XFRM/IPsec経路を通す。受信側はLinuxからTAPへ戻り、VPPがclient namespaceへ転送する。
 
 ## 13. Scenario Harness Smoke
 

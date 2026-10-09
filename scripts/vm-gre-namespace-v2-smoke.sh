@@ -16,6 +16,12 @@ cleanup() {
   sh scripts/vm-vpp-ns-topology.sh clean >/dev/null 2>&1 || true
 }
 diagnose_datapath() {
+  for ns in client-a client-b; do
+    printf '== client diagnostics: %s ==\n' "$ns" >&2
+    ip netns exec "$ns" ip -br addr >&2 || true
+    ip netns exec "$ns" ip route >&2 || true
+    ip netns exec "$ns" ip neigh >&2 || true
+  done
   for ns in site-a site-b; do
     printf '== datapath diagnostics: %s ==\n' "$ns" >&2
     ip netns exec "$ns" ip -br addr >&2 || true
@@ -58,7 +64,7 @@ if [ "$VPP_NATIVE_IPSEC" = "1" ]; then
 fi
 # The generated plan owns GRE. Creating it here too leaves stale FIB paths
 # when the plan deletes and recreates gre0.
-SKIP_GRE=1 sh scripts/vm-vpp-ns-topology.sh setup
+SKIP_GRE=1 SKIP_IPSEC_TAP=1 VPP_TOPOLOGY_MODE=ipsec VPP_NS_NODES='site-a site-b' sh scripts/vm-vpp-ns-topology.sh setup
 BUILD_DIR="$BUILD_DIR" OUT_DIR="$OUT_DIR" sh scripts/vm-generate-netns-runtime.sh "$YAML" --intent "$INTENT_ID"
 if [ "$VPP_NATIVE_IPSEC" = "1" ]; then
   printf 'Using VPP Native IPsec; strongSwan is not started for this smoke.\n'
@@ -76,15 +82,18 @@ if [ "$VPP_NATIVE_IPSEC" = "1" ]; then
     vppctl -s "$vpp_socket" show ip fib 2>/dev/null || true
   done
 fi
-printf '== namespaced GRE over IPsec: site-a -> site-b ==\n'
+printf '== neighbor warm-up (excluded from measured pings) ==\n'
+ip netns exec client-a ping -c 1 -W 5 -I 10.10.1.2 10.10.2.2 || true
+ip netns exec client-b ping -c 1 -W 5 -I 10.10.2.2 10.10.1.2 || true
+printf '== namespaced GRE over IPsec: client-a -> client-b ==\n'
 vppctl -s /run/ibuki-vpp-ns/site-a/cli.sock trace add af-packet-input 20 >/dev/null 2>&1 || true
 vppctl -s /run/ibuki-vpp-ns/site-b/cli.sock trace add af-packet-input 20 >/dev/null 2>&1 || true
-if ! ip netns exec site-a ping -c 3 -W 2 -I 10.10.1.1 10.10.2.1; then
+if ! ip netns exec client-a ping -c 3 -W 2 -I 10.10.1.2 10.10.2.2; then
   diagnose_datapath
   exit 1
 fi
-printf '== namespaced GRE over IPsec: site-b -> site-a ==\n'
-if ! ip netns exec site-b ping -c 3 -W 2 -I 10.10.2.1 10.10.1.1; then
+printf '== namespaced GRE over IPsec: client-b -> client-a ==\n'
+if ! ip netns exec client-b ping -c 3 -W 2 -I 10.10.2.2 10.10.1.2; then
   diagnose_datapath
   exit 1
 fi

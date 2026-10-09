@@ -27,6 +27,11 @@ check_service() {
 check_cmd vpp
 check_cmd vppctl
 check_cmd ip
+if command -v ethtool >/dev/null 2>&1; then
+  printf 'ok: ethtool -> %s\n' "$(command -v ethtool)"
+else
+  printf 'optional: ethtool missing; veth offload disabling will be skipped\n'
+fi
 check_service vpp
 
 if [ "${VPP_TOPOLOGY:-edge}" = "hub" ]; then

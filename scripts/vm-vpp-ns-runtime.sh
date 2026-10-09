@@ -5,7 +5,9 @@ ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 VPP=${VPP:-vpp}
 VPPCTL=${VPPCTL:-vppctl}
 RUN_BASE=${VPP_NS_RUN_BASE:-/run/ibuki-vpp-ns}
-NODES=${VPP_NS_NODES:-site-a site-b}
+NODES=${VPP_NS_NODES:-site-a hub-1 site-b}
+VPP_READY_ATTEMPTS=${VPP_READY_ATTEMPTS:-120}
+VPP_NS_POLL_SLEEP_USEC=${VPP_NS_POLL_SLEEP_USEC:-1000}
 ACTION=${1:-}
 
 usage() {
@@ -30,6 +32,7 @@ config_for() {
   cat > "$dir/startup.conf" <<EOF
 unix {
   nodaemon
+  poll-sleep-usec $VPP_NS_POLL_SLEEP_USEC
   cli-listen $dir/cli.sock
   log $dir/vpp.log
 }
@@ -50,6 +53,8 @@ plugins {
   plugin af_packet_plugin.so { enable }
   plugin gre_plugin.so { enable }
   plugin ipsec_plugin.so { enable }
+  plugin tap_plugin.so { enable }
+  plugin ping_plugin.so { enable }
 }
 EOF
 }
@@ -78,7 +83,8 @@ start_node() {
   ip netns exec "$ns" "$VPP" -c "$RUN_BASE/$ns/startup.conf" \
     >"$RUN_BASE/$ns/vpp.stdout.log" 2>"$RUN_BASE/$ns/vpp.stderr.log" &
   echo "$!" > "$RUN_BASE/$ns/vpp.pid"
-  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+  ready_attempt=0
+  while [ "$ready_attempt" -lt "$VPP_READY_ATTEMPTS" ]; do
     if [ -S "$RUN_BASE/$ns/cli.sock" ] && "$VPPCTL" -s "$RUN_BASE/$ns/cli.sock" show version >/dev/null 2>&1; then
       printf '%s VPP ready: %s\n' "$ns" "$RUN_BASE/$ns/cli.sock"
       return
@@ -87,7 +93,8 @@ start_node() {
       break
     fi
     printf 'Waiting for VPP in %s...\n' "$ns"
-    sleep 0.5
+    ready_attempt=$((ready_attempt + 1))
+    sleep 1
   done
   printf 'VPP did not become ready in %s. Log follows:\n' "$ns" >&2
   cat "$RUN_BASE/$ns/vpp.log" >&2 2>/dev/null || true

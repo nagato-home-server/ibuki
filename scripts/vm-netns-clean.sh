@@ -6,7 +6,18 @@ if [ "$(id -u)" != "0" ]; then
   exit 1
 fi
 
-for ns in site-a site-b hub-1 relay-c; do
+stop_namespace_processes() {
+  ns="$1"
+  pids=$(ip netns pids "$ns" 2>/dev/null || true)
+  [ -n "$pids" ] || return 0
+  kill $pids 2>/dev/null || true
+  sleep 1
+  pids=$(ip netns pids "$ns" 2>/dev/null || true)
+  [ -n "$pids" ] && kill -KILL $pids 2>/dev/null || true
+}
+
+for ns in client-a client-b site-a site-b hub-1 relay-c; do
+  stop_namespace_processes "$ns"
   ip netns del "$ns" 2>/dev/null || true
 done
 

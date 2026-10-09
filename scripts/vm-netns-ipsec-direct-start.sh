@@ -39,7 +39,9 @@ for ns in site-a site-b; do
     kill "$old_wrapper_pid" 2>/dev/null || true
   fi
   for namespace_pid in $(ip netns pids "$ns" 2>/dev/null || true); do
-    kill "$namespace_pid" 2>/dev/null || true
+    if [ -r "/proc/$namespace_pid/comm" ] && [ "$(cat "/proc/$namespace_pid/comm")" = "charon" ]; then
+      kill "$namespace_pid" 2>/dev/null || true
+    fi
   done
 done
 

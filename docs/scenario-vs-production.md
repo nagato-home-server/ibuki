@@ -1,10 +1,10 @@
 # Scenario Harness と Production eventnetd の差分
 
-2026-10-09更新: 障害イベント入力によるDirect→Hub選択・実適用は確認済み。ただし連続通信中のリンク切断とAgentの検知から切替までを測る試験とは区別する。常駐APIの認証、鍵管理、HAを含む本番完成を主張しない。
+2026-10-10更新: eventnet_scenarioとeventnetdは実装済み。実障害・復旧・TCP等の反復は評価専用executorで実施済みで、本番eventnetdの適用ループ測定ではない。認証、鍵管理、HAを含む製品完成とは区別する。
 
 確認日、構成、測定制限の共通一覧: [現在の実装と検証状況](current-status.md)。
 
-この文書は、次に追加する `eventnet_scenario` の位置付けを明確にするためのものです。
+この文書は、実装済みの`eventnet_scenario`と`eventnetd`の用途・本番化との差分を明確にするものです。
 
 `eventnet_scenario` は本番daemonではありません。Path selection、fallback、recovery、evaluated policyを安全かつ高速に実験するためのテストハーネスです。
 
@@ -12,7 +12,7 @@
 
 Agentの逐次入力には `--telemetry-stdin` を使えます。`--telemetry FILE`もJSONL streamとして扱い、`--batch-size N`指定時はN件ごとに1回reconcileします。`--count C`はC回のbatch評価を要求し、各batchでN件を消費します。EOF時にN件未満となったbatchは適用せず、要求したC batchに到達しなければ終了コード1になります。Linuxでは `--telemetry-socket PATH` も使え、JSONL 1行ごとに同じController状態を更新して再評価します。複数Pathを同一測定ラウンドとして扱う場合は `--batch-size N` を指定し、N件を反映してから1回だけ再評価します。ソケットは既定では1接続ですが、`--socket-accept-count N --state-file PATH`により複数Agentを同一共有batchへ集約できます（N>1、有限接続）。共有batchの入力は4MiBを上限とし、`--socket-parallel`を付けるとN接続を同時pollで読み取り、`--socket-parallel-timeout-ms`超過時はreconcileせず終了します。`--socket-accept-count 0`なら無期限に逐次接続を受け付けます。Linuxでは`--socket-uid UID`で接続元UIDを検証できます。認証はUIDのみです。
 
-file入力の周期実行では `--reload-config --state-file PATH` を指定すると、各周期の開始時にYAMLを再読込します。再読込に失敗した周期は適用せず終了し、前回の適用Pathはstate fileから復元します。stdin／socket入力との組み合わせは受け付けません。LinuxではSIGTERM／SIGINTを全入力モードで受け付け、直前に保存済みのstateを保持して終了します。`vm-eventnet-event-smoke.sh`でfile周期入力を停止させ、state fileが残ることを再現できます。
+file入力の周期実行では `--reload-config --state-file PATH` を指定すると、各周期の開始時にYAMLを再読込します。再読込に失敗した場合は直前の正常設定を維持して評価し、前回の適用Pathはstate fileから復元します。stdin／socket入力との組み合わせは受け付けません。LinuxではSIGTERM／SIGINTを全入力モードで受け付け、直前に保存済みのstateを保持して終了します。`vm-eventnet-event-smoke.sh`でfile周期入力を停止させ、state fileが残ることを再現できます。
 
 障害イベントの最小形式は `{"schema":"ibuki.event.path.v1","event":"path_failed|path_recovered","path_id":"...","timestamp_ms":...}` です。`eventnetd`はこれをhealth更新として扱うため、既存のPath選択・fallback・recovery処理を共有できます。Linux Unix socketでは、同一接続から複数のイベントスナップショットをbatch単位で連続処理できます。`--socket-accept-count N`（N>1）では有限個のAgent接続を共有batchへ集約し、全入力を一つのController状態で再評価します。
 
@@ -30,9 +30,9 @@ VPP observerは`show interface`からVLAN sub-interfaceの存在と`up`状態も
 
 VLAN telemetryはroute観測と対象sub-interface観測を同一Pathへ集約します。両方のup観測が揃わない限りhealthyとは判定せず、未観測またはdownの場合はfallback対象にします。
 標準入力／逐次socketの常駐処理では、観測が別batchで到着した一時的な`no_candidate`でdaemonを終了せず、次のbatchを待ちます。全batchが失敗した場合だけ非0終了になります。
-`deny_unmatched_vlan: true`を指定したIntentでは、生成planとcommand backendがVPP親interfaceへIPv4/IPv6 deny-all ACLを適用し、指定sub-interface以外の未タグ通信を遮断する構成も選べます。VLAN smokeでは親interfaceにも別のL3経路を設定してから未タグpingを実行し、単なる未設定経路ではなくACLによる拒否を確認します。`vpp_edges.allowed_vlans`を指定したedgeでは一覧外VLANのsub-interface作成・route投入を拒否します。VLANごとのFIB table割当と設定生成は実装済みですが、実trunk上の複数VLAN疎通とVPPでの実パケット分離は未検証です。
+`deny_unmatched_vlan: true`を指定したIntentでは、生成planとcommand backendがVPP親interfaceへIPv4/IPv6 deny-all ACLを適用し、指定sub-interface以外の未タグ通信を遮断する構成も選べます。VLAN smokeでは親interfaceにも別のL3経路を設定してから未タグpingを実行し、単なる未設定経路ではなくACLによる拒否を確認します。`vpp_edges.allowed_vlans`を指定したedgeでは一覧外VLANのsub-interface作成・route投入を拒否します。VLANごとのFIB table割当と設定生成は実装済みですが、手動CLIのVLAN 100/200・重複IPv4 FIB分離は10月10日に反復確認済みです。Controller生成Intent全体、一覧外/未タグACL、IPv6と物理trunkは未検証です。
 
-現行のVLAN Policyは、指定VLANをtraffic keyとPath selectionへ結び付け、指定VLANのsub-interfaceだけへrouteを生成します。加えて`block_non_ipsec: true`を指定したIntentでは、Tunnel selector範囲に限定した双方向XFRM block policyを生成し、command backendのapply経路でも同じblockをTunnel単位で追加・削除します。`deny_unmatched_vlan: true`を指定したIntentでは、VPP親interfaceへIPv4/IPv6 deny-all ACLを適用し、未タグ通信を遮断できます。さらに`vpp_edges.allowed_vlans`でedge単位の許可VLANを制限できます。したがって、同一source/destinationでもVLANごとに選択PathとFIB計画を分離し、IPsec対象範囲のcleartext fallbackも抑止できます。一方、実trunk上の複数VLAN疎通とVPPでの実パケット分離は未検証です。論文前の実験では「許可VLANの疎通」「一覧外VLANのplan拒否」「deny ACLによる未タグ通信の遮断」「XFRM block planとcommand backendの双方向生成」を確認します。
+現行のVLAN Policyは、指定VLANをtraffic keyとPath selectionへ結び付け、指定VLANのsub-interfaceだけへrouteを生成します。加えて`block_non_ipsec: true`を指定したIntentでは、Tunnel selector範囲に限定した双方向XFRM block policyを生成し、command backendのapply経路でも同じblockをTunnel単位で追加・削除します。`deny_unmatched_vlan: true`を指定したIntentでは、VPP親interfaceへIPv4/IPv6 deny-all ACLを適用し、未タグ通信を遮断できます。さらに`vpp_edges.allowed_vlans`でedge単位の許可VLANを制限できます。したがって、同一source/destinationでもVLANごとに選択PathとFIB計画を分離し、IPsec対象範囲のcleartext fallbackも抑止できます。一方、手動CLIのVLAN 100/200・重複IPv4 FIB分離は10月10日に反復確認済みです。Controller生成Intent全体、一覧外/未タグACL、IPv6と物理trunkは未検証です。論文前の実験では「許可VLANの疎通」「一覧外VLANのplan拒否」「deny ACLによる未タグ通信の遮断」「XFRM block planとcommand backendの双方向生成」を確認します。
 `--verify-vpp`を実applyで指定すると、explicit routeのFIB存在確認に加えてinterface up確認を行います。
 
 ## 1. なぜscenario harnessを先に作るか
@@ -46,7 +46,7 @@ VLAN telemetryはroute観測と対象sub-interface観測を同一Pathへ集約�
 
 本番daemonを急いで作ると、OSプロセス管理、権限、VICI/VPP API、ログ管理などに実装時間を取られます。
 
-そこで先に `eventnet_scenario` を作り、controller判断部分を小さく再現可能に検証します。
+初期段階では先に`eventnet_scenario`を作り、Controller判断を再現可能に検証した。現在はeventnetd入口も実装済みで、本番化の運用保証が次の段階である。
 
 ## 2. eventnet_scenario の役割
 
@@ -80,7 +80,7 @@ VLAN telemetryはroute観測と対象sub-interface観測を同一Pathへ集約�
 
 ## 3. Production eventnetd の役割
 
-本番 `eventnetd` は、長時間動作するcontroller processです。
+本番化の目標は長時間動作するController processである。現行eventnetdには常駐入力があるが、以下の外部API更新、継続的な全Backend観測、HAをすべて実装した意味ではない。
 
 想定入力:
 
@@ -235,16 +235,6 @@ productionへ持ち込まなくてよいもの:
 
 ## 8. 実装順
 
-具体的なファイル配置、関数名、出力先は `docs/future-implementation-map.md` にまとめています。
+具体的なファイル配置、関数名、出力先は `docs/paper-to-mitou-implementation-plan.md` にまとめています。
 
-推奨順:
-
-1. `eventnet_scenario --once` を作る。
-2. `--health` / `--fail-path` / `--expect` を実装する。
-3. evaluated selectionの実験を増やす。
-4. `--generate-runtime` で既存 `eventnet_netns_plan` と接続する。
-5. scenario smoke scriptを追加する。
-6. event fileを読む簡易loopへ進む。
-7. production `eventnetd` のstate store / event loopへ進む。
-
-この順なら、実験可能性を早く示しつつ、本番実装への道筋も崩れません。
+`--health`、`--fail-path`、`--expect`、`--generate-runtime`、scenario smoke、eventnetd JSONL入力・state・loopは実装済み。次はAgent並列測定、無期限parallel受信、VICI運用、VPP codec、実Adapterでのcommit後疎通と復旧を追加する。実装済みCLIを再び未着手として列挙しない。

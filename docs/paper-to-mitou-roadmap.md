@@ -1,6 +1,6 @@
 # 論文作成から未踏期間までの実装・評価計画
 
-2026-10-09更新: 論文前の基本暗号化データパスはDirect／Hub／GREまで確認済み。論文前は反復・障害注入・図表、未踏期間は多拠点実験・閾値調整・Binary API・認証運用・FRR／HAを優先する。旧進捗の日付は当時の確認範囲を示す。
+2026-10-10更新: 基本Direct/Hub/GRE疎通、実障害・復旧・部分Rollback、反復CSV・図・原稿照合を完了した。提出前は版固定とPDF組版を優先し、未踏期間は実WAN・閾値調整・本番Adapter・認証・FRR/HAへ進む。9月25日の未完了一覧は履歴。
 
 確認日、構成、測定制限の共通一覧: [現在の実装と検証状況](current-status.md)。
 
@@ -24,7 +24,7 @@
 - 完了: 提出commit `253901f` でLinux Release build・CTest 27/27、root不要validation 12件、Windows build/CTestが成功。root不要成果は`out/paper-final-253901f/`に保存。
 - 未完了: root/VPP runtimeの同一commit再実行、反復した定量測定、工程別時間、最大通信断、RTT/reordering/TCP retransmission、CPU/メモリ、図表生成、PDF校正。
 
-したがって、現在の主な不足は新しいBackendの追加ではなく、既存機能を同一条件で測って論文の主張へ結び付ける評価工程である。
+これは9月25日時点の残作業である。10月10日に評価器の実障害・復旧・部分Rollback、ICMP/TCP、帯域、CPU/RSS、手動VLAN/FIB分離を2 CPU条件で各25ケース測定し、図と原稿照合まで完了した。現在の残確認は提出版の固定とPDF組版。本番制御・未測定項目は現状一覧に従う。
 
 ## 論文作成後から未踏開始まで：実験環境
 
@@ -36,7 +36,7 @@
 
 次に、閾値を固定値として主張せず、複数のPolicyを同じ障害シナリオへ適用する。Packet Loss、連続失敗回数、連続成功回数、hold-down、hysteresisを変数にして、障害注入から切替完了までの時間、不要な切替回数、ping loss、TCP retransmission、UDP loss、旧Tunnel cleanup時間を記録する。
 
-実験後は、ユーザがYAMLを変更できることと、変更結果がExplain JSONLへ反映されることを確認する。既定値を設ける場合も、既定値を最適値とは扱わず、環境ごとにPolicyを調整できる設計として説明する。閾値変更時は設定reloadの成否、現在のActive Path、既存stateの扱いをログに残し、不正な閾値では旧設定を維持する。
+実験後は、ユーザがYAMLを変更できることと、変更結果がExplain JSONLへ反映されることを確認する。既定値を設ける場合も、既定値を最適値とは扱わず、環境ごとにPolicyを調整できる設計として説明する。設定ファイルの再読込に失敗した場合は旧設定を維持する。初回起動時の不正設定は拒否する。閾値変更時はreload成否、Active Path、既存stateを記録する。
 
 ## 未踏期間の実装優先順位
 

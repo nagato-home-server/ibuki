@@ -1,6 +1,6 @@
 # VPP Binary API Implementation
 
-2026-10-09更新: VMでのVPP実疎通成功はCLI backendの確認であり、Binary API codecの完成ではない。版依存route／VLAN／VRF codecとイベントtransportは引き続き追加実装対象である。
+2026-10-10更新: 実疎通はCLI backend。Binary API transportは実装済みだが版依存route/VLAN/VRF codecと業務eventへの変換は残課題。SDK probeはCMakeのbuild-linux側で確認する。
 
 確認日、構成、測定制限の共通一覧: [現在の実装と検証状況](current-status.md)。
 
@@ -33,7 +33,7 @@ VPP_PREFIX=/opt/vpp EVENTNET_ENABLE_VPP_API=ON sh scripts/vm-build.sh
 有効ビルド後は、routeを変更しない接続確認を次で行えます。
 
 ```sh
-build-linux-cc/eventnet_vpp_api_transport_probe
+build-linux/eventnet_vpp_api_transport_probe
 ```
 
 このprobeはVPP APIへ接続し、受信FDを取得して切断します。route／VLAN／VRFの変更は行わないため、SDKとVPP API endpointの接続確認に限定して使います。

@@ -1,6 +1,6 @@
 # Transport Adapter Guide
 
-2026-10-09更新: 実疎通確認はCLI／swanctlを使用するnamespace runtimeで行った。任意SDKのtransport境界があることと、VPP版依存のroute／VLAN／VRF codecが完成したことは同一ではない。
+2026-10-10更新: 実疎通・反復計測はCLI/swanctlと評価executorを使用した。任意SDKのtransport境界とVPP版依存codecの完成は別である。削除済みcharon診断入口を現行runtime statusへ置換した。
 
 確認日、構成、測定制限の共通一覧: [現在の実装と検証状況](current-status.md)。
 
@@ -82,7 +82,7 @@ VLAN Policyでは`en_vpp_api_observe_interface()`で親interfaceまたはVLAN su
 
 ```sh
 sh scripts/vm-vpp-api-preflight.sh
-sh scripts/vm-charon-config-probe.sh
+sh scripts/vm-runtime-status.sh
 sh scripts/vm-build-cc.sh
 ```
 

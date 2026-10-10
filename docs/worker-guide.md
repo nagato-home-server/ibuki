@@ -1,8 +1,10 @@
-# PathWeaver Worker Guide
+# Ibuki Worker Guide
 
 この文書は、別作業者が現時点の実装を読むための引き継ぎ資料です。
 
 目的は、`YAML -> Controller -> generated runtime -> strongSwan/VPP smoke` の流れを追えるようにすることです。
+
+2026-10-10照合: Direct/Hub実障害・復帰・部分Rollback、TCP、帯域、CPU/RSS、手動VLAN/FIB分離は評価器で2条件各25ケース測定済み。GRE最終疎通も成功した。[現状一覧](current-status.md)、[関数リファレンス](code-reference.md)、[実測手順](live-measurement-protocol.md)を参照する。「実疎通済み」「本番Adapter未完成」「将来機能」を区別する。
 
 ## 1. 現在の到達点
 
@@ -24,9 +26,9 @@
 
 - systemd環境への実インストール・権限・ログ監視の検証。unit templateは `deploy/ibuki-eventnetd.service` にあり、通常モードと有限parallel shared-batch modeは実装済み。
 - 長時間稼働するparallel socketの接続管理。現在の `--socket-parallel` は有限個のAgent接続を1回の共有batchとして処理し、timeout後に終了する評価用実装である。
-- VICIイベント購読によるstrongSwan状態同期。
+- VICI購読のrekey/DPD・再起動時の運用検証（有限/無期限child-updown購読のコードは実装済み）。
 - VPP API/binary APIによる本格統合。
-- 同一packetがIPsec pipelineとVPP forwarding pipelineを連続通過するgateway構成。
+- 同一packetのVPP/XFRM通過は確認済み。本番gatewayの鍵更新・常駐障害復旧・長時間運用は未検証。
 - FRRouting統合。
 - GUI。
 
@@ -290,7 +292,7 @@ sh scripts/vm-generate-netns-runtime.sh samples/linux-vm-netns.yaml --active-pat
 
 同じ生成plan内で次を連続実行します。常駐`eventnetd`のcommand backendでは、`--swanctl-config FILE`を指定すると、指定したVICI URIへconnection設定をloadしてからTunnelを開始できます。
 
-1. dummy LAN作成。
+1. IPsec単体probe用dummy LAN作成（最終通信端末ではない）。最終VPP試験の端末は独立client namespace。
 2. selected pathに応じたIPsec runtime起動。
 3. IPsec smokeでESP counter増加確認。
 4. VPP netns host-interface setup。
@@ -306,7 +308,7 @@ Integrated controller runtime passed: IPsec path and VPP forwarding were control
 注意:
 
 - 現行namespace構成は同じ生成planでIPsecとVPPを制御し、独立client通信をVPP→TAP→Linux/XFRM→対向VPPへ転送する統合です。
-- Direct／Hubの双方向client疎通とESP進行は確認済みですが、本番運用の再鍵交換・障害復旧・連続通信品質まで確認した結果ではありません。
+- Direct／Hubの双方向client疎通とESP進行は確認済みですが、本番運用の再鍵交換・常駐eventnetdの障害復旧まで確認した結果ではありません。実通信の障害/復旧は10月10日に評価器で反復測定済みです。
 
 ### `vpp-route-plan.sh`
 
@@ -499,7 +501,9 @@ Linux VMでは以下の順が安全です。
 
 ```sh
 cd controller
-git pull
+git status --short
+git fetch origin
+git pull --ff-only
 sh scripts/demo-mitou.sh samples/linux-vm-netns.yaml
 sh scripts/vm-build-cc.sh
 sudo sh scripts/vm-netns.sh setup
@@ -508,6 +512,7 @@ sudo MODE=fallback sh scripts/vm-controller-integrated-runtime-smoke.sh samples/
 ```
 
 VPPやstrongSwanが怪しい場合:
+更新前に作業ツリーの変更を確認してください。未コミット変更や履歴の分岐がある場合は、変更を保存してから更新方法を決めます。`--ff-only`で失敗した場合に強制上書きはしません。
 
 ```sh
 sh scripts/vm-runtime-status.sh
@@ -556,7 +561,7 @@ sudo sh scripts/vm-netns-ipsec.sh hub stop
 
 ## 9. 次に触るなら
 
-論文発表までの優先順位:
+論文提出直前は提出版の固定、原稿照合、PDF組版を優先する。以下は論文後の本番化・追加評価の順序であり、現在の必須測定が未着手という意味ではない:
 
 1. Linux VMで、Agent telemetryを定期投入する長時間評価を追加する。
 2. systemd unitを実環境へ導入し、dry-runで再起動・state復元・権限を検証する。
@@ -593,8 +598,16 @@ LONG_COUNT=10 LONG_INTERVAL_MS=1000 sh scripts/vm-evaluate.sh telemetry-long sam
 
 - `docs/scenario-vs-production.md`
   - `eventnet_scenario` と本番 `eventnetd` の差分、共通化する部分、本番化までに必要な実装を整理している。
-- `docs/future-implementation-map.md`
+- `docs/paper-to-mitou-implementation-plan.md`
 - `docs/transport-adapter-guide.md`
   - 次に実装するファイル、関数、出力、後回しにする領域を具体的に整理している。
 - `docs/eventnetd-service.md`
   - systemd導入時のdry-run、権限、state file、`--apply` の扱いを整理している。
+
+## 作業環境の整理
+
+ソースは既存のsrc/include/examples/tests、生成物はout、ビルドは用途ごとのbuildディレクトリに分ける。古い生成物をソースの横へ残さず、必要な測定証拠だけを秘匿確認後にdocs/evaluationへ保存する。
+
+2026-10-10に古いビルド17件とルート直下の生成物11件を`out/workspace-archive/20261010/`へ退避した。最新の`build-ci-wsl`、`build-linux-cc`、`build-wsl-autonomous`、測定結果、未コミット変更は保持している。TeXの既存PDFも退避先のtexに保存した。新しい標準buildは通常の手順で作成できる。
+
+退避CMake buildは元のパスをキャッシュに持つため、退避先でそのまま実行しない。復元する場合は元の同名ディレクトリが存在しないことを確認して戻す。秘密情報を含み得る設定やログの退避先はGitへ追加しない。

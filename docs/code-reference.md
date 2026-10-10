@@ -1,6 +1,6 @@
 # Ibuki Cコード関数リファレンス
 
-2026-10-09更新: API／関数の説明と実環境確認は別の範囲である。`examples/netns_plan.c`の統合生成計画はnode別VPPへ引数を保持して送信し、独立client間pingをARP warm-upと測定に分ける。現行構成ではsite-a／site-bのVPPとcharonが同居する。
+2026-10-10更新: 関数名と責務を現行sourceへ照合した。単調時計・priorityの数値sort・未観測healthの一律拒否・Telemetry出力openといった旧誤記を訂正した。namespace GREは実疎通済みで、Binary API codecと本番運用は別の残課題。
 
 確認日、構成、測定制限の共通一覧: [現在の実装と検証状況](current-status.md)。
 
@@ -39,14 +39,14 @@ YAML / JSONL
 | `en_node_t` | 拠点、Hub、Relayの識別子・管理状態・能力を保持する。 |
 | `en_segment_t` | Path中の隣接ノード間リンクと、対応するTunnelを表す。 |
 | `en_path_t` | sourceからdestinationまでの候補経路、waypoint、segment、優先度、運用状態を保持する。 |
-| `en_tunnel_t` | strongSwan CHILD、GRE、VTI等のトンネル属性を保持する。 |
+| `en_tunnel_t` | IPsec CHILDとGRE over IPsec、比較用Native IPsecの属性を保持する。VTIは将来比較で、現行実装済み方式ではない。 |
 | `en_intent_t` | 通信元・宛先、Path選択方式、制約、遷移ポリシー、VLAN/VRF条件を保持する。 |
 | `en_path_health_t` | RTT、loss、probe時刻、健全性、観測元を保持する。 |
 | `en_controller_t` | YAML状態、Path状態、health、適用済みPath、adapter、監査履歴を束ねる。実体は非公開で、操作はAPI経由で行う。 |
-| `en_vpp_edge_t` | ノードとVPPの接続情報。`vpp_socket` は名前空間内VPPのCLI/Binary API接続先である。 |
+| `en_vpp_edge_t` | ノードとVPPの接続情報。生成計画の`vpp_socket`はCLI socket。Binary API endpointとは別で、互換ではない。 |
 | `en_reconcile_result_t` | 選択Path、理由、除外理由、遷移状態、エラーを返す。 |
 
-配列は現在、`EN_MAX_NODES`、`EN_MAX_PATHS`、`EN_MAX_TUNNELS`、`EN_MAX_INTENTS`、`EN_MAX_SEGMENTS` 等の固定上限で管理する。入力上限を超える場合は読み込みまたは検証でエラーにする。動的な大規模管理へ移行する場合は、構造体の所有権、解放順序、参照の無効化を設計し直す必要がある。
+配列は固定上限で管理する。Node 16、Path 16、Tunnel 32、PathあたりSegment 8・Route 16、VPP edge 16、履歴Event 256・Error 64。YAMLのIntent配列は`EN_MAX_CANDIDATES`（16）を使用し、`EN_MAX_INTENTS`という定数は存在しない。外部入力の上限超過は読み込み/検証で拒否する。履歴の保持上限・内部コピーの挙動は入力検証と別に扱う。規模拡張には所有権、解放順序、参照の無効化を再設計する。
 
 ## 4. コアライブラリ
 
@@ -54,13 +54,13 @@ YAML / JSONL
 
 | 関数 | 入力・出力 | 処理と副作用 |
 |---|---|---|
-| `en_now_ms` | なし -> `long long` | 単調時計の現在時刻を返す。hold-down等の時間判定に使う。 |
-| `en_copy_id` | 文字列 -> 固定長バッファ | IDを安全にコピーし、終端を保証する。 |
+| `en_now_ms` | なし -> `long long` | epochミリ秒のwall clock。Linuxは`gettimeofday`、WindowsはFILETIME。単調時計ではなく時刻補正の影響を受ける。 |
+| `en_copy_id` | 文字列 -> 固定長バッファ | `snprintf`で終端付きコピー。容量超過時は切り詰めるため、外部入力はYAML等の境界で先に長さを拒否する。 |
 | `en_streq` | 2文字列 -> `bool` | NULLを含む識別子比較を行う。 |
-| `en_path_hop_count` | Path -> hop数 | segment/waypointから経路長を計算する。 |
+| `en_path_hop_count` | Path -> hop数 | `waypoint_count + 1`を返す。実packetの測定hop数やsegment数ではない。 |
 | `en_find_path` | Controller, Path ID -> mutable Path | 内部状態を変更する処理用の検索関数。 |
 | `en_find_health` | Controller, Path ID -> health | Pathの最新測定値を検索する。 |
-| `en_find_tunnel` | Controller, Tunnel ID -> mutable Tunnel | 設定済みTunnelを検索する。 |
+| `en_find_tunnel` | Controller, Tunnel ID -> mutable Tunnel | Observed Tunnelを検索する。Desired設定の検索とは別。 |
 | `en_find_desired_tunnel` | Controller, Tunnel ID -> desired Tunnel | reconcile対象の望ましいTunnelを検索する。 |
 | `path_nodes_enabled` | Controller, Path -> `bool` | Path上の全ノードが管理上有効か判定する。 |
 | `en_controller_find_path` | const Controller, Path ID -> const Path | 外部参照用の読み取り専用検索API。 |
@@ -89,7 +89,7 @@ YAML / JSONL
 | `compare_paths` | `packet_loss`、`rtt`、hop数、administrative priority等の比較順で二候補を比較する。 |
 | `metric_value` | 比較キーに対応する数値をPath/healthから取り出す。 |
 
-`explicit` は指定Pathのみ、`priority` は優先度順、`evaluated` は制約を満たす候補を比較順で選択する。比較値が未観測の場合は候補を安全側に除外し、全候補が使えない場合はエラー結果にする。
+`explicit`は指定Path、`priority`は`candidates`の記載順（Pathのpriority数値をsortしない）、`evaluated`は比較順で選択する。healthがNULLの候補を一律除外する実装ではない。未観測RTT/lossは比較で`DBL_MAX`になり、RTT/loss上限制約はhealthがある場合だけ判定される。daemonの入力鮮度・unknown処理と選択器単独の動作を区別する。
 
 ### `src/transition.c`
 
@@ -97,14 +97,16 @@ YAML / JSONL
 |---|---|
 | `en_transition_path` | 選択結果を現在の適用状態へ反映する統合API。prepare、forwarding、commit、rollbackの境界を管理する。 |
 | `sleep_ms` | retry、drain、hold-down待機用の内部待機。 |
-| `transition_failed` | 失敗結果を遷移状態とエラーへ変換する。 |
-| `rollback_previous_path` | 旧Pathの復元操作をadapterへ依頼する。 |
-| `remove_previous_path` | 新Path確立後に旧Pathを削除する。 |
-| `apply_target_path` | Tunnel確立と転送経路適用を順序付ける。 |
-| `drain_previous_path` | graceful設定時の旧Path排出待ちを行う簡易実装。Flow Preserveの完全なフロー追跡ではない。 |
-| `record_transition` | 監査履歴へ遷移結果を書き込む。 |
+| `transition_prepare` / `transition_prepare_retry` | targetのTunnel準備とretry。 |
+| `transition_ready` / `transition_ready_retry` | 準備済みPathをhealth callbackで検証する。 |
+| `transition_commit` / `transition_commit_retry` | Immediate/簡易Gracefulのpause・drainとforwarding適用を行う。 |
+| `transition_confirm` / `transition_confirm_retry` | adapterの`active_path`とtargetを照合する。必須のEnd-to-End packet試験ではない。 |
+| `transition_cleanup_previous` | 新経路確認後の旧Pathと共有しないTunnelを撤去する。 |
+| `rollback` | target撤去と旧適用Pathへの復旧をadapterへ依頼する。 |
+| `path_uses_tunnel` / `remove_unshared_tunnels` | 共有Tunnelを残し、不要Tunnelだけ撤去する。 |
+| `transition_retry_wait` | retryの待機時間を設定から計算する。 |
 
-Immediateは直ちに切替、Gracefulは簡易drainと待機を伴う。Flow Preserveは設計上の予約であり、現在のC実装はフロー単位の移行を保証しない。
+Immediateは追加pause/drain待機なしで切替する。CのGracefulは`max_pause_ms`と`drain_timeout_ms`を順にsleepする簡易実装で、実際のflow排出を検出せずpause上限も保証しない。今回のPython評価器のstandby SA確認＋10ms待機と同一実装ではない。Flow Preserve指定は未対応エラーで、flow単位移行を保証しない。
 
 ### `src/controller.c`
 
@@ -129,7 +131,7 @@ Immediateは直ちに切替、Gracefulは簡易drainと待機を伴う。Flow Pr
 | `en_yaml_config_validate` | ID、参照関係、アドレス、selector、VLAN/VRF、遷移設定、VPP socketを検証する。 |
 | `parse_line` | YAMLのインデントとkey/valueを状態機械へ渡す。 |
 | `parse_*_kv` | Tunnel、Node、Path、Segment、Route、Intent、VPP edge、selection、constraints、transition、fallbackの値を各構造体へ設定する。 |
-| `copy_id` / `copy_value` | 固定長構造体へ安全に値をコピーする。 |
+| `copy_id` / `copy_address_without_cidr` | 固定長フィールドへコピーし、後者はCIDR suffixを除去する。内部コピーは切詰めるため、外部入力の長さ検証はYAML読込境界で行う。 |
 | `valid_config_token` | shell・設定生成へ渡してよい文字だけか確認する。 |
 | `set_error` | 行番号付きエラーをバッファへ記録する。 |
 | `validate_*` 系関数 | Path、Tunnel、Intent、VLAN、能力、参照整合性を個別に検証する。 |
@@ -140,12 +142,12 @@ YAMLは汎用YAML仕様全体ではなく、Ibukiが定義したサブセット�
 
 | 関数 | 役割 |
 |---|---|
-| `en_telemetry_open_jsonl` | JSONL出力ファイルを安全なモードで開く。 |
+| `en_telemetry_open_jsonl` | JSONL入力を読み取り用に開き、Linuxでsymlink・非regular file・危険な書込権限を拒否する。出力用APIではない。 |
 | `en_telemetry_parse_json_line` | yyjsonで1行を解析し、Path healthまたはイベントへ変換する。必須項目、型、範囲、識別子を検証する。 |
 | `en_telemetry_load_jsonl` | ファイルを逐次読み込み、容量内のhealth配列へ格納する。時刻や順序の不正を処理する。 |
 | `valid_label` / `set_error` | JSONLの識別子検証とエラー記録を補助する。 |
 
-JSON処理はyyjsonへ統一している。外部DBは現在必須ではなく、長期履歴、集計、複数Controller共有が必要になった段階でTelemetry収集側に追加する。
+CのJSON入出力はyyjsonへ統一している。Python評価器は標準`json`を使う。外部DBは長期履歴・集計・複数Controller共有が必要になった段階で追加する。
 
 ### `src/json_output.c`
 
@@ -160,7 +162,7 @@ JSON処理はyyjsonへ統一している。外部DBは現在必須ではなく�
 |---|---|
 | `en_audit_append` | Controllerの監査履歴へイベントを追記する。 |
 | `en_error_append` | エラー履歴へコード、メッセージ、時刻を追記する。 |
-| `audit_*` 内部関数 | 固定長履歴の空き・上限・JSON出力用整形を処理する。 |
+| `en_controller_audit_events` / `en_controller_errors` | 固定長履歴を読み取り専用で取得する。JSON整形は呼出側で行う。 |
 
 ## 6. 外部接続アダプタ
 
@@ -173,12 +175,12 @@ JSON処理はyyjsonへ統一している。外部DBは現在必須ではなく�
 | `en_health_command_probe` | ping等の外部probe結果をhealthへ変換する。 |
 | `strongswan_ensure` / `strongswan_remove` | CHILD SA作成・削除を実行し、必要ならXFRM状態を確認する。 |
 | `vpp_install` / `vpp_remove` | PathのVPP forwardingを適用・撤去する。 |
-| `vpp_active_path` | 現在のVPP経路から適用Pathを観測する。 |
+| `vpp_active_path` | command contextが記憶する適用Pathを返す。実FIBの継続観測ではなく、`verify_vpp_route`は別の確認経路。 |
 | `health_validate` | コマンドprobe結果の妥当性を検査する。 |
 | `run_template` |安全な変数置換後にコマンドを実行する。 |
 | `run_shell_command` | 互換用shell境界。入力検査済みの計画に限定して使う。 |
 | `run_exec_command` / `run_exec_capture` | shellを介さない外部コマンド実行・出力取得を行う。 |
-| `apply_xfrm_block` / `remove_xfrm_block` | IPsec対象外通信を遮断するXFRM policyの適用・撤去を行う。 |
+| `apply_xfrm_block` / `remove_xfrm_block` | 指定selector内の非IPsec通信を遮断するXFRM policyを適用・撤去する。selector外の全通信を遮断するものではない。 |
 | `xfrm_policy_exists` / `has_xfrm_block` | XFRM状態の存在確認を行う。 |
 | `verify_vpp_route` | 期待next-hop、interface、tableのVPP経路を確認する。 |
 | `capture_vpp_command` | VPP CLI出力を取得する。 |
@@ -198,9 +200,11 @@ JSON処理はyyjsonへ統一している。外部DBは現在必須ではなく�
 | `en_strongswan_vici_observe_event_json` | VICIイベントをIbuki JSONLイベントへ変換する。 |
 | `ensure_tunnel` / `remove_tunnel` | VICI操作のadapter callback。 |
 | `client_ensure_tunnel` / `client_remove_tunnel` / `client_observe_tunnel` | client実装へ委譲するcallback。 |
-| `en_strongswan_vici_client_connect` | VICI socketへ接続する。 |
-| `en_strongswan_vici_client_request` | requestを送信しresponseを受け取る。 |
-| `en_strongswan_vici_client_listen` | eventを受信しcallbackへ渡す。 |
+| `en_strongswan_vici_client_open` | libviciを初期化しVICI socketへ接続する。 |
+| `en_strongswan_vici_client_version` | version requestを送信する。 |
+| `en_strongswan_vici_client_initiate` / `en_strongswan_vici_client_terminate` | 指定CHILDの開始・終了requestを送信する。 |
+| `en_strongswan_vici_client_observe_child` | list-sasから指定CHILDの状態を取得する。 |
+| `en_strongswan_vici_client_monitor_child` / `en_strongswan_vici_client_monitor_child_until` | child-updown eventを購読し、期限・停止要求・切断を扱う。 |
 | `en_strongswan_vici_client_close` | socket・受信バッファ・client状態を閉じる。 |
 
 VICIの本番接続点は実装済みだが、証明書配置、鍵更新、権限分離、複数namespaceのdaemon監視は運用層の追加課題である。
@@ -214,11 +218,12 @@ VICIの本番接続点は実装済みだが、証明書配置、鍵更新、権�
 | `en_vpp_api_observe_route` | VPP FIBから経路観測を行う。 |
 | `en_vpp_api_observe_interface` | VPP interface状態を観測する。 |
 | `en_vpp_api_transport_init` | transportのfd、接続状態、message tableを初期化する。 |
+| `en_vpp_api_transport_open` / `en_vpp_api_transport_set_event_callback` | VAPI接続を開き、generic event callbackを設定する。 |
 | `en_vpp_api_transport_dispatch` |受信messageをdispatchしcallbackを呼ぶ。 |
 | `en_vpp_api_transport_alloc_message` | VPP message領域を確保する。 |
 | `en_vpp_api_transport_send_message` | messageを送信する。 |
 | `en_vpp_api_transport_free_message` | message領域を解放する。 |
-| `en_vpp_api_transport_is_message_available` | message IDの登録・受信可否を確認する。 |
+| `en_vpp_api_transport_is_message_available` | 対象message IDがVPP接続で利用可能か確認する。受信キューの有無ではない。 |
 | `en_vpp_api_transport_get_fd` | event loopへ渡すfdを返す。 |
 | `en_vpp_api_transport_close` | Binary API transportを閉じる。 |
 | `en_vpp_api_transport_is_connected` | 接続状態を返す。 |
@@ -278,7 +283,7 @@ VICIの本番接続点は実装済みだが、証明書配置、鍵更新、権�
 | 実行ファイル | 主な関数 | 目的 |
 |---|---|---|
 | `eventnet_scenario` | `run_scenario`、`apply_named_step`、`append_health`、`generate_runtime` | priority/evaluated/fallback/recoveryを再現する。 |
-| `eventnet_agent` | `measure_ping`、`parse_ping_rtt`、`open_agent_output` | 拠点間のRTT/lossを測定してJSONLへ出力する。 |
+| `eventnet_agent` | `measure_ping`、`parse_ping_rtt`、`open_agent_output` | 候補endpointを逐次測定してJSONLへ出力する。Path全区間の測定を保証しない。 |
 | `strongswan_vici_controller_probe` | `monitor_event`、`find_intent` | VICI接続とevent観測を確認する。 |
 | `vpp_api_transport_probe` | `main`、`usage` | Binary API transportの接続境界を確認する。 |
 | `swanctl_observer` | `main` | strongSwan観測parserを単独確認する。 |
@@ -341,7 +346,7 @@ VICIの本番接続点は実装済みだが、証明書配置、鍵更新、権�
 - 固定長配列を超える規模への動的管理
 - 外部Telemetry DBと長期集計
 
-したがって、「関数単位の責務説明」はこの文書で整備済みだが、上記の未完了項目を実装済みと誤認してはならない。特にVPP Binary APIは接続境界まで、名前空間GREは生成・統合入口までが現在の範囲である。
+本書は主要関数の責務説明であり、全static関数の網羅リストではない。名前空間GREは生成・統合入口だけでなく、10月10日に実暗号化双方向疎通・cleanupまで確認済み。GRE帯域・MTU・長時間の反復は未確認。Direct/Hub等の定量反復はPython評価executorを使用し、C Transition Engine全工程の本番実行とは区別する。
 
 ## 11. 変更時の更新規則
 

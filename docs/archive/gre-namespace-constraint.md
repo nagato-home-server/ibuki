@@ -1,12 +1,14 @@
 # GRE over IPsecの旧namespace構成制約
 
-この文書はroot namespaceにVPPを共有配置していた時期の検証記録であり、現在の構成を示すものではない。現在は拠点ごとのVPPとstrongSwanを同じnamespaceに置く。構成、アドレス、検証状態は[Namespace Runtime v2](namespace-runtime-v2.md)を参照する。
+履歴資料: 現在の仕様・完了条件は[現状一覧](../current-status.md)を正本とする。この文書は過去の経緯や詳細説明を保存するための資料である。
+
+この文書はroot namespaceにVPPを共有配置していた時期の検証記録であり、現在の構成を示すものではない。現在は拠点ごとのVPPとstrongSwanを同じnamespaceに置く。構成、アドレス、検証状態は[Namespace Runtime v2](../namespace-runtime-v2.md)を参照する。
 
 ## 概要
 
-GRE over IPsecの実験では、strongSwanのIKE_SA確立とVPP GRE interface生成までは成功したが、GREを経由したLAN間通信は成立しなかった。原因は、VPPとLinux XFRMを異なるnetwork namespaceに配置した現在の評価構成にある。
+GRE over IPsecの実験では、strongSwanのIKE_SA確立とVPP GRE interface生成までは成功したが、GREを経由したLAN間通信は成立しなかった。原因は、VPPとLinux XFRMを異なるnetwork namespaceに配置した当時の評価構成にある。
 
-## 現在の配置
+## 移行前の配置
 
 ```text
 site-a namespace                         site-b namespace
@@ -29,13 +31,13 @@ root namespace: VPP
 2. VPPの`gre0`は生成された。
 3. GRE outer endpointをIKE endpointと同じ値にすると、CHILD_SAは確立するが、復号後packetがsite-b namespaceのローカルunderlay側で終端する。
 4. GRE outer endpointをVPP host interfaceの`172.16.1.1`／`172.16.2.1`にすると、VPPへ戻す経路は表現できるが、strongSwanのtransport selector交渉で`TS_UNACCEPTABLE`となった。
-5. したがって、現在の実装で確認できたのは、設定生成、namespace内charon起動、VICI接続、IKE処理、VPP GRE生成までである。
+5. したがって、当時の実装で確認できたのは、設定生成、namespace内charon起動、VICI接続、IKE処理、VPP GRE生成までである。
 
 ## 設計上の結論
 
 これはplugin不足やPSK認証の失敗ではなく、VPPとXFRMの責任境界をnamespace間で正しく接続できていない構成問題である。Direct／HubのLinux XFRM runtimeと、root namespace VPPの通常L3 forwardingは別々に成立しているため、GRE over IPsecの失敗をIbukiのPath Selection失敗とは扱わない。
 
-以下は移行前の構成で定めた報告範囲である。現在はnamespace v2で暗号化GREの双方向疎通を確認済みであり、この旧制限を現行の論文評価へ適用しない。最新条件は[現状一覧](current-status.md)を参照する。
+以下は移行前の構成で定めた報告範囲である。現在はnamespace v2で暗号化GREの双方向疎通を確認済みであり、この旧制限を現行の論文評価へ適用しない。最新条件は[現状一覧](../current-status.md)を参照する。
 
 - YAMLからGRE over IPsec planを生成できる。
 - namespace内strongSwanをVICIから操作できる。
@@ -52,4 +54,4 @@ root namespace: VPP
 3. VPP Native IPsecを採用し、VPP内でGRE outer packetの暗号化・復号を完結させる。
 4. IKE endpoint、GRE outer endpoint、XFRM selector、VPP host interfaceの対応をYAMLで明示し、経路検証を追加する。
 
-現時点では、2または3がIbukiのVPP連携を本番化するうえで自然である。ただし、VPP Binary APIの版固定と、strongSwanとの責任分界の検証が必要になる。
+当時は2または3も候補だった。現行標準は1の同一namespace方式で、10月10日の双方向暗号化疎通とcleanupは[GRE最終記録](../evaluation/20261010-gre/README.md)を参照する。

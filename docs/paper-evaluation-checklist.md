@@ -1,8 +1,10 @@
 # Paper Evaluation Checklist
 
-2026-10-09更新: 現行client namespaceでDirect／Hub／GREの機能疎通を確認済み。初回ARP損失をwarm-upログに残している。実リンク障害検知、切替時間、最大通信断、反復統計、TCP再送、resource使用量は未完了の評価項目である。
+2026-10-10更新: Direct／Hub／GREの基本疎通に加え、評価専用executorによる実リンク障害、復旧、rollback、TCP継続、帯域、resource、VLAN／FIB分離を5回ずつ測定した。[25ケースの結果とCSV](evaluation/20261010/README.md)、[計測手順と指標定義](live-measurement-protocol.md) を参照。eventnetd本番ループ、Gracefulの一般的優位やpause上限保証は未検証である。
 
 確認日、構成、測定制限の共通一覧: [現在の実装と検証状況](current-status.md)。
+
+論文前の最終確認: [8 vCPU反復結果](evaluation/20261010-8cpu/README.md)、[GRE最終疎通](evaluation/20261010-gre/README.md)、[原稿照合](paper-claim-audit-20261010.md)。GREは1回の機能確認、Direct／Hub等は各5回の反復であり、証拠の範囲を区別する。PDF組版確認は別途必要。
 
 この文書は、Ibukiの論文発表前評価を同じ順序で再現するためのチェックリストです。WindowsではC実装・設定・生成物を確認し、Linux VMではstrongSwan／VPPを含む実runtimeを確認します。
 
@@ -80,7 +82,7 @@ VPP GRE interface生成
   -> strongSwan IPsec SA確立
   -> GRE内側IP／静的route適用
   -> GRE経由のL3疎通
-  -> route切替とRollback
+  -> 適用計画の撤去・cleanup（GREの工程別障害Rollback測定とは別）
 ```
 
 この評価では、GREをGRETAPやVXLANのようなL2延伸方式として扱いません。Linux GREは標準Backendにせず、VPPによるGRE操作を対象にします。FRRoutingによるBGP／OSPFの動的経路交換は未踏期間の評価対象です。
@@ -88,7 +90,7 @@ VPP GRE interface生成
 比較用のVPP Native backendはGREを使わず、IPIP + `ipsec tunnel protect`を使用します。
 
 ```sh
-sudo sh scripts/vm-gre-namespace-v2-smoke.sh samples/gre-namespace-v2-native.yaml
+sudo sh scripts/vm-gre-namespace-v2-smoke.sh samples/gre-namespace-v2-vpp-native.yaml
 ```
 
 両backendの合格条件は、双方向LAN ping、暗号化・復号counterの増加、停止後の残留なし、再適用後の再疎通です。Native構成は静的SA・鍵による実験用構成であり、IKE、鍵更新、SA同期を含む本番Backendとは区別します。
@@ -117,10 +119,10 @@ sudo sh scripts/vm-evaluate.sh xfrm-cleartext samples/linux-vm-netns.yaml
 - 許可VLANのsub-interface、route、ACLが生成・適用される。
 - `allowed_vlans`にないVLANのplan投入が拒否される。
 - `deny_unmatched_vlan`で未タグ通信を遮断できる。
-- `block_non_ipsec`でTunnel selector外のcleartext fallbackを遮断できる。
+- `block_non_ipsec`でTunnel selector内のcleartext fallbackを遮断できる。selector外の全通信遮断ではない。
 - direct IPsecの暗号化通信ではESP counterが増加する。
 
-実trunk上の複数VLAN分離とVLAN間分離は、別途NIC／switch構成を用意した追加評価です。
+手動CLIでのタグ付きVLAN 100/200・重複IPv4 FIB分離は5回確認済み。Controller生成Intent全体、IPv6、一覧外/未タグACLと物理NIC/switchのtrunk試験は追加評価です。
 
 state復元の入力境界は、通常のCTestに加えて次で確認します。
 
@@ -149,7 +151,7 @@ ctest --test-dir build --output-on-failure -R 'eventnet_state_wrong_(intent|path
 
 ## 7. 論文執筆へ移る判定
 
-提出前に必要な成果物の一覧とPythonによる図生成方法は、`docs/paper-submission-minimum.md`に集約する。評価CSVから図を生成する例は次のとおりである。
+提出前に必要な成果物の一覧とPythonによる図生成方法は、`docs/current-status.md`に集約する。評価CSVから図を生成する例は次のとおりである。
 
 ```sh
 python3 scripts/generate-paper-graphs.py \
@@ -166,9 +168,9 @@ BUILD_DIR=build-paper-baseline sh scripts/vm-paper-validation.sh samples/linux-v
 
 root不要範囲で確認する項目は、C単体、全Path選択方式、route YAML網羅、Agent／telemetry、閾値・安定性、event reconcile、socket、reload、status／plan security、Shell構文です。提出commit `253901f` でCTest 27件と論文前validation 12件がpassし、root/VPP依存3件はskipしました。新しいsummary、各ログ、環境記録は`out/paper-final-253901f/`に保存しています。
 
-rootが必要なruntimeはnamespace v2 workflowでstrongSwan/XFRM GREとVPP Native IPsec/IPIPの両方を実行します。2026-09-25のcommit `69d8d9b`で双方向疎通、ESP counter、再適用、停止後残留確認が成功し、生成planとping/counterを含むjob logをActions artifactへ保存しました。[namespace runtime実行](https://github.com/nagato-home-server/ibuki/actions/runs/36107566451)。未完了の定量反復はroot runtime利用可能なUbuntu runnerで行い、CSVとログを保存します。
+rootが必要なruntimeはnamespace v2 workflowでstrongSwan/XFRM GREとVPP Native IPsec/IPIPの両方を実行します。2026-09-25のcommit `69d8d9b`で双方向疎通、ESP counter、再適用、停止後残留確認が成功し、生成planとping/counterを含むjob logをActions artifactへ保存しました。[namespace runtime実行](https://github.com/nagato-home-server/ibuki/actions/runs/36107566451)。当時未完了だった定量反復は10月10日に専用Ubuntu VMで実施し、CSV・図・manifestを`docs/evaluation/`へ保存した。
 
-2026-09-25にArch上のcommit `2a99f2d` ReleaseバイナリでPriority、Evaluated、direct/fallback/recoveryのplan生成を各5回実行した。平均CLIプロセス時間はそれぞれ25.8 ms、29.6 ms、47.2 ms、29.4 ms、58.2 ms。これらは制御系の初期測定で、実データパス切替時間ではない。Immediate/GracefulはCテストによる機能確認のみで個別反復値がなく、残りのruntime反復と通信・resource指標は引き続き未完了。
+2026-09-25にArch上のcommit `2a99f2d` ReleaseバイナリでPriority、Evaluated、direct/fallback/recoveryのplan生成を各5回実行した。平均CLIプロセス時間はそれぞれ25.8 ms、29.6 ms、47.2 ms、29.4 ms、58.2 ms。これらは制御系の初期測定で、実データパス切替時間ではない。この9月25日時点ではImmediate/Gracefulの個別反復と通信・resource指標は未完了だった。10月10日の実測は評価専用executorによる別データであり、上記CLI時間と混同しない。
 
 ```sh
 sudo BUILD_DIR=build-paper-baseline RUN_RUNTIME=1 sh scripts/vm-paper-validation.sh samples/linux-vm-netns.yaml

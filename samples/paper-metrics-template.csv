@@ -1,5 +1,5 @@
-scenario,strategy,repetition,transition_ms,packet_loss,packet_reordering,tcp_retransmissions,cpu_percent,memory_mb
-direct,immediate,1,,,,,,
-direct,graceful,1,,,,,,
-hub-fallback,immediate,1,,,,,,
-relay-fallback,immediate,1,,,,,,
+scenario,strategy,repetition,status,detection_ms,decision_ms,prepare_ms,commit_ms,transition_ms,fault_to_validated_ms,packet_loss,max_reply_gap_ms,outage_estimate_ms,tcp_retransmissions,throughput_mbps,cpu_percent,memory_mb
+live-fallback-recovery-rollback,immediate,1,pending,,,,,,,,,,,,,
+live-fallback-recovery-rollback,graceful,1,pending,,,,,,,,,,,,,
+tcp-throughput,direct,1,pending,,,,,,,,,,,,,
+tcp-throughput,hub,1,pending,,,,,,,,,,,,,

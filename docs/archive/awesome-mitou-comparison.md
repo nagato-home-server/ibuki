@@ -1,6 +1,14 @@
 # awesome-mitou Comparison
 
-Date: 2026-07-29
+履歴資料: 現在の仕様・完了条件は[現状一覧](../current-status.md)を正本とする。この文書は過去の経緯や詳細説明を保存するための資料である。
+
+初期比較日: 2026-07-29。本文の比較は当時のcheckoutを対象とした主観的な開発メモで、現在の両repositoryの優劣や機能一覧ではない。
+
+## 2026-10-10の追記
+
+Ibukiには現在、GitHub Actions、eventnetdの1回/周期/socket入力、Telemetryスキーマ、secret権限と入力検証、公開測定CSV・図がある。初期の「CIがない」「eventnetdがない」「configが644」は解消済み。現在残る課題は本番運用、Agent並列測定、API codec、テストの分割・保守性である。[現状一覧](../current-status.md)を正とし、以下は過去の参考・改善案として読む。
+
+## 初期比較の記録
 
 比較対象:
 
@@ -81,7 +89,7 @@ PathWeaverも以下の分離はあります。
 - retry
 - CLI integration
 
-PathWeaverは `tests/test_controller.c` に多くのテストが集まっています。
+初期のCテストは`tests/test_controller.c`に集中していた。現在もCテストの分割は課題で、Python計測器のテストは別ファイルに追加済み。
 これは初期実装としては十分ですが、今後は以下のように分けると読みやすくなります。
 
 - `tests/test_path_selection.c`

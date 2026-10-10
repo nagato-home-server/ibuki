@@ -4,7 +4,17 @@
 
 確認日、構成、測定制限の共通一覧: [現在の実装と検証状況](current-status.md)。
 
-Date: 2026-07-29
+初期監査日: 2026-07-29。以下には当時の懸念・ローカルOSS revisionの履歴を含む。最新CVEの網羅調査やVMパッケージのbackport確認を完了した文書ではない。
+
+## 2026-10-10の状態照合
+
+- secret入りconfigは600、demo PSKの自動生成と`change-me`拒否、失敗時config本文非表示を現行scriptで確認した。後述の644・secret出力は初期状態の記録。
+- YAMLの長さ/token/参照、主要数値のstrict parse、Telemetryのyyjson型・有限値検証は追加済み。ただしGRE/Nativeの一部整数項目は`atoi`が残り、全数値のstrict parse完成は主張しない。
+- 標準GREはstrongSwan/Linux XFRM、比較用NativeはVPP IPsecを使用する。VPP IPsecを常に未使用と扱わない。
+- raw XFRM表示はSA鍵を含む。公開GREログは秘匿済みで、生ログをartifactへ無条件コピーしない。
+- 機能疎通・入力回帰試験は安全性監査の完了ではない。残るshell template、root環境override、socket/dir所有者、証明書・rekey・依存packageの安全性を運用前に検証する。
+
+## 初期調査と対応履歴
 
 この文書は、PathWeaver / EventNet controller と、連携先 OSS である strongSwan / VPP を見たときの「不安な場所」を整理するためのメモです。
 
@@ -32,7 +42,7 @@ strongSwan / VPP の全機能を使っているわけではありません。
 - strongSwan EAP-SIM/AKA
 - strongSwan RADIUS
 - strongSwan TLS-based EAP
-- VPP IPsec plugin
+- VPP IPsec plugin（初期構成では未使用。現在は比較用Native IPIP/IPsecで使用）
 - VPP IKEv2 plugin
 - VPP VRRP plugin
 - VPP memif
@@ -78,7 +88,7 @@ apt changelog strongswan | grep -i CVE || true
 
 - `CVE-2022-46397`
   - VPP IPsec AES-CBC IV生成。
-  - 現プロトタイプではVPP IPsec pluginを使わず、strongSwan/Linux XFRMでIPsecを行っている。
+  - 標準strongSwan/XFRM構成と、VPP IPsecを使用する比較用Nativeを分けて影響確認が必要。
 - VRRP plugin heap buffer overflow advisory
   - 現プロトタイプではVRRP plugin未使用。
 
@@ -163,7 +173,7 @@ VPP observerは`show ip fib`のprefix・next-hop・interfaceをJSONLへ変換す
 2. 生成configはLinuxで`O_NOFOLLOW`・0600のdescriptor書き込みを行う。
 3. PSKの秘密管理とWindows互換書き込み経路の強化は残課題である。
 
-### 4.3 PSKの扱い
+### 4.3 PSKの扱い（初期懸念、10節で対応済み）
 
 不安な場所:
 
@@ -193,7 +203,7 @@ VPP observerは`show ip fib`のprefix・next-hop・interfaceをJSONLへ変換す
 3. `cat "$swanctl_conf"` をやめ、secretをredactした表示にする。
 4. samplesには `psk: "demo-only-change-me"` と明記するか、PSK未設定で実行時必須にする。
 
-### 4.4 YAML値のサイレント切り詰め
+### 4.4 YAML値のサイレント切り詰め（初期懸念、11節で入力境界に対策）
 
 不安な場所:
 
@@ -216,7 +226,7 @@ VPP observerは`show ip fib`のprefix・next-hop・interfaceをJSONLへ変換す
 2. `EN_MAX_ID_LEN` 以上の入力を拒否する。
 3. YAML load後にID重複チェックを行う。
 
-### 4.5 数値parseが緩い
+### 4.5 数値parse（初期懸念と一部残課題）
 
 不安な場所:
 
@@ -225,8 +235,8 @@ VPP observerは`show ip fib`のprefix・next-hop・interfaceをJSONLへ変換す
 
 根拠:
 
-- `atoi()` / `atof()` を使っている。
-- `nan`、`inf`、負数、末尾ゴミを拒否していない。
+- 初期parserには`atoi()`/`atof()`経路があった。現在は主要数値を`strtol`/`strtod`＋範囲・有限値検証へ変更済み。
+- GRE/Nativeのinstance、MTU、SA ID、SPIなどに`atoi`経路が残るため、全項目で末尾ゴミ・overflowを厳密拒否するとは言えない。
 
 影響:
 
@@ -267,12 +277,12 @@ VPP observerは`show ip fib`のprefix・next-hop・interfaceをJSONLへ変換す
 2. `CHARON` / `VPPCTL` は絶対pathかつroot-owned executableに限定する。
 3. `RUN_BASE` / `SWANCTL_WORK_BASE` は `/run/eventnet-*` / `/etc/swanctl/eventnet-*` 配下に限定する。
 
-### 5.2 world-readable runtime directory
+### 5.2 runtime directory権限（config 600は対応済み）
 
 不安な場所:
 
 - `chmod 755 "$RUN_BASE" "$run_dir" "$SWANCTL_WORK_BASE" "$swanctl_work_dir"`
-- `chmod 644 "$swanctl_conf"`
+- 初期の`chmod 644`は`chmod 600`へ変更済み。directoryの755は一部残る。
 
 根拠:
 
@@ -314,10 +324,10 @@ VPP observerは`show ip fib`のprefix・next-hop・interfaceをJSONLへ変換す
   - ただし現プロトタイプでは未使用。
 - `src/vnet/ipsec/esp_encrypt.c`
   - IV生成、crypto op、ESP packet length。
-  - 現プロトタイプではVPP IPsec未使用。
+  - 初期構成ではVPP IPsec未使用だった。比較用Nativeでは対象になる。
 - `src/vnet/ipsec/esp_decrypt.c`
   - ESP tail / ICV / padding / chained buffer処理。
-  - 現プロトタイプではVPP IPsec未使用。
+  - 初期構成ではVPP IPsec未使用だった。比較用Nativeでは対象になる。
 - `src/plugins/vrrp/node.c`
   - trace path overflow修正が最近ある。
   - 現プロトタイプではVRRP未使用。
@@ -325,7 +335,7 @@ VPP observerは`show ip fib`のprefix・next-hop・interfaceをJSONLへ変換す
   - descriptor validationのinteger overflow修正がある。
   - 現プロトタイプではmemif未使用。
 
-## 8. まず直す順番
+## 8. 初期に定めた修正順（対応状況は10・11節と冒頭を参照）
 
 最優先:
 

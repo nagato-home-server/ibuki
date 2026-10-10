@@ -1,6 +1,6 @@
 # eventnetd Service Deployment
 
-2026-10-09更新: VM smokeは生成計画による機能確認であり、systemd常駐serviceの長時間運用確認ではない。再起動復旧、認証、権限分離、過負荷時の振る舞いは本番化の検証対象である。
+2026-10-10更新: 生成計画の疎通とPython評価executorの定量測定はsystemd常駐serviceの長時間運用確認ではない。認証、権限分離、再起動復旧と過負荷を本番化で検証する。
 
 確認日、構成、測定制限の共通一覧: [現在の実装と検証状況](current-status.md)。
 

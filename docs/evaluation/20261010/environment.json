@@ -1,0 +1,40 @@
+{
+  "revision": "806bc6ba6f50629f6217a9252ab877b2324ba3d2",
+  "cpus": 2,
+  "yaml_sha256": "2336e16ff14afbddf04a44b1a3df507ef1ae1f84e16a6375bc3cd8679989aa19",
+  "measurement_sha256": "ddd33f022893faadb88e9173422abf8728e812a79a05b82e7fb691dd61d652be",
+  "resource_scope": "sum of VPP and charon RSS/CPU; excludes measurement processes; one core=100%",
+  "executor": "evaluation-only pre-established route executor; not eventnetd apply",
+  "settings": {
+    "command": "evaluate",
+    "yaml": "samples/linux-vm-netns.yaml",
+    "build_dir": "build-linux-cc",
+    "output": "out/paper-live-20261010-verified",
+    "repeat": 5,
+    "duration": 28,
+    "threshold": 2,
+    "probe_interval": 0.25,
+    "ping_interval": 0.05,
+    "drain_ms": 10,
+    "tcp_rate": "10M",
+    "isolation": true
+  },
+  "date": "2026-10-10",
+  "working_tree_modified": true,
+  "kernel": "7.0.0-34-generic",
+  "vpp": "26.06-release",
+  "strongswan": "5.9.13",
+  "cases": 25,
+  "samples_per_case": 5,
+  "status": "pass",
+  "metrics_sha256": "7c64d40964855c09f8f54a519c8ee30e9df4348500c0ba37a97f9ceee730f665",
+  "vpp_poll_sleep_usec": 1000,
+  "af_packet_option": "cksum-gso-disable",
+  "topology": "client/VPP/TAP/Linux-XFRM/underlay; two endpoint VPP daemons; hub forwarding by Linux XFRM",
+  "limits": [
+    "Evaluation-only route executor, not eventnetd production apply",
+    "Graceful is pre-established SA check plus a 10 ms pre-commit wait",
+    "Two vCPU software testbed; no CPU pinning or physical circuit comparison",
+    "TCP retransmissions cover entire trial, not individual fault phases"
+  ]
+}

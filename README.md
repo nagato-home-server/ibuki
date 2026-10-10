@@ -6,6 +6,8 @@ Ibukiは、複数の拠点間通信経路を選択し、安全に切り替える
 
 現在は研究・実証用のPrototypeです。本番Networkへそのまま導入できる完成製品ではありません。
 
+8 vCPU・メモリ8 GBのVMで、実リンク障害・復旧・Rollback、帯域、VLAN／FIB分離を各5回、計25ケース再測定しました。[測定値・グラフ・制約](docs/evaluation/20261010-8cpu/README.md)を公開しています。評価用executorの結果であり、本番Controller経路や無損失切替の保証ではありません。
+
 ## 1. Ibukiでできること
 
 現在の実装では、主に次の処理を行えます。
@@ -20,13 +22,13 @@ Ibukiは、複数の拠点間通信経路を選択し、安全に切り替える
 - Direct Path、Hub Fallback、Relay PathなどのScenarioを再現する。
 - Linux Network Namespace上でIPsecとVPPを組み合わせた試験を行う。
 
-簡易GracefulとRollbackは制御ロジック・mock試験まで実装済みです。実通信中の継続性と失敗復旧の定量評価は残っています。GUI、Cloud VPN固有API、完全なController Federation、Active-Active転送、Flow Preserveは今後の実装対象です。
+簡易GracefulとRollbackの制御ロジック・mock試験に加え、評価用executorで実リンク障害・復旧・片側失敗を反復測定しました。常駐eventnetdの本番Adapter経路やpause上限保証は未検証です。GUI、Cloud VPN固有API、完全なController Federation、Active-Active転送、Flow Preserveは今後の実装対象です。
 
 ### 現在の確認範囲（2026-10-09）
 
 Controller生成計画によるDirect／Hub統合と、VPP GRE＋strongSwan/XFRMの暗号化データパスをLinux VMで再検証しました。LAN端末は独立した`client-a`／`client-b` namespaceに置き、VPPとcharonはsite namespaceで同居します。全構成でARP事前解決後の双方向ping各3/3とESPの進行を確認しました。
 
-初回ARP解決時の損失は残っています。Fallbackは障害イベント入力による確認であり、実リンク障害の検知時間や無損失切替を示す結果ではありません。反復性能測定、簡易Graceful比較、VLAN／VRF実パケット分離、本番用鍵管理は未完了です。最新コミットのCI結果は別途確認が必要です。
+初回ARP解決時の損失は残っています。2026-10-10には、実リンク障害・切替・復旧・rollback、TCP、帯域、resource、VLAN／FIB分離を各5回、計25ケース確認しました。[CSV・グラフと測定範囲](docs/evaluation/20261010/README.md)を参照してください。これは評価用executorの測定で、無損失切替や方式優位、本番鍵管理の完成を示しません。2 vCPUのVMはCPU飽和しており、帯域値をVPP一般性能と扱いません。最新コミットのCI結果は別途確認が必要です。
 
 詳細と測定条件は[`docs/current-status.md`](docs/current-status.md)を参照してください。
 
@@ -470,9 +472,9 @@ strongSwan変更後は、CHILD SAの状態と実際のEnd-to-End通信を確認�
 
 ### 設計・実装状況
 
-- [`docs/current-status.md`](docs/current-status.md): 現行構成、確認済み範囲、測定条件、未完了項目
+- [`docs/current-status.md`](docs/current-status.md): 現行構成、確認済み範囲、測定条件、提出条件
 - [`実装方針.md`](実装方針.md): Ibuki全体の実装方針
-- [`docs/future-implementation-map.md`](docs/future-implementation-map.md): 今後の実装場所と優先順位
+- [`docs/paper-to-mitou-implementation-plan.md`](docs/paper-to-mitou-implementation-plan.md): 今後の実装場所と優先順位
 - [`docs/scenario-vs-production.md`](docs/scenario-vs-production.md): Scenarioと本番Controllerの差
 - [`docs/security-audit-notes.md`](docs/security-audit-notes.md): Trust BoundaryとSecurity上の注意
 - [`docs/vpp-api-implementation.md`](docs/vpp-api-implementation.md): VPP Binary APIの実装状況
@@ -480,10 +482,10 @@ strongSwan変更後は、CHILD SAの状態と実際のEnd-to-End通信を確認�
 ### 研究・評価
 
 - [`研究内容.tex`](研究内容.tex): 研究論文Source
-- [`docs/prior-research-and-sdwan2.md`](docs/prior-research-and-sdwan2.md): 先行研究とONUG SD-WAN 2.0への対応状況
-- [`docs/asano-comparison.md`](docs/asano-comparison.md): ASANO Systemとの比較
+- [`docs/research/prior-research-and-sdwan2.md`](docs/research/prior-research-and-sdwan2.md): 先行研究とONUG SD-WAN 2.0への対応状況
+- [`docs/research/asano-comparison.md`](docs/research/asano-comparison.md): ASANO Systemとの比較
 - [`docs/paper-evaluation-checklist.md`](docs/paper-evaluation-checklist.md): 論文評価で必要な証拠
-- [`docs/paper-submission-minimum.md`](docs/paper-submission-minimum.md): 論文提出時の最低条件
+- [`docs/live-measurement-protocol.md`](docs/live-measurement-protocol.md): 実リンク障害、TCP、帯域、資源、VLAN／FIBの反復測定手順と測定範囲
 - [`docs/paper-to-mitou-roadmap.md`](docs/paper-to-mitou-roadmap.md): 論文から未踏期間へのRoadmap
 
 ## 10. 現在の位置付け

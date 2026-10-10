@@ -28,9 +28,9 @@ nodes:
 
 VPPのL3 GRE interfaceをstrongSwanのIPsecで保護する`gre_over_ipsec`を指定できます。namespace v2ではVPP GRE＋strongSwan/XFRMの双方向実疎通を確認済みです。本番用鍵管理や反復性能評価の完了を意味しません。Linux GREは標準Backendにしません。`local_endpoint`と`remote_endpoint`はIKE endpoint、`gre_outer_local_endpoint`と`gre_outer_remote_endpoint`は省略時にIKE endpointを使うGRE outer endpointです。`gre_local_address`と`gre_remote_address`はGRE内側のL3アドレスです。`gre_interface`はVPPで生成されるinterface名と一致させ、複数トンネルを固定する場合は`gre_instance`を指定します。`mtu`はGRE interfaceへ設定する任意のMTUです。
 
-GRE用のstrongSwan CHILD_SA計画は、GREプロトコルをouter endpointの`/32[gre]` selectorで保護します。GRE outer endpointがIKE endpointと一致する場合はtransport mode、異なる場合はtunnel modeで生成します。統合runtimeではsite namespace内にVPPとcharonを同居させ、VICIから設定をロードし、SA確立後にVPP GREと経路を適用します。LAN端末は独立したclient namespaceに置きます。詳細は[Namespace Runtime v2](namespace-runtime-v2.md)を参照してください。root VPPとsite XFRMを分けた旧構成の問題は[移行前の記録](gre-namespace-constraint.md)です。GREはL3カプセル化であり、GRETAP、VXLAN、EVPN、L2 bridgeによるL2延伸は含みません。BGP／OSPFとVPP Nativeの動的鍵管理は未踏期間の拡張です。
+GRE用のstrongSwan CHILD_SA計画は、GREプロトコルをouter endpointの`/32[gre]` selectorで保護します。GRE outer endpointがIKE endpointと一致する場合はtransport mode、異なる場合はtunnel modeで生成します。統合runtimeではsite namespace内にVPPとcharonを同居させ、VICIから設定をロードし、SA確立後にVPP GREと経路を適用します。LAN端末は独立したclient namespaceに置きます。詳細は[Namespace Runtime v2](namespace-runtime-v2.md)を参照してください。root VPPとsite XFRMを分けた旧構成の問題は[移行前の記録](archive/gre-namespace-constraint.md)です。GREはL3カプセル化であり、GRETAP、VXLAN、EVPN、L2 bridgeによるL2延伸は含みません。BGP／OSPFとVPP Nativeの動的鍵管理は未踏期間の拡張です。
 
-VPP Native IPsecを試す場合は、Tunnelへ `vpp_local_sa_id`、`vpp_remote_sa_id`、`vpp_local_spi`、`vpp_remote_spi`、`vpp_crypto_algorithm`、`vpp_crypto_key`、`vpp_integrity_algorithm`、`vpp_integrity_key`を追加します。`gre_interface`には`ipsec-gre0`のようなNative IPsec-GRE interface名を指定します。生成器は両方向のVPP SAと`create ipsec gre tunnel`によるinterface生成を計画します。これはstrongSwanのIKE・鍵更新とは別の静的SA Backendであり、実運用の鍵同期を意味しません。
+VPP Native IPsecを試す場合は、Tunnelへ `vpp_local_sa_id`、`vpp_remote_sa_id`、`vpp_local_spi`、`vpp_remote_spi`、`vpp_crypto_algorithm`、`vpp_crypto_key`、`vpp_integrity_algorithm`、`vpp_integrity_key`を追加します。`gre_interface`には実際のIPIP interface名（サンプルでは`ipip0`）を指定します。生成器は各VPP nodeへ送受信両方のSAを登録し、`create ipip tunnel`と`ipsec tunnel protect`を計画します。Native構成はGREではありません。これはstrongSwanのIKE・鍵更新とは別の静的SA Backendであり、実運用の鍵同期を意味しません。
 
 ```yaml
 tunnels:
@@ -42,12 +42,12 @@ tunnels:
     remote_endpoint: 203.0.113.9
     gre_interface: gre0
     gre_instance: 0
-    gre_outer_local_endpoint: 172.16.1.1
-    gre_outer_remote_endpoint: 172.16.2.1
+    gre_outer_local_endpoint: 198.18.1.1
+    gre_outer_remote_endpoint: 198.18.2.1
     gre_local_address: 10.255.0.1/30
     gre_remote_address: 10.255.0.2
     mtu: 1400
-    psk: "change-me"
+    psk: "demo-only-replace-before-use"
 
 paths:
   - id: path-gre-a-b
@@ -88,7 +88,8 @@ route適用時のnext-hopとinterfaceは、Tunnel Backendが提供する論理L3
 |---|---|---|
 | 通常のIPsec | routeに指定した値。未指定時は`remote_endpoint` | routeに指定した値。未指定なら省略 |
 | `gre_over_ipsec` | routeに指定した値。未指定時は`gre_remote_address` | routeに指定した値。未指定時は`gre_interface` |
-| 将来のVTI／VPP Native IPsec | Backendが提供する内側next-hop | Backendが提供する論理interface |
+| 比較用VPP Native IPIP/IPsec | 内側next-hop | IPIP interface（sampleの`gre_interface: ipip0`） |
+| 将来のVTI | Backendが提供する内側next-hop | 未実装の比較対象 |
 
 routeに`interface_name`を明示した場合は、その値を優先します。Tunnel側の論理egressは不足している値だけを補完するため、VRFや複数portを指定する既存の明示routeとも併用できます。
 
@@ -316,7 +317,7 @@ Relay直列の全route生成は次で確認できます。
 sh scripts/vm-relay-route-plan-smoke.sh samples/route-examples.yaml
 ```
 
-現状の `vm-vpp-netns.sh setup` はsite-a/site-bを1つのVPP FIBへ接続する構成です。Relayの実forwardingには、RelayごとのFIBまたはVPP instanceを分離する実行モデルが必要であり、route plan生成と分けて次段で実装します。
+互換用の `vm-vpp-netns.sh setup` はsite-a/site-bを1つのVPP FIBへ接続する構成です。Relayの実forwardingには、RelayごとのFIBまたはVPP instanceを分離する実行モデルが必要であり、route plan生成と分けて次段で実装します。
 
 ## 7. strongSwan証明書認証
 
@@ -338,7 +339,7 @@ tunnels:
     remote_ts: 10.10.2.0/24
 ```
 
-秘密鍵や秘密情報はYAMLへ書かず、strongSwanの秘密情報管理（`ipsec.secrets`等）へ配置します。`auth_method`未指定時は従来どおりPSKです。生成前に証明書ファイルの存在を確認したい場合は`eventnet_yaml_demo ... --check-cert-files`を使えます。Linuxでは`--check-cert-validity SECONDS`でOpenSSLによる有効期限の事前確認もできます。Controllerは証明書の更新・失効確認までは行わないため、運用時は別の証明書管理機構と組み合わせます。
+証明書の秘密鍵はYAMLへ書かず、swanctlのprivate keyディレクトリ等へ配置し、`swanctl --load-creds`で読み込みます。`ipsec.secrets`は主に旧starter/stroke側の設定で、swanctlのcredentialロードと同一ではありません。PSKサンプルには実験用秘密が含まれるため本番へ流用しません。`auth_method`未指定時は従来どおりPSKです。生成前に証明書ファイルの存在を確認したい場合は`eventnet_yaml_demo ... --check-cert-files`を使えます。Linuxでは`--check-cert-validity SECONDS`でOpenSSLによる有効期限の事前確認もできます。Controllerは証明書の更新・失効確認までは行わないため、運用時は別の証明書管理機構と組み合わせます。
 
 ## 8. VLANごとの必須経由拠点
 
@@ -356,7 +357,7 @@ path_selection:
     - path-via-hub
   constraints:
     required_waypoints:
-      - security-hub
+      - hub-1
 ```
 
 VLAN IDはtraffic keyにも含まれるため、同じsource/destinationでもVLANごとに選択済みPathと状態を分離できます。VPP netns runtimeでは、指定VLANの802.1Q sub-interfaceを作成・有効化し、そのinterfaceへrouteを接続するplanを生成します。`eventnetd --backend command`でも、VPP edgeが定義されていればsub-interfaceの存在を確認し、不足時だけ作成してupにします。`deny_unmatched_vlan: true`を指定した場合はVPP親interfaceへのdeny-all ACLも適用できます。`vpp_edges`の`allowed_vlans`へ一覧を指定すると、そのedgeでは一覧外のVLANを拒否します。省略時は後方互換のため全VLANを許可します。VLANごとのFIB table割当も実装済みですが、実trunk上の複数VLANとVPP間のL2分離はLinux VMでの追加評価対象です。
@@ -384,7 +385,7 @@ VLAN間を別FIBへ分離する場合は、VLANごとにIntent／Pathを分け�
     deny_unmatched_vlan: true
 ```
 
-この指定は`vlan_id`を必須とし、VPP runtimeでPathに含まれるsource／destination／waypoint／segment NodeのVLAN sub-interfaceを準備した後、同じNodeの親interfaceへdeny-all ACLを適用します。生成planと`eventnetd --backend command`の両方が同じACLを設定します。ACL indexは衝突を避けるためVLAN IDとPath内edge順から決定し、単独Pathの撤去時にはinterfaceからdetachしてACLをdeleteします。別Pathが同じACLを共有する切替中はcleanupを抑制します。既定値はfalseであり、既存のVLAN設定には影響しません。`allowed_vlans`の一覧外VLANはplan生成・command backendの両方で拒否されます。VLAN間のFIB分離は`table`指定で実装済みであり、残るのは実trunk上のタグ付き通信とL2境界の実測です。
+この指定は`vlan_id`を必須とし、VPP runtimeでPathに含まれるsource／destination／waypoint／segment NodeのVLAN sub-interfaceを準備した後、同じNodeの親interfaceへdeny-all ACLを適用します。生成planと`eventnetd --backend command`の両方が同じACLを設定します。ACL indexは衝突を避けるためVLAN IDとPath内edge順から決定し、単独Pathの撤去時にはinterfaceからdetachしてACLをdeleteします。別Pathが同じACLを共有する切替中はcleanupを抑制します。既定値はfalseであり、既存のVLAN設定には影響しません。`allowed_vlans`の一覧外VLANはplan生成・command backendの両方で拒否されます。VLAN間のFIB分離は`table`指定で実装済み。手動CLIによるタグ付きIPv4 FIB分離は反復測定済みですが、Controller生成Intent全体、一覧外/未タグACL、IPv6、物理trunkは別の検証範囲です。
 
 ## 9. 障害・復旧の連続回数
 
@@ -403,7 +404,7 @@ path_selection:
 
 この制御は現在のtraffic keyに対するActive Pathを基準にするため、初回選択では通常のhealth判定を行います。閾値未到達のActive Pathは維持され、以前Activeだった待機Pathは復旧連続成功が閾値に達するまで再選択されません。未使用のfallback候補は復旧thresholdで拒否しません。telemetryが連続回数を提供しない場合は、従来どおり各レコードを1回の観測として扱います。
 
-IPsecのtraffic selector範囲外をcleartextで通さない場合は、Intent直下に次を指定します。
+Tunnelのtraffic selector範囲内で、SA不在時に非IPsec通信へfallbackさせない場合は、Intent直下に次を指定します。selector外の全通信をdenyする機能ではありません。
 
 ```yaml
 block_non_ipsec: true
@@ -420,7 +421,7 @@ apply planにはTunnelごとの送受信XFRM block policyとrollbackを生成し
 - Linux `ip route` とVPP routeの完全な構文差分吸収
 - routeごとのvalidation condition
 - routeごとのrollback成功確認
-- 複数tableを使い分ける実VPP runtime smoke（現行サンプルはtable 100の双方向routeまで）
+- Controller生成Intent全体による複数tableの実適用と遮断評価。手動CLIのVLAN 100/200・重複IPv4 FIB分離は10月10日に各CPU条件5回確認済み
 - Policy Based Routingやflow単位route選択
 ## Transition retry
 

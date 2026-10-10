@@ -1,6 +1,10 @@
 # Ibukiの先行研究上の位置付けとONUG SD-WAN 2.0への対応状況
 
-更新日: 2026年9月19日
+研究比較資料: 現在の実装・検証範囲は[現状一覧](../current-status.md)を参照する。
+
+状態照合日: 2026-10-10。関連研究の整理は2026-09-19時点。今回、外部サイトや他製品の最新仕様を再調査した文書ではない。Ibukiの実装・評価範囲は[現状一覧](../current-status.md)と[原稿照合](../paper-claim-audit-20261010.md)を参照する。
+
+設計上のCommit Applied/Post Validation/Stableという概念と、Cのready/switching/verifying/completedの状態名は一対一の同名APIではない。Cのconfirmはadapterのactive_path照合であり、実packetのcommit後pingは今回のPython評価器が別途行う。他方式との対照実測はなく、優位性は設計上の研究仮説として扱う。
 
 ## 1. 本文書の目的
 
@@ -172,8 +176,8 @@ ONUG SD-WAN 2.0全体と比較すると、Ibukiには次の領域が不足して
 |---|---|---|
 | 複数PathとPolicy-based Steering | Intent、Path Selection、Priority、評価値 | 実装済み |
 | Healthに基づく障害回避 | Agent Telemetry、Health、Fallback候補選択 | 基礎実装済み |
-| Secure Overlay | strongSwan/IPsecを中心とするTunnel制御 | 実装・評価中 |
-| Security Policyとの統合 | Required Waypoint、Forbidden Waypoint | 設計・拡張対象 |
+| Secure Overlay | strongSwan/XFRM、VPP GRE、比較用Native IPIP/IPsec | 機能疎通確認済み。本番鍵管理・運用は未完成 |
+| Security Policyとの統合 | Required/Forbidden Waypointの選択制約 | C選択検証済み。Firewall/IDSそのものは未実装 |
 | 異種装置・Backendの収容 | Adapter/Capability Model | 基礎実装済み |
 | 可視化と説明可能性 | Explain JSONL | Backend実装済み、GUI未実装 |
 | 既存装置との共存 | 標準IPsecによるHub接続、Legacy Node | 設計済み |

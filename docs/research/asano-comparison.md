@@ -1,5 +1,9 @@
 # ASANO Systemとの方式比較
 
+研究比較資料: 現在の実装・検証範囲は[現状一覧](../current-status.md)を参照する。
+
+状態照合日: 2026-10-10。ASANOの記述は参照資料に基づく設計比較で、最新版や性能優位を今回検証したものではない。IbukiはVPP GRE＋strongSwan/XFRMのL3実疎通を確認済みで、VTI、FRR/BGP、Web UI/APIの完成は将来課題。[現状一覧](../current-status.md)を参照。
+
 ## ASANOの方式
 
 東京大学情報基盤センターの公開資料に記載されたASANO System Version 1.0は、IPsecに加えてVXLAN、EVPN、DMVPN、NHRPなどを組み合わせたオーバーレイネットワークである。特にDMVPNはmGREとNHRPを利用する構成であり、ASANO v1をIPsec VTI単体のシステムと分類するのは正確ではない。ASANO v2ではVPN部分にWireGuardを導入し、スター型構成へ変更している。
@@ -22,4 +26,4 @@ GREはL3パケットを仮想point-to-point経路へ収容するため、将来�
 
 ## 比較上の境界
 
-ASANO v1との比較では、ASANOがL2延伸とオーバーレイ制御を含むのに対し、IbukiはL3 Path Selection、Telemetry、状態遷移、IPsec、VPP route制御に集中する。VXLAN、EVPN、L2 bridge、VTEP、VNI、mGRE/NHRPによるL2延伸はIbukiの実装対象外である。したがってIbukiの優位性はL2機能の網羅ではなく、ベンダや回線を限定しないL3制御、Web/API連携、OSSとしての拡張可能なAdapter構造に置く。
+ASANO v1がL2延伸とオーバーレイ制御を含むのに対し、IbukiはL3 Path選択、Telemetry、状態遷移、IPsec、VPPに集中する。VXLAN/EVPN/L2 bridgeのL2延伸は対象外で、mGRE/NHRP自体も実装していない。mGRE/NHRPそのものをL2延伸プロトコルと分類しない。差分として目指すのは異種BackendのL3制御、説明可能な遷移、将来のWeb/API連携であり、機能網羅や性能の優位を実証した主張ではない。

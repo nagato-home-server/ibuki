@@ -302,6 +302,13 @@ if(UNIX)
         COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_shell_dispatch.sh)
 endif()
 
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME eventnet_paper_metrics
+        COMMAND ${Python3_EXECUTABLE} -m unittest discover
+            -s ${CMAKE_CURRENT_SOURCE_DIR}/tests -p test_paper_runtime.py)
+endif()
+
 install(TARGETS eventnetd
     RUNTIME DESTINATION libexec/ibuki
 )

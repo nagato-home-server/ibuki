@@ -1,20 +1,22 @@
 # 未踏提出向け 実装到達点 詳細版
 
-2026-10-09更新: Direct／Hub統合とVPP GRE＋strongSwan/XFRMをVMで再検証した。ARP warm-up後の双方向疎通とESP進行は確認済みだが、実リンク障害の検知・切替時間と反復評価は未完了。以下の2026-09-25のCTest／CI結果は過去の確認記録であり、最新コミットのCI結果ではない。
+履歴資料: 現在の仕様・完了条件は[現状一覧](../current-status.md)を正本とする。この文書は過去の経緯や詳細説明を保存するための資料である。
 
-確認日、構成、測定制限の共通一覧: [現在の実装と検証状況](current-status.md)。
+2026-10-10更新: Direct/Hubの実障害・復旧・部分Rollback、TCP、帯域、CPU/RSS、手動VLAN/FIB分離を2 CPU条件で各25ケース測定済み。評価専用executorであり本番eventnetdの実Adapter性能ではない。GRE最終双方向疎通とcleanupも成功。正式CSV・図・制限は[現状一覧](../current-status.md)を参照。以下の9月25日のCTest/CIは過去の記録。
+
+確認日、構成、測定制限の共通一覧: [現在の実装と検証状況](../current-status.md)。
 
 この文書は、Ibuki（旧称PathWeaver）の実装を、未踏提出・共同作業・デモ説明で使える粒度に整理したものです。日付付きの検証結果は当時の状態を示します。
 
 単に「どの機能があるか」を列挙するだけでなく、なぜその機能を実装したのか、どのような操作で何を確認できるのか、そして本番実装へ進む際に何が残っているのかを明確にします。
 
-## 論文執筆へ移行する現在地（2026-09-25）
+## 論文執筆へ移行した時点の履歴（2026-09-25）
 
 論文前のController基盤範囲は完了しています。root不要のCTest 27件がpassし、論文前validation成果物ではC単体、scenario、route YAML、Agent telemetry、閾値・安定性、イベント再選択、reload、status／plan security、Shell構文など12件がpass、root/VPP依存3件がskipです。`event-reconcile`ではdirect障害時のhub fallback、回復時のdirect復帰、VLAN route／interface観測、XFRM遮断、共有socket batch、state保存まで確認しています。
 
 namespace v2では、strongSwan/XFRM backendのVPP GRE over IPsecと、比較用VPP Native IPIP/IPsec backendの双方について、双方向LAN疎通、暗号化・復号counter増加、停止後残留なし、再適用をGitHub Actionsで確認しました。成功実行はそれぞれ[36022032962](https://github.com/nagato-home-server/ibuki/actions/runs/36022032962)と[36022029474](https://github.com/nagato-home-server/ibuki/actions/runs/36022029474)です。Native構成はGREではなく、静的SA・鍵を用いたIPIP + `ipsec tunnel protect`であり、本番Backend完成とは扱いません。
 
-ここからの論文提出上の必須作業は、同一条件の反復測定、切替工程別時間と通信影響・resource使用量の取得、提出対象commitへ紐付く統合成果物の保存、図表生成、本文とPDFの仕上げです。VPP NativeのIKE／鍵更新／SA同期、VPP Binary APIの版依存codec、strongSwanのrekey／DPD運用、FRR／BGP／OSPF、VTI比較、HA、Flow Preserve、実trunk分離、GUIは未踏期間以降の拡張とします。Gracefulは制御ロジック済みですが実runtimeの定量評価が残っています。
+この9月25日時点の論文提出上の必須作業は、同一条件の反復測定、切替工程別時間と通信影響・resource使用量の取得、提出対象commitへ紐付く統合成果物の保存、図表生成、本文とPDFの仕上げです。VPP NativeのIKE／鍵更新／SA同期、VPP Binary APIの版依存codec、strongSwanのrekey／DPD運用、FRR／BGP／OSPF、VTI比較、HA、Flow Preserve、実trunk分離、GUIは未踏期間以降の拡張とします。当時Gracefulの実runtime定量評価は未完了だった。10月10日の簡易Graceful測定は追加済みだが、C本番経路の保証・flow追跡は未完成。
 
 ## 1. プロジェクト概要
 
@@ -38,7 +40,7 @@ strongSwanとVPPを組み合わせたruntimeを生成し、
 
 未踏提出向けの現段階では、商用品レベルの常駐daemonやGUIではなく、「研究・実証用の制御基盤として価値があるか」を示すことを重視しています。
 
-そのため、現時点の実証ポイントは次の4つです。
+そのため、現時点の実証ポイントは次の5つです。
 
 1. **宣言的なネットワーク制御**
    - 利用者は `swanctl` や `vppctl` の具体コマンドを書くのではなく、YAMLでIntent、Path、Tunnel、VPP edgeを定義します。
@@ -236,7 +238,7 @@ Explain JSONL は、controllerの判断理由を機械可読に保存するた�
 - excluded paths
 - injected health
 
-この出力は、将来の `eventnetd` のstatus/explain APIの原型です。また、未踏提出時には「なぜそのPathを選んだか」を説明する材料になります。
+この出力は選択理由の確認に使えます。現行 `eventnetd` にはstatus JSONL出力もありますが、Web向けstatus/explain APIは別途実装する範囲です。
 
 ## 4. 実ネットワークで確認済みのこと
 
@@ -434,7 +436,7 @@ controllerの判断と説明JSONLを再現できる。
 
 現時点の実装は、提出向けプロトタイプです。本番controllerとの差分は以下です。
 
-### 8.1 常駐daemonではない
+### 8.1 常駐入口はあるが本番運用は未完成
 
 `eventnetd` はCLIとして実装済みで、周期評価、標準入力、Linux Unix socket入力、status JSONL、state file復元、file入力の`--reload-config`、再読込失敗時の旧設定維持、Linuxの`--reload-on-sighup`、UID認証、入力レート制限を持ちます。`--batch-size`により複数PathのAgent測定を1ラウンドとして反映でき、`--socket-parallel`では有限N接続をpollで同時受信して共有Controller状態へ統合します。`--socket-accept-count 0`では無期限の逐次受信も行えます。Linuxのstatus JSONL出力は`O_NOFOLLOW`付きdescriptorで開き、symlink・非regular file・group／other書き込み可能な既存ファイルを拒否します。`vm-evaluate.sh telemetry-long`ではAgentのJSONLをeventnetdのfile周期入力へ渡し、reconcile回数・status JSONL・state fileを一括評価できます。`telemetry-live`ではAgentが1件ずつ追記する間にeventnetdが同じファイルを周期再読込します。failure/recoveryイベントの入力とstale telemetryの期限判定もsmokeで検証しています。systemd unitテンプレートは追加済みですが、実環境での権限・socket整合性検証と無期限parallel service化は未実施です。
 
@@ -465,14 +467,13 @@ VPP Binary APIについては、CMakeの`EVENTNET_ENABLE_VPP_API`オプション
 さらに、`en_vpp_api_apply_path_operations`でPathをroute／VRF／VLANの操作順へ正規化し、生成message callbackへ渡す境界を追加しました。実SDKのmessage codecとVPP FIBへの実反映はLinux SDK確認後の残課題です。
 interface観測callbackとobserver event schemaも同じ境界へ追加し、VLAN sub-interfaceの状態をroute選択前に検証できるようにしています。VLAN付きIntentではroute観測と対象sub-interface観測を同一Pathへ集約し、両方のupが揃わない場合はhealthyにしません。`deny_unmatched_vlan: true`では、VPP親interfaceへのIPv4/IPv6 deny-all ACL生成とcommand backend適用も行います。
 
-VLAN Policyについては、IntentのVLAN IDとrequired waypointを選択結果・selected-path summaryへ保存し、VPP netns planにsub-interface作成・有効化を生成するところまで実装しています。VLAN IDごとのtraffic key分離と、Agent thresholdによるPath維持／fallbackも追加しました。`eventnetd --backend command`でもVPP edgeのsub-interfaceを存在確認し、不足時に作成・有効化してからrouteを投入します。さらに`block_non_ipsec: true`ではTunnel selector限定の双方向XFRM block／rollback planを生成し、常駐command backendのapply経路にも同じblock追加・削除を反映します。`deny_unmatched_vlan: true`ではVPP親interfaceへIPv4/IPv6 deny-all ACLを適用できます。`vpp_edges.allowed_vlans`ではedge単位の一覧外VLANをplan生成・command backendの両方で拒否します。VLANごとのFIB table割当もplan生成とcommand backendへ反映済みです。現行のVPP VLAN smokeではタグ付きLANの実疎通を確認できますが、一覧外VLANの実trunk評価とVPP上の実パケット分離は未検証です。
-また、VLAN指定時の明示routeは `parent.VLAN` sub-interfaceを出力interfaceとして参照します。VPP edgeを含む専用サンプルで生成結果を検証していますが、実VPP上でのタグ付きLAN疎通はLinux VMで別途確認が必要です。
-`deny_unmatched_vlan: true`を指定した場合は、VPP親interfaceへのIPv4/IPv6 deny-all ACL生成とcommand backend適用まで実装済みです。`allowed_vlans`による一覧外VLANの生成時拒否と、VLANごとのFIB table設定も実装済みです。未タグdropの実パケット評価、実trunkの複数VLAN評価、VPP上の実パケット分離は未検証です。
-VPP edgeを含む経路はVPP-only runtimeとして生成でき、選択・統合apply scriptからVPP netns planへ接続します。IPsecとVPPを同一applyで組み合わせる運用は、引き続きLinux VMでの実測が必要です。
+VLAN Policyについては、IntentのVLAN IDとrequired waypointを選択結果・selected-path summaryへ保存し、VPP netns planにsub-interface作成・有効化を生成するところまで実装しています。VLAN IDごとのtraffic key分離と、Agent thresholdによるPath維持／fallbackも追加しました。`eventnetd --backend command`でもVPP edgeのsub-interfaceを存在確認し、不足時に作成・有効化してからrouteを投入します。さらに`block_non_ipsec: true`ではTunnel selector限定の双方向XFRM block／rollback planを生成し、常駐command backendのapply経路にも同じblock追加・削除を反映します。`deny_unmatched_vlan: true`ではVPP親interfaceへIPv4/IPv6 deny-all ACLを適用できます。`vpp_edges.allowed_vlans`ではedge単位の一覧外VLANをplan生成・command backendの両方で拒否します。VLANごとのFIB table割当もplan生成とcommand backendへ反映済みです。現行のVPP VLAN smokeではタグ付きLANの実疎通を確認できますが、手動CLIによるVLAN 100/200のIPv4 FIB分離は反復確認済みです。Controller Intent全体と一覧外VLANの物理trunk評価は未検証です。
+VLAN指定時の明示routeは `parent.VLAN` sub-interfaceを出力interfaceとして参照します。専用サンプルで生成結果を検証し、手動CLIのタグ付きIPv4 FIB分離は実パケットで反復確認済みです。ただし、Controller Intent全体、未タグ/一覧外ACL、IPv6、物理trunkの実パケット評価は未検証です。
+VPP edgeを含む経路はVPP-only runtimeとして生成でき、選択・統合apply scriptからVPP netns planへ接続します。IPsec/VPP同一applyの機能疎通はVMで確認済みです。鍵更新・常駐運用・全工程の障害復旧は追加検証が必要です。
 
 ### 8.5 Graceful Transitionの範囲
 
-Gracefulでは、旧Pathをdraining状態にして短いpause/drain期間を設け、新Pathへのforwarding切替後に旧Pathのrouteと専用tunnelを撤去します。切替失敗時は既存rollbackへ戻ります。TCPフローの識別・保持を行うFlow Preserveや、Gracefulの通信影響を定量測定する評価は未実装です。
+Gracefulでは、旧Pathをdraining状態にして短いpause/drain期間を設け、新Pathへのforwarding切替後に旧Pathのrouteと専用tunnelを撤去します。切替失敗時は既存rollbackへ戻ります。TCPフローの識別・保持を行うFlow Preserveは未実装です。簡易Gracefulの通信影響は評価専用executorで定量測定済みですが、C Transition Engine全工程の本番実行と同じではありません。
 
 ### 8.6 GRE over IPsecとVPP Native比較Backendの現在地
 
@@ -504,9 +505,9 @@ GUIは後段です。現時点ではCLI、script、JSONL、text outputで実証�
 
 ## 9. 次に実装する候補
 
-具体的な実装場所、関数案、出力ファイル案は `docs/future-implementation-map.md` に分けて整理しています。
+具体的な実装場所、関数案、出力ファイル案は `docs/paper-to-mitou-implementation-plan.md` に分けて整理しています。
 
-未踏提出までに追加すると効果が大きい順:
+論文提出直前の残確認は提出版の固定とPDF組版。以下は主に論文後・未踏期間の追加評価/本番化候補であり、完了した測定を未着手と扱わない:
 
 1. **Linux VMでの再現評価固定**
    - `route-yaml`、`cert-auth`、event socket、state復元、VLAN tagged trafficを一つの評価手順へまとめる。
@@ -523,8 +524,8 @@ GUIは後段です。現時点ではCLI、script、JSONL、text outputで実証�
    - YAML -> Controller -> strongSwan/VPP -> Explain JSONL の流れを1枚にする。
    - direct/fallback/evaluated の切替図を作る。
 
-5. **IPsec/VPP同一packet pipelineの設計メモ**
-   - 現runtimeとの違いを明確にする。
+5. **成立済みIPsec/VPP pipelineの運用強化**
+   - 現runtimeと鍵更新・HAを含む本番要件との差を明確にする。
    - XFRM interface、VPP interface、Linux routeの関係を整理する。
 
 6. **Agent／eventnetd長時間評価**
@@ -541,6 +542,6 @@ GUIは後段です。現時点ではCLI、script、JSONL、text outputで実証�
 - GUI
 - FRRouting本統合（VPP GRE BackendへのBGP／OSPF接続）
 - VPP binary API
-- strongSwan VICI event購読
+- strongSwan VICIのrekey/DPD、再起動時の購読復旧と運用検証
 - systemd unitの実環境検証（テンプレートは追加済み）
 - 本番HA/永続DB

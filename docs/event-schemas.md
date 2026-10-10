@@ -1,6 +1,6 @@
 # Ibuki Event Schemas
 
-2026-10-09更新: JSONL入出力はyyjsonを共通利用する。Schema検証、鮮度、重複、測定ラウンドの扱いはIbuki側の責務であり、JSON parser導入だけで解決しない。実疎通の再検証はSchemaや上限値を変更していない。
+2026-10-09更新: CのJSONL入出力はyyjsonを共通利用する。Python評価器のJSONは標準ライブラリを使用する。Schema検証、鮮度、重複、測定ラウンドの扱いはIbuki側の責務であり、JSON parser導入だけで解決しない。実疎通の再検証はSchemaや上限値を変更していない。
 
 確認日、構成、測定制限の共通一覧: [現在の実装と検証状況](current-status.md)。
 
@@ -26,9 +26,9 @@ Agentが定期測定したPathの品質を表します。
 - `rtt_ms`: 0以上の有限値
 - `packet_loss_percent`: 0以上100以下の有限値
 - `jitter_ms`: 0以上の有限値
-- `consecutive_successes`: 連続成功回数（省略時は1または0）
-- `consecutive_failures`: 連続失敗回数（省略時は1または0）
 - `timestamp_ms`: 0以上のtimestamp
+
+`consecutive_successes`と`consecutive_failures`は任意の非負整数で、省略時は状態に応じて1または0となります。
 
 `source`、`target`、`sequence`はAgent出力の識別・説明用フィールドです。`source`と`target`は存在する場合に許可文字で検証され、`sequence`は存在する場合に0以上の整数として検証されます。Agentでsourceを指定しない場合は`source`フィールド自体を省略し、空文字は出力しません。ControllerのPath評価は`path_id`、状態、品質、timestampを使用します。将来の複数Agent統合では、この識別情報を測定主体・測定対象の整合性確認に利用します。
 

@@ -1,6 +1,6 @@
 # Namespace Runtime v2
 
-更新日: 2026-10-09。独立clientのLAN、site内VPP／charon、Direct／HubのTAP接続、GREのunderlay接続を現行構成とする。過去のCI結果と今回のVM再検証は[現状一覧](current-status.md)で区別する。
+更新日: 2026-10-10。独立client LAN、site内VPP/charon、Direct/Hub TAP、GRE underlayが標準。GRE最終双方向疎通とcleanupは[証拠](evaluation/20261010-gre/README.md)を参照。CLI socketとBinary API socketは別protocol。
 
 ## 目的
 
@@ -26,7 +26,7 @@ site-b namespace
   LAN attachment
 ```
 
-VPPをサイト単位に分けることで、VPPのGRE outer endpoint、Linux kernelのunderlay、strongSwanのXFRM policyが同じ名前空間で解決される。Controllerは `vpp_edges[].vpp_socket` をノード単位の接続先として選び、VPP Binary APIまたはCLIをそのソケットへ送る。
+VPPをサイト単位に分けることで、VPPのGRE outer endpoint、Linux kernelのunderlay、strongSwanのXFRM policyが同じ名前空間で解決される。生成計画は`vpp_edges[].vpp_socket`をnode別CLI接続先として使う。`vpp_api_socket`は現行parserでは同じfieldへの別名であり、CLIとBinary APIのprotocolを自動切替しない。標準sampleにはCLI socketを指定し、API transportは別設定・任意SDKビルドで扱う。
 
 ## 共通ランタイム
 
@@ -99,7 +99,7 @@ pingの送信元・宛先は独立したclient namespaceの`10.10.1.2`／`10.10.
 4. `eventnet_netns_plan` がYAMLを解析し、`gre-swanctl.conf` とVPP計画を生成する
 5. `vm-netns-ipsec.sh gre start` が両siteのcharonを起動し、VICI経由で設定をロードする
 6. `vpp-netns-route-plan.sh` が `run_vpp_node` 経由でsiteごとのVPPへGRE・経路を適用する
-7. client namespaceからVPP LAN host-interfaceへ入り、GRE、Linux XFRM、underlayの順に転送する。2026-10-09に双方向client pingとESP送受信の進行をVMで再確認した。ARP warm-upと測定pingは分けて保存する
+7. client namespaceからVPP LAN host-interfaceへ入り、GRE、Linux XFRM、underlayの順に転送する。10月9日の確認に加え、10月10日に8 vCPUで双方向各3ping・ESP・cleanupを最終確認した。性能反復ではない。ARP warm-upと測定pingは分けて保存する
 
 ## 停止順序
 

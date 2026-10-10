@@ -1,0 +1,280 @@
+Flushed hub XFRM state, policy, routes, and xfrm interfaces.
+Flushed xfrm state and policy in site-a/site-b.
+Removed eventnet test namespaces.
+Created namespaces:
+  site-a
+  site-b
+  hub-1
+  relay-c
+
+Basic checks:
+  sudo ip netns exec site-a ping -c 1 203.0.113.9
+  sudo ip netns exec site-a ping -c 1 203.0.113.13
+  sudo ip netns exec site-b ping -c 1 203.0.113.17
+
+Note:
+  This sets up L3 namespace links only. Running strongSwan and VPP inside
+  namespaces needs per-namespace daemon/process wiring, which is the next step.
+Auto-selected intent: intent-gre-namespace-v2
+Starting VPP in namespace site-a...
+Waiting for VPP in site-a...
+site-a VPP ready: /run/ibuki-vpp-ns/site-a/cli.sock
+Starting VPP in namespace site-b...
+Waiting for VPP in site-b...
+site-b VPP ready: /run/ibuki-vpp-ns/site-b/cli.sock
+host-ib-lan-a
+host-ib-ul-a
+host-ib-lan-b
+host-ib-ul-b
+Using Linux IPsec underlay; skipping plaintext VPP transit links.
+Skipping VPP-to-Linux IPsec TAP links.
+Configured namespaced VPP topology: LAN and underlay only.
+intent: intent-gre-namespace-v2
+selected_path: path-gre-namespace-v2
+runtime_kind: vpp
+reason: explicit path requested
+wrote: <repository>/out/gre-final-20261010/plan/apply-selected.sh
+wrote: <repository>/out/gre-final-20261010/plan/apply-integrated.sh
+wrote: <repository>/out/gre-final-20261010/plan/rollback-selected.sh
+wrote: <repository>/out/gre-final-20261010/plan/selected-path.txt
+wrote: <repository>/out/gre-final-20261010/plan/vpp-route-plan.sh
+wrote: <repository>/out/gre-final-20261010/plan/vpp-netns-route-plan.sh
+wrote: <repository>/out/gre-final-20261010/plan/gre-swanctl.conf
+
+Generated netns runtime files:
+  <repository>/out/gre-final-20261010/plan/apply-selected.sh
+  <repository>/out/gre-final-20261010/plan/apply-integrated.sh
+  <repository>/out/gre-final-20261010/plan/rollback-selected.sh
+  <repository>/out/gre-final-20261010/plan/selected-path.txt
+  <repository>/out/gre-final-20261010/plan/vpp-route-plan.sh
+  <repository>/out/gre-final-20261010/plan/vpp-netns-route-plan.sh
+Starting GRE charon in namespace site-a...
+site-a GRE VICI ready: /run/eventnet-netns-ipsec-gre-v2/site-a/charon.vici
+Starting GRE charon in namespace site-b...
+site-b GRE VICI ready: /run/eventnet-netns-ipsec-gre-v2/site-b/charon.vici
+plugin 'test-vectors': failed to load - test_vectors_plugin_create not found and no plugin file available
+plugin 'ldap': failed to load - ldap_plugin_create not found and no plugin file available
+plugin 'pkcs11': failed to load - pkcs11_plugin_create not found and no plugin file available
+plugin 'rdrand': failed to load - rdrand_plugin_create not found and no plugin file available
+plugin 'gcrypt': failed to load - gcrypt_plugin_create not found and no plugin file available
+plugin 'af-alg': failed to load - af_alg_plugin_create not found and no plugin file available
+plugin 'curve25519': failed to load - curve25519_plugin_create not found and no plugin file available
+plugin 'chapoly': failed to load - chapoly_plugin_create not found and no plugin file available
+plugin 'cmac': failed to load - cmac_plugin_create not found and no plugin file available
+plugin 'ctr': failed to load - ctr_plugin_create not found and no plugin file available
+plugin 'ccm': failed to load - ccm_plugin_create not found and no plugin file available
+plugin 'ntru': failed to load - ntru_plugin_create not found and no plugin file available
+plugin 'curl': failed to load - curl_plugin_create not found and no plugin file available
+loaded connection 'gre-namespace-v2'
+successfully loaded 1 connections, 0 unloaded
+plugin 'test-vectors': failed to load - test_vectors_plugin_create not found and no plugin file available
+plugin 'ldap': failed to load - ldap_plugin_create not found and no plugin file available
+plugin 'pkcs11': failed to load - pkcs11_plugin_create not found and no plugin file available
+plugin 'rdrand': failed to load - rdrand_plugin_create not found and no plugin file available
+plugin 'gcrypt': failed to load - gcrypt_plugin_create not found and no plugin file available
+plugin 'af-alg': failed to load - af_alg_plugin_create not found and no plugin file available
+plugin 'curve25519': failed to load - curve25519_plugin_create not found and no plugin file available
+plugin 'chapoly': failed to load - chapoly_plugin_create not found and no plugin file available
+plugin 'cmac': failed to load - cmac_plugin_create not found and no plugin file available
+plugin 'ctr': failed to load - ctr_plugin_create not found and no plugin file available
+plugin 'ccm': failed to load - ccm_plugin_create not found and no plugin file available
+plugin 'ntru': failed to load - ntru_plugin_create not found and no plugin file available
+plugin 'curl': failed to load - curl_plugin_create not found and no plugin file available
+opening directory '/etc/swanctl/eventnet-netns-ipsec-gre/site-a/x509' failed: No such file or directory
+opening directory '/etc/swanctl/eventnet-netns-ipsec-gre/site-a/x509ca' failed: No such file or directory
+opening directory '/etc/swanctl/eventnet-netns-ipsec-gre/site-a/x509ocsp' failed: No such file or directory
+opening directory '/etc/swanctl/eventnet-netns-ipsec-gre/site-a/x509aa' failed: No such file or directory
+opening directory '/etc/swanctl/eventnet-netns-ipsec-gre/site-a/x509ac' failed: No such file or directory
+opening directory '/etc/swanctl/eventnet-netns-ipsec-gre/site-a/x509crl' failed: No such file or directory
+opening directory '/etc/swanctl/eventnet-netns-ipsec-gre/site-a/pubkey' failed: No such file or directory
+opening directory '/etc/swanctl/eventnet-netns-ipsec-gre/site-a/private' failed: No such file or directory
+opening directory '/etc/swanctl/eventnet-netns-ipsec-gre/site-a/rsa' failed: No such file or directory
+opening directory '/etc/swanctl/eventnet-netns-ipsec-gre/site-a/ecdsa' failed: No such file or directory
+opening directory '/etc/swanctl/eventnet-netns-ipsec-gre/site-a/bliss' failed: No such file or directory
+opening directory '/etc/swanctl/eventnet-netns-ipsec-gre/site-a/pkcs8' failed: No such file or directory
+opening directory '/etc/swanctl/eventnet-netns-ipsec-gre/site-a/pkcs12' failed: No such file or directory
+loaded ike secret 'ike-gre-namespace-v2'
+plugin 'test-vectors': failed to load - test_vectors_plugin_create not found and no plugin file available
+plugin 'ldap': failed to load - ldap_plugin_create not found and no plugin file available
+plugin 'pkcs11': failed to load - pkcs11_plugin_create not found and no plugin file available
+plugin 'rdrand': failed to load - rdrand_plugin_create not found and no plugin file available
+plugin 'gcrypt': failed to load - gcrypt_plugin_create not found and no plugin file available
+plugin 'af-alg': failed to load - af_alg_plugin_create not found and no plugin file available
+plugin 'curve25519': failed to load - curve25519_plugin_create not found and no plugin file available
+plugin 'chapoly': failed to load - chapoly_plugin_create not found and no plugin file available
+plugin 'cmac': failed to load - cmac_plugin_create not found and no plugin file available
+plugin 'ctr': failed to load - ctr_plugin_create not found and no plugin file available
+plugin 'ccm': failed to load - ccm_plugin_create not found and no plugin file available
+plugin 'ntru': failed to load - ntru_plugin_create not found and no plugin file available
+plugin 'curl': failed to load - curl_plugin_create not found and no plugin file available
+loaded connection 'gre-namespace-v2'
+successfully loaded 1 connections, 0 unloaded
+plugin 'test-vectors': failed to load - test_vectors_plugin_create not found and no plugin file available
+plugin 'ldap': failed to load - ldap_plugin_create not found and no plugin file available
+plugin 'pkcs11': failed to load - pkcs11_plugin_create not found and no plugin file available
+plugin 'rdrand': failed to load - rdrand_plugin_create not found and no plugin file available
+plugin 'gcrypt': failed to load - gcrypt_plugin_create not found and no plugin file available
+plugin 'af-alg': failed to load - af_alg_plugin_create not found and no plugin file available
+plugin 'curve25519': failed to load - curve25519_plugin_create not found and no plugin file available
+plugin 'chapoly': failed to load - chapoly_plugin_create not found and no plugin file available
+plugin 'cmac': failed to load - cmac_plugin_create not found and no plugin file available
+plugin 'ctr': failed to load - ctr_plugin_create not found and no plugin file available
+plugin 'ccm': failed to load - ccm_plugin_create not found and no plugin file available
+plugin 'ntru': failed to load - ntru_plugin_create not found and no plugin file available
+plugin 'curl': failed to load - curl_plugin_create not found and no plugin file available
+opening directory '/etc/swanctl/eventnet-netns-ipsec-gre/site-b/x509' failed: No such file or directory
+opening directory '/etc/swanctl/eventnet-netns-ipsec-gre/site-b/x509ca' failed: No such file or directory
+opening directory '/etc/swanctl/eventnet-netns-ipsec-gre/site-b/x509ocsp' failed: No such file or directory
+opening directory '/etc/swanctl/eventnet-netns-ipsec-gre/site-b/x509aa' failed: No such file or directory
+opening directory '/etc/swanctl/eventnet-netns-ipsec-gre/site-b/x509ac' failed: No such file or directory
+opening directory '/etc/swanctl/eventnet-netns-ipsec-gre/site-b/x509crl' failed: No such file or directory
+opening directory '/etc/swanctl/eventnet-netns-ipsec-gre/site-b/pubkey' failed: No such file or directory
+opening directory '/etc/swanctl/eventnet-netns-ipsec-gre/site-b/private' failed: No such file or directory
+opening directory '/etc/swanctl/eventnet-netns-ipsec-gre/site-b/rsa' failed: No such file or directory
+opening directory '/etc/swanctl/eventnet-netns-ipsec-gre/site-b/ecdsa' failed: No such file or directory
+opening directory '/etc/swanctl/eventnet-netns-ipsec-gre/site-b/bliss' failed: No such file or directory
+opening directory '/etc/swanctl/eventnet-netns-ipsec-gre/site-b/pkcs8' failed: No such file or directory
+opening directory '/etc/swanctl/eventnet-netns-ipsec-gre/site-b/pkcs12' failed: No such file or directory
+loaded ike secret 'ike-gre-namespace-v2'
+plugin 'test-vectors': failed to load - test_vectors_plugin_create not found and no plugin file available
+plugin 'ldap': failed to load - ldap_plugin_create not found and no plugin file available
+plugin 'pkcs11': failed to load - pkcs11_plugin_create not found and no plugin file available
+plugin 'rdrand': failed to load - rdrand_plugin_create not found and no plugin file available
+plugin 'gcrypt': failed to load - gcrypt_plugin_create not found and no plugin file available
+plugin 'af-alg': failed to load - af_alg_plugin_create not found and no plugin file available
+plugin 'curve25519': failed to load - curve25519_plugin_create not found and no plugin file available
+plugin 'chapoly': failed to load - chapoly_plugin_create not found and no plugin file available
+plugin 'cmac': failed to load - cmac_plugin_create not found and no plugin file available
+plugin 'ctr': failed to load - ctr_plugin_create not found and no plugin file available
+plugin 'ccm': failed to load - ccm_plugin_create not found and no plugin file available
+plugin 'ntru': failed to load - ntru_plugin_create not found and no plugin file available
+plugin 'curl': failed to load - curl_plugin_create not found and no plugin file available
+gre-namespace-v2: IKEv2, no reauthentication, rekeying every 14400s
+  local:  203.0.113.10
+  remote: 203.0.113.9
+  local pre-shared key authentication:
+    id: site-a
+  remote pre-shared key authentication:
+    id: site-b
+  gre-namespace-v2: TUNNEL, rekeying every 3600s
+    local:  198.18.1.1/32[gre]
+    remote: 198.18.2.1/32[gre]
+plugin 'test-vectors': failed to load - test_vectors_plugin_create not found and no plugin file available
+plugin 'ldap': failed to load - ldap_plugin_create not found and no plugin file available
+plugin 'pkcs11': failed to load - pkcs11_plugin_create not found and no plugin file available
+plugin 'rdrand': failed to load - rdrand_plugin_create not found and no plugin file available
+plugin 'gcrypt': failed to load - gcrypt_plugin_create not found and no plugin file available
+plugin 'af-alg': failed to load - af_alg_plugin_create not found and no plugin file available
+plugin 'curve25519': failed to load - curve25519_plugin_create not found and no plugin file available
+plugin 'chapoly': failed to load - chapoly_plugin_create not found and no plugin file available
+plugin 'cmac': failed to load - cmac_plugin_create not found and no plugin file available
+plugin 'ctr': failed to load - ctr_plugin_create not found and no plugin file available
+plugin 'ccm': failed to load - ccm_plugin_create not found and no plugin file available
+plugin 'ntru': failed to load - ntru_plugin_create not found and no plugin file available
+plugin 'curl': failed to load - curl_plugin_create not found and no plugin file available
+gre-namespace-v2: IKEv2, no reauthentication, rekeying every 14400s
+  local:  203.0.113.9
+  remote: 203.0.113.10
+  local pre-shared key authentication:
+    id: site-b
+  remote pre-shared key authentication:
+    id: site-a
+  gre-namespace-v2: TUNNEL, rekeying every 3600s
+    local:  198.18.2.1/32[gre]
+    remote: 198.18.1.1/32[gre]
+plugin 'test-vectors': failed to load - test_vectors_plugin_create not found and no plugin file available
+plugin 'ldap': failed to load - ldap_plugin_create not found and no plugin file available
+plugin 'pkcs11': failed to load - pkcs11_plugin_create not found and no plugin file available
+plugin 'rdrand': failed to load - rdrand_plugin_create not found and no plugin file available
+plugin 'gcrypt': failed to load - gcrypt_plugin_create not found and no plugin file available
+plugin 'af-alg': failed to load - af_alg_plugin_create not found and no plugin file available
+plugin 'curve25519': failed to load - curve25519_plugin_create not found and no plugin file available
+plugin 'chapoly': failed to load - chapoly_plugin_create not found and no plugin file available
+plugin 'cmac': failed to load - cmac_plugin_create not found and no plugin file available
+plugin 'ctr': failed to load - ctr_plugin_create not found and no plugin file available
+plugin 'ccm': failed to load - ccm_plugin_create not found and no plugin file available
+plugin 'ntru': failed to load - ntru_plugin_create not found and no plugin file available
+plugin 'curl': failed to load - curl_plugin_create not found and no plugin file available
+[IKE] initiating IKE_SA gre-namespace-v2[1] to 203.0.113.9
+[ENC] generating IKE_SA_INIT request 0 [ SA KE No N(NATD_S_IP) N(NATD_D_IP) N(FRAG_SUP) N(HASH_ALG) N(REDIR_SUP) ]
+[NET] sending packet: from 203.0.113.10[500] to 203.0.113.9[500] (972 bytes)
+[NET] received packet: from 203.0.113.9[500] to 203.0.113.10[500] (280 bytes)
+[ENC] parsed IKE_SA_INIT response 0 [ SA KE No N(NATD_S_IP) N(NATD_D_IP) N(FRAG_SUP) N(HASH_ALG) N(CHDLESS_SUP) N(MULT_AUTH) ]
+[CFG] selected proposal: IKE:AES_CBC_128/HMAC_SHA2_256_128/PRF_HMAC_SHA2_256/ECP_256
+[IKE] authentication of 'site-a' (myself) with pre-shared key
+[IKE] establishing CHILD_SA gre-namespace-v2{2}
+[ENC] generating IKE_AUTH request 1 [ IDi N(INIT_CONTACT) IDr AUTH SA TSi TSr N(MOBIKE_SUP) N(ADD_4_ADDR) N(ADD_4_ADDR) N(ADD_4_ADDR) N(MULT_AUTH) N(EAP_ONLY) N(MSG_ID_SYN_SUP) ]
+[NET] sending packet: from 203.0.113.10[4500] to 203.0.113.9[4500] (416 bytes)
+[NET] received packet: from 203.0.113.9[4500] to 203.0.113.10[4500] (256 bytes)
+[ENC] parsed IKE_AUTH response 1 [ IDr AUTH SA TSi TSr N(MOBIKE_SUP) N(ADD_4_ADDR) N(ADD_4_ADDR) N(ADD_4_ADDR) ]
+[IKE] authentication of 'site-b' with pre-shared key successful
+[IKE] peer supports MOBIKE
+[IKE] IKE_SA gre-namespace-v2[1] established between 203.0.113.10[site-a]...203.0.113.9[site-b]
+[IKE] scheduling rekeying in 14132s
+[IKE] maximum IKE_SA lifetime 15572s
+[CFG] selected proposal: ESP:AES_GCM_16_128/NO_EXT_SEQ
+[IKE] CHILD_SA gre-namespace-v2{2} established with SPIs c985eddd_i c5a3a865_o and TS 198.18.1.1/32[gre] === 198.18.2.1/32[gre]
+initiate completed successfully
+GRE over IPsec CHILD_SA established.
+VPP netns route plan for path: path-gre-namespace-v2
+source_prefix: 10.10.1.0/24 via site-a host-ib-ul-a
+destination_prefix: 10.10.2.0/24 via site-b host-ib-ul-b
+# GRE underlay routes
+
+
+# GRE over IPsec: gre-namespace-v2 (203.0.113.10 -> 203.0.113.9)
+create gre tunnel: GRE tunnel doesn't exist
+gre0
+
+
+create gre tunnel: GRE tunnel doesn't exist
+gre0
+
+
+
+
+== neighbor warm-up (excluded from measured pings) ==
+PING 10.10.2.2 (10.10.2.2) from 10.10.1.2 : 56(84) bytes of data.
+
+--- 10.10.2.2 ping statistics ---
+1 packets transmitted, 0 received, 100% packet loss, time 0ms
+
+PING 10.10.1.2 (10.10.1.2) from 10.10.2.2 : 56(84) bytes of data.
+64 bytes from 10.10.1.2: icmp_seq=1 ttl=62 time=5.61 ms
+
+--- 10.10.1.2 ping statistics ---
+1 packets transmitted, 1 received, 0% packet loss, time 1ms
+rtt min/avg/max/mdev = 5.614/5.614/5.614/0.000 ms
+== namespaced GRE over IPsec: client-a -> client-b ==
+PING 10.10.2.2 (10.10.2.2) from 10.10.1.2 : 56(84) bytes of data.
+64 bytes from 10.10.2.2: icmp_seq=1 ttl=62 time=5.31 ms
+64 bytes from 10.10.2.2: icmp_seq=2 ttl=62 time=6.39 ms
+64 bytes from 10.10.2.2: icmp_seq=3 ttl=62 time=4.85 ms
+
+--- 10.10.2.2 ping statistics ---
+3 packets transmitted, 3 received, 0% packet loss, time 2005ms
+rtt min/avg/max/mdev = 4.854/5.516/6.385/0.641 ms
+== namespaced GRE over IPsec: client-b -> client-a ==
+PING 10.10.1.2 (10.10.1.2) from 10.10.2.2 : 56(84) bytes of data.
+64 bytes from 10.10.1.2: icmp_seq=1 ttl=62 time=5.37 ms
+64 bytes from 10.10.1.2: icmp_seq=2 ttl=62 time=5.77 ms
+64 bytes from 10.10.1.2: icmp_seq=3 ttl=62 time=4.78 ms
+
+--- 10.10.1.2 ping statistics ---
+3 packets transmitted, 3 received, 0% packet loss, time 2004ms
+rtt min/avg/max/mdev = 4.781/5.306/5.773/0.407 ms
+== strongSwan/XFRM ==
+src 203.0.113.10 dst 203.0.113.9
+	proto esp spi 0xc5a3a865 reqid 1 mode tunnel
+	replay-window 0 flag af-unspec
+	aead rfc4106(gcm(aes)) [REDACTED] 128
+	lastused 2026-10-10 17:10:40
+	anti-replay context: seq 0x0, oseq 0x8, bitmap 0x00000000
+src 203.0.113.9 dst 203.0.113.10
+	proto esp spi 0xc985eddd reqid 1 mode tunnel
+	replay-window 32 flag af-unspec
+	aead rfc4106(gcm(aes)) [REDACTED] 128
+	lastused 2026-10-10 17:10:40
+	anti-replay context: seq 0x7, oseq 0x0, bitmap 0x0000007f
+Namespaced GRE over IPsec smoke passed.
+GRE_FINAL_EXIT_STATUS=0

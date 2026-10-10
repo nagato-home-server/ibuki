@@ -50,7 +50,8 @@
 
 本稿では，IPsecを中心とする標準VPN技術と各拠点のSoftware Gatewayを基盤とし，通信Pathを第一級の制御対象として扱うネットワーク制御基盤「Ibuki」を提案する．Ibukiは，セキュリティ，管理ポリシー，可用性，通信品質に基づいてPathを選択し，Path間の変更を状態遷移として管理する．最終的にはGUIを主要な運用インターフェースとし，OSSとして公開されたAdapter/Plugin機構を通じてCloud VPN等の異なる実装へ拡張可能な，オープンなSD-WAN的制御基盤を目指す．ただし，本稿の研究範囲はその全体構想のうち，Path中心の制御モデルと，Path変更を明示的な状態遷移として扱う仕組みに限定する．
 
-C言語による試作実装では，YAMLからNode，Tunnel，経路，Intent（要求記述）を読み込み，Path Selection，障害時Fallback判断，Explain JSONL出力，strongSwan/VPP向けruntime plan生成を実装した．Linux VM上のnetwork namespace環境では，Direct PathおよびDirect障害時のHub Fallbackについて，IPsec runtime起動，ESP counter確認，VPP forwarding設定，LAN疎通確認までの統合基本疎通試験を確認した．さらに，strongSwan/Linux XFRMとVPP GREを接続する構成、および比較用のVPP Native IPIP/IPsec構成で，双方向LAN疎通，暗号counter増加，再適用，停止後残留なしを確認した．後者は静的SA・鍵による実験構成であり，GRE構成や本番用の鍵管理を意味しない．また，Gracefulの状態遷移，drain，cleanup，失敗時rollbackをC層で実装・テストしたが，実環境でのGraceful切替と定量的な通信影響は未測定である．Flow Preserve，Controller HA，Observed State復元の本番運用，複数管理Domain間連携は今後の実装対象である．
+C言語による試作実装では，YAMLからNode，Tunnel，経路，Intent（要求記述）を読み込み，Path Selection，障害時Fallback判断，Explain JSONL出力，strongSwan/VPP向けruntime plan生成を実装した．Linux VM上のnetwork namespace環境では，Direct PathおよびDirect障害時のHub Fallbackについて，IPsec runtime起動，ESP counter確認，VPP forwarding設定，LAN疎通確認までの統合基本疎通試験を確認した．さらに，strongSwan/Linux XFRMとVPP GREを接続する構成、および比較用のVPP Native IPIP/IPsec構成で，双方向LAN疎通，暗号counter増加，再適用，停止後残留なしを確認した．後者は静的SA・鍵による実験構成であり，GRE構成や本番用の鍵管理を意味しない．また，Gracefulの状態遷移，drain，cleanup，失敗時rollbackをC層で実装・テストしたが，評価専用executorによる事前確立SAと最小待機ポリシーの実通信中反復を追加した．これは本番Gracefulのpause上限保証や常駐eventnetdの本番Adapter経路の測定ではない．Flow Preserve，Controller HA，Observed State復元の本番運用，複数管理Domain間連携は今後の実装対象である．
+評価証拠の時点を区別する．Native IPIP/IPsecは2026年9月のCI，Direct／HubおよびGREは10月のVM試験で確認した．実リンク障害等の反復評価は2 vCPUと8 vCPUで各25ケースであり，評価専用executorを使用した．既存方式との優位比較や全機能の本番運用を実証したものではない．
 \end{abstract}
 
 \noindent\textbf{キーワード:} IPsec，strongSwan，FD.io VPP，Tunnel抽象化，Path Transition，イベント駆動型ネットワーク制御
@@ -159,6 +160,7 @@ Domain間連携インターフェース & 複数Domain Controller間でTransitio
 \end{table}
 
 \subsection{Adapter APIとCapability Model}
+本節の操作名と能力名は目標APIの設計であり，すべてが独立したC callbackとして実装済みではない．現行の公開API（\texttt{include/eventnet/controller.h}）はTunnelの\texttt{ensure\_tunnel}／\texttt{remove\_tunnel}，Forwardingの\texttt{install\_path}／\texttt{remove\_path}／\texttt{active\_path}，Healthの\texttt{validate\_path}である．Nodeの能力文字列と必須能力制約は実装済みだが，Backend能力の自動検出や能力に基づく全Strategyの選択は未完成である．
 Ibukiが単なるstrongSwan wrapperに留まらないためには，Controllerの上位論理と下位実装を分離するAdapter APIが重要である．今回の方針では，Tunnel操作とForwarding操作を明確に分離する．Tunnel AdapterはTunnelの作成，準備，確立，観測，検証，非活性化，削除を担い，Forwarding Adapterはrouteやpolicy-based forwarding等のForwarding Stateを扱う．これにより，IPsec SAの状態管理とVPP routeの更新を同じ抽象化へ無理に押し込まず，失敗点を分離して扱える．
 
 Tunnel Adapterの基本操作は，\texttt{create}，\texttt{prepare}，\texttt{establish}，\texttt{observe}，\texttt{validate}，\texttt{deactivate}，\texttt{destroy}として整理する．\texttt{create}は設定素材の生成，\texttt{prepare}は通信へ影響を与えない事前準備，\texttt{establish}はSAやTunnelの確立，\texttt{observe}は実状態の取得，\texttt{validate}は疎通やcounter等による検証，\texttt{deactivate}は待機または利用停止，\texttt{destroy}は設定削除を表す．Forwarding Adapterは，\texttt{prepare\_route}，\texttt{commit\_route}，\texttt{observe\_route}，\texttt{rollback\_route}等に分け，Tunnel確立と転送切替を別々の失敗点として扱う．この分離により，Commit前の失敗ではActive Pathを維持し，Commit後の失敗ではRollbackやFallbackを選ぶという判断が可能になる．
@@ -174,22 +176,26 @@ Intent（要求記述）は，利用者や上位システムがIbukiへ与える
 
 \begin{verbatim}
 intents:
-  - id: site-a-to-site-b
-    from: site-a
-    to: site-b
-    candidate_paths:
-      - direct-a-b
-      - hub-a-b
-    selection: priority
-    transition_strategy: immediate
-    verification:
-      type: ping
-      destination: 10.20.0.2
+  - id: intent-a-b
+    traffic:
+      source: site-a
+      destination: site-b
+    path_selection:
+      mode: priority
+      candidates:
+        - path-direct
+        - path-via-hub
+    transition:
+      strategy: immediate
+    fallback:
+      enabled: true
+      path_id: path-via-hub
 \end{verbatim}
 
-この例は，実装の詳細をすべて示すスキーマではなく，読者がIntent（要求記述）の役割を把握するための最小例である．詳細なスキーマは実装の進展に合わせて拡張する．
+この例は現行parserのIntent形式に沿った抜粋であり，単独では完全な設定ファイルではない．参照するPathとTunnelは別途定義する．完全な再現設定は\texttt{samples/linux-vm-netns.yaml}に置く．
 
 \subsection{リソースモデル}
+本節のloop・selector・Domainポリシーを含む整合性条件は目標仕様である．現行parserのID・参照検証とPath SelectionのWaypoint制約はその一部を実装するが，任意のloopやselector矛盾を網羅する一般検証器ではない．
 Ibukiは，Node，Tunnel，Segment，経路，Candidate Pathを基本Resourceとする．NodeはTunnelの終端または経路上のWaypointである．Tunnelは二つのNode間に形成される論理接続であり，初期研究ではIPsec Tunnelを主対象とする．Segmentは経路を構成する一区間であり，原則として一つのTunnelを参照する．経路は一つ以上のSegmentからなるEnd-to-End通信経路である．Direct PathはWaypointを持たない経路，Hub/Relay PathはWaypointを持つ経路として表現する．Candidate Pathは管理者または上位システムが許可したPath集合であり，Controllerが任意のNode組合せから自由に経路を生成することは初期段階では想定しない．
 
 このモデルでは，Direct，Hub，Relayを別々の特別な機能として実装しない．DirectはSegmentが一つの経路，HubはSegmentが二つ以上でWaypointにhubを含む経路，RelayはWaypointにrelayを含む経路として表せる．この表現により，Path Selection EngineやTransition Engineは，Direct専用，Hub専用，Relay専用の処理を持たずに，同じResource Model上で候補を比較できる．言い換えれば，Ibukiは「経路の種類ごとに別のプログラムを書く」のではなく，「経路を部品の並びとして表し，同じruleで扱う」ことを目指している．
@@ -204,11 +210,13 @@ IbukiはDesired State，Planned State，Applied State，Observed State，Health�
 Reconciliationは，単にDesired Stateを再適用するのではなく，Transition Stateを参照して実行する必要がある．Commit前の失敗であればActive Pathを維持すればよいが，Commit後のPost Validation失敗ではRollbackが必要になる．この点が，一般的な宣言的状態管理をネットワーク 経路制御へ適用する際の重要な差分である．
 
 \subsection{Path Selection}
-Path Selectionでは，Intent（要求記述）により許可されたCandidate Path集合から，利用不能な経路やConstraint違反経路を除外し，残った経路を比較してTarget Pathを決定する．初期試作実装ではExplicit，Priority，Evaluatedの三方式を扱う．Explicitは管理者が経路を直接指定する方式，Priorityはあらかじめ定義された優先順位に基づく方式，EvaluatedはRTTやpacket loss等の観測値を比較する方式である．観測値の微小変動による頻繁な切替を防ぐため，将来的にはhysteresis，confirmation count，minimum active time，hold-down等を導入する．
+本節のポリシー優先関係は設計方針である．現行実装は明示候補，管理状態，Health，品質上限，必須／禁止Waypoint，Node能力を検査するが，任意のSecurity Policy間の競合解消器を実装済みとはしない．
+Path Selectionでは，Intent（要求記述）により許可されたCandidate Path集合から，利用不能な経路やConstraint違反経路を除外し，残った経路を比較してTarget Pathを決定する．初期試作実装ではExplicit，Priority，Evaluatedの三方式を扱う．Explicitは管理者が経路を直接指定する方式，Priorityはあらかじめ定義された優先順位に基づく方式，EvaluatedはRTTやpacket loss等の観測値を比較する方式である．現行C層にはhysteresis，hold-down，連続失敗／復旧閾値を実装している．今回の実通信評価で使用した連続2回確認は評価器がAgent結果へ適用したものであり，C層の全安定化条件を本番運用で検証した結果ではない．
 
 Path Selectionは，単に最短経路を探す処理ではない．例えば，Direct PathのRTTが最も小さくても，packet lossが高い場合には除外されるべきである．また，Hub Pathの方が遅くても，監査やセキュリティポリシー上，特定通信はHubを通す必要があるかもしれない．Ibukiでは，まず利用してよい経路をCandidate Pathとして制限し，その中でSecurity Constraint，Explicit Administrative Policy，Availability/Health Constraint，Performance Preferenceの順に評価する．同一優先度の強制条件同士が矛盾した場合には，Controllerが勝手に片方を選ぶのではなく，Intent ConflictとしてRejectする．このConflictはExplainおよび将来のGUIへ表示する．これにより，意図しないTransit利用やLoopを避けつつ，運用者が説明可能な形でTarget Pathを選択する．
 
 \subsection{Health評価}
+本節は目標のHealth設計を述べる．現行Agentは指定対象のping等から観測値を生成するCLIであり，全拠点間の協調・並列測定や帯域の定期計測を自動運用する完成したAgentではない．反復評価では一方のunderlay endpointの連続失敗／成功を検知し，利用者通信の双方向ICMPを別の評価器で記録した．全Segment観測からPath品質を推定する分散運用は検証していない．
 Path Selectionで利用するHealthは，単一のping結果だけで決めるのではなく，Segment Observation，Path Prediction，End-to-End Verificationの三段階で扱う．Segment Observationでは，各拠点Agentが協調して，利用可能なSegmentについて両端からReachability，RTT，packet loss，jitter等を定期的に測定する．Path Predictionでは，Segmentごとの観測値から，複数Segmentで構成されるCandidate Path全体の状態を推定する．End-to-End Verificationでは，実際にTarget Pathとして利用する前後にProbeを実施し，推定した品質と実測値を比較する．
 
 帯域測定はnetwork自体へ負荷を与えるため，常時実施するのではなく，低頻度または必要時に実施する．また，HealthはPerformance Preferenceより強い制約として扱う．すなわち，RTTが小さいPathであってもReachabilityが不安定な場合やpacket lossが閾値を超える場合には，Target Pathから除外される．
@@ -220,6 +228,7 @@ Health状態は少なくともHealthy，Degraded，Failed，Unknownに分類す�
 HealthはPath SelectionだけでなくTransitionにも利用する．PreparingまたはValidating中にTarget PathのHealthがFailedになった場合，Commitへ進まずActive Pathを維持する．Commit Applied後にPost Validationが失敗した場合は，最後のStable PathへRollbackする．さらにStable Path自体がFailedである場合には，\texttt{fallback=true}を持つCandidate PathへのEmergency Fallbackを検討する．このようにHealthは，経路選択の材料であると同時に，状態遷移を進めるか止めるかを決める条件でもある．
 
 \subsection{Path Transition}
+以下の状態名は目標モデルの概念名であり，現行C enumと一対一には一致しない．\texttt{include/eventnet/types.h}の実状態はIdle，Candidate Selected，Preparing，Validating，Ready，Pausing，Draining，Switching，Verifying，Completed，Rolling Back，Failedである．\texttt{src/transition.c}ではCommit後に\texttt{active\_path}で適用結果を確認するが，callbackの実装に依存し，その確認だけでE2E疎通が保証されるわけではない．反復評価のCommit後pingはPython評価器が別途実行した．
 Path Transitionは，Target Path決定後に実行される状態遷移である．本稿では，状態機械そのものを新規性として強く主張するのではなく，通信Pathを第一級の制御対象とし，Path間の変更を実装横断的なTransitionとして扱う点に主眼を置く．
 
 Transitionは，Proposed，Preparing，Validating，Ready，Commit Executing，Commit Applied，Post Validation，Stable，Rolling Back，Fallbacking，Failedを持つ．ProposedはTarget Path候補が決まったが，まだ下位操作を開始していない状態である．Preparingは新Pathに必要なTunnelやForwarding設定を通信へ影響しない範囲で準備する状態である．ValidatingはSA，counter，Probe等により，新PathがCommit候補として妥当かを確認する状態である．Readyは，新PathのTunnelやForwarding設定がCommit可能な状態に揃ったことを表す．Commit ExecutingはForwarding変更を実行している状態，Commit Appliedは設定変更が下位OSSへ適用された状態である．Post Validationは，設定変更後にEnd-to-End Probe等で通信成立を確認する段階である．Stableは，新PathへのForwarding変更後，E2E検証を含む所定の成功条件を満たし，安定した通信Pathとして確定された状態である．このように，「設定変更が成功した」ことと「実際の通信が安定している」ことを区別する．
@@ -230,7 +239,7 @@ Rollbackは，最後に通信が安定していたStable Pathへ復帰する操�
 
 \begin{table}[h]
 \centering
-\caption{Path Transitionの状態遷移}
+\caption{目標モデルにおけるPath Transitionの状態遷移}
 \label{tab:transition-state}
 \begin{tabular}{llll}
 \toprule
@@ -260,7 +269,7 @@ Transition Strategyは，状態機械とは分離して扱う．Immediateは既�
 Strategy & 旧Path & 新Path & flow単位制御 & 実装状況 \\
 \midrule
 Immediate & 既存通信を含めて即時切替 & 直ちに利用 & しない & 初期実装相当 \\
-Graceful & 条件またはTimeoutまで維持 & 検証後に利用 & しない & 簡易制御実装，実通信評価は未完了 \\
+Graceful & 条件またはTimeoutまで維持 & 検証後に利用 & しない & 簡易制御・評価器で反復，本番保証は未評価 \\
 Flow Preserve & 既存flowを維持 & 新規flowから利用 & する & 未実装 \\
 \bottomrule
 \end{tabular}
@@ -282,6 +291,7 @@ Ibukiは，ネットワーク全体を一台の中央Controllerが管理する�
 この方式は，分散databaseのような完全なatomic commitを保証するものではない．Control Channelの遅延，片側Controllerの再起動，ポリシー拒否，片側だけのPrepare失敗などが起こり得るためである．そのため，Ibukiでは世代ID，Timeout，冪等操作，Rollback可能期間，Active Path保持によって，失敗時にも安全な状態へ収束させる設計を目指す．現試作実装では複数管理Domain間連携は未実装であり，本節は今後の設計方針として位置付ける．
 
 \subsection{Agentの役割とControl Plane障害時の動作}
+以下は将来の責務分離と障害時ポリシーの設計である．現試作Agentには認証付きController指示チャネルやEmergency Fallback実行機構を統合していない．本稿の実環境試験では生成scriptまたは評価器が同一VM内の各namespaceを操作しており，遠隔Agentによる自律適用を実証したものではない．
 各拠点にはAgentが常駐し，Controllerからの指示を受けてAdapter/APIを通じてstrongSwanやVPPを操作する．基本責務は，TunnelやForwarding Stateの適用，Observed Stateの収集，Segment Observation，Probe実行，Decision Logに必要な実行結果の報告である．Controllerがすべての拠点で直接コマンドを実行する構成ではなく，Controller → Agent → Adapter/API → strongSwan/VPPという責務分離を基本とする．
 
 Controllerが停止した場合，Agentは勝手な最適化を行わず，原則として現在のActive Pathを維持する．ただし，そのActive Path自体が通信不能となった場合には，事前に許可されたEmergency FallbackのみAgent単独で実行可能とする．初期設計では，Emergency Fallback先はCandidate Path内の\texttt{fallback=true}属性で指定されたHub Path等である．これにより，中央制御と障害時自律性の境界を明確にする．
@@ -398,6 +408,7 @@ GUIは本研究の新規性そのものではないが，最終的なIbukiでは
 
 
 \section{実装}
+実装・評価の現状を記述する本節と，前節の将来アーキテクチャを区別する．FRR/BGP，認証付き遠隔Agent，HA，Federation，Flow Preserveは今回の実装・実測対象ではない．測定器はPython，Controller coreはCであり，今回の定量値はCのTransition Engine全体を本番Adapterで動かした値ではない．今回追記した結果は作業ツリーに保存しており，公開repositoryへ反映済みのcommitと同一とは限らない．
 試作実装はC言語で実装したController coreである．Cを用いる理由は，VPPやLinux networking等の低レイヤ処理との境界を明示しやすく，将来的にC APIやnative bindingへ接続しやすいためである．また，network daemonとして軽量に動作させることも意識している．一方，GUIや管理画面は本研究の中核ではなく，別言語での実装を許容する．
 
 実装済みの主な要素は，YAMLによるIntent（要求記述）/経路/Tunnel/VPP edgeの記述，Priority/Fallback/Evaluated Selection，Explain JSONL出力，swanctl設定生成，VPP route plan生成，Linux network namespace testbed，Direct/Hub IPsec 基本疎通試験，VPP host-interface forwarding 基本疎通試験，Controller生成planによるIPsec/VPP統合runtime 基本疎通試験である．これらの実装および評価結果は，GitHub repository \url{https://github.com/nagato-home-server/ibuki} に整理して公開している．図\ref{fig:github-qr}に，repositoryへアクセスするためのQR codeを示す．表\ref{tab:files}に主要ファイルを示す．
@@ -438,6 +449,7 @@ netns plan & \texttt{examples/netns\_plan.c} & Linux VM用runtime scriptを生�
 
 \section{評価}
 \subsection{評価方針}
+本節の比較項目は評価計画である．後節の実測は機能成立と工程・通信品質の記録を確認する範囲であり，単純なroute更新や商用SD-WANに対する安全性・性能の優位比較は未実施である．
 評価では，Ibukiが単に動作することだけでなく，本研究の二つの中心的提案が有効かを確認する．第一に，Tunnel Resource抽象化により，Path Selectionや遷移の上位論理をBackend固有の設定から分離できるかを評価する．第二に，Explicit Path Transition Modelにより，単純な経路更新よりも安全にPath変更を扱えるかを評価する．ここでいう安全性とは，packet loss zeroを保証することではなく，Prepare前，Commit前，Commit後，Post Validation後のどの段階で失敗したかを区別し，Active Path維持，Rollback，Fallbackのいずれを選ぶべきかを説明可能にすることである．
 
 評価対象は，初期段階ではDirect Path，Hub Path，Relay Pathを持つ小規模testbedとする．これは大規模性能評価ではなく，制御モデルが実際のOSS操作へ接続できるかを確認するためである．評価では，以下の観点を重視する．
@@ -518,7 +530,7 @@ Federationを実装した段階では，site-aとsite-bを異なるDomain Contro
 network namespaceを用いる理由は，一台のVM上で複数の拠点やGatewayを模擬できるためである．物理的に複数台のルータを用意しなくても，site-a，site-b，hub，relayを独立したネットワーク stackとして作成できる．これにより，研究初期段階でも，Direct Path，Hub Path，Relay Pathの選択やFallbackを再現可能な形で検証できる．ただし，この環境は実運用規模の性能評価ではなく，制御モデルとruntime反映が成立するかを確認するための小規模testbedである．
 
 \subsection{評価指標}
-現時点の試作実装では基本疎通試験が中心であるが，研究としては定量評価を追加する必要がある．評価指標は，制御処理の時間，通信への影響，実装再利用性，説明可能性に分けられる．
+基本疎通に加え，評価専用executorによる工程別時間，通信品質，VPP／charon合計resourceとVM全体CPUを反復測定した．以下は目標指標の一覧であり，Controller／Agent別のCPU・メモリ，Backend交換時の変更量，Control Plane message数は今回の測定に含まない．評価指標は，制御処理の時間，通信への影響，実装再利用性，説明可能性に分けられる．
 
 \begin{itemize}[leftmargin=*]
 \item 制御処理: Decision Time，Preparation Time，Validation Time，Commit Time，Post Validation Time，Rollback Time，Total Transition Time．
@@ -545,7 +557,7 @@ CTest & pass（27/27） & 制御ロジックと計画生成の回帰試験 \\
 論文前validation & pass 12，skip 3 & root不要範囲と環境依存範囲を分離 \\
 strongSwan/XFRM GRE & pass & 双方向疎通，ESP counter，再適用，cleanup \\
 VPP Native IPIP/IPsec & pass & 双方向疎通，VPP ESP counter，再適用，cleanup \\
-定量的なPath切替評価 & 未完了 & 工程別時間，通信断，resource使用量を測定予定 \\
+定量的なPath切替評価 & 当時は未実施 & 2026年10月10日の反復測定は後節に分離 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -555,7 +567,7 @@ VPP Native IPIP/IPsec & pass & 双方向疎通，VPP ESP counter，再適用，c
 
 Ubuntu VM（Linux 7.0.0-34，VPP 26.06，2 vCPU）で，AF\_PACKET host-interfaceへ\texttt{cksum-gso-disable}を指定し，試験用poll sleepを1000マイクロ秒とした．各方向1回のARP warm-up後，双方向各3回のpingは全構成で成功した．往路／復路の平均RTTはDirect統合29.130／37.600 ms，Hub統合18.051／20.172 ms，GRE over IPsec 22.950／16.649 msであった．ESPの送受信進行と終了後cleanupも確認した．Native IPIP/IPsecはこのVM再検証に含まない．
 
-各構成の初回往路warm-upは1パケット損失した．warm-upの出力は測定pingと分けて保存しており，上記の損失0\%は事前解決後の機能疎通に限る．3標本の平均RTTは性能優位を示すものではない．Fallbackは障害イベント入力による選択・適用であり，連続通信中の実リンク障害検知，切替時間，最大通信断を測定した結果ではない．反復評価，Graceful比較，TCP再送，帯域，CPU・メモリ，VLAN／VRF実パケット分離は追加評価対象である．過去のCTest／CI成功を最新コードの成功として読み替えない．
+各構成の初回往路warm-upは1パケット損失した．warm-upの出力は測定pingと分けて保存しており，上記の損失0\%は事前解決後の機能疎通に限る．3標本の平均RTTは性能優位を示すものではない．この2026年10月9日のFallback確認は障害イベント入力による選択・適用であり，実リンク障害の切替測定とは異なる．翌日に追加した反復評価，TCP再送，帯域，CPU・メモリ，VLAN／FIB実パケット分離の結果と制約は後述する．過去のCTest／CI成功を最新コードの成功として読み替えない．
 
 Scenario Harnessでは，Direct選択，Direct障害によるHub Fallback，評価値に基づくRelay選択，multi-step scenarioを確認した．Integrated Directでは，Controllerが選択したDirect Pathについて，IPsec runtime起動，ESP counter確認，VPP forwarding設定，LAN疎通確認までを完了した．Integrated Fallbackでは，Direct Path障害イベントを注入した場合にHub Pathを選択し，IPsecとVPP forwardingを組み合わせたruntimeでLAN通信の疎通を確認した．
 
@@ -568,7 +580,69 @@ RQ2について，試作実装はTransition Strategyの全てを実装してい�
 
 RQ3およびRQ4について，RQ3の複数管理Domain federationは未実装である．RQ4についてはExplain JSONLにより，Path Selectionの判断理由と除外理由を記録できることを確認した．Explainログ基盤自体は，GUI的な説明表示へ接続できる実装済み要素として位置付ける．今後は，実際のController判断，Explainに記録された判断，同一入力から再構成した期待判断が一致するかを検証し，説明可能性を単なるログ出力ではなく再現可能性として評価する．
 
-なお，これらは最終的な有効性を証明する完全な評価ではなく，研究仮説を検証するための初期結果である．RQ1ではstrongSwan/XFRM GREとVPP Native IPIP/IPsecという二つの実データパスが成立したが，後者は静的SA・鍵の最小構成であり，Adapter交換時の変更量や性能を同一条件で比較できていない．RQ2では，Immediate相当の切替は確認したが，GracefulやFlow Preserveによる通信影響の差は未測定である．そのため，本稿の結論は「Ibukiの設計が実装可能であり，初期testbed上で一連の制御と二方式の暗号化データパスが成立した」という範囲に留める．
+なお，これらは最終的な有効性を証明する完全な評価ではなく，研究仮説を検証するための初期結果である．RQ1ではstrongSwan/XFRM GREとVPP Native IPIP/IPsecという二つの実データパスが成立したが，後者は静的SA・鍵の最小構成であり，Adapter交換時の変更量や性能を同一条件で比較できていない．RQ2では，Immediate相当の切替は確認したが，本番Graceful／Flow Preserveの通信影響差は未測定であり，評価用の最小待機ポリシーの反復結果から一般的な優位は導かない．そのため，本稿の結論は「Ibukiの設計が実装可能であり，初期testbed上で一連の制御と二方式の暗号化データパスが成立した」という範囲に留める．
+
+\subsubsection{2026年10月10日のGRE最終疎通確認}
+8 vCPU，メモリ8 GB，Linux 7.0.0-38，VPP 26.06，strongSwan 5.9.13の同一VMで，\texttt{samples/gre-namespace-v2.yaml}を用いてVPP GREとstrongSwan/Linux XFRMの実通信を再確認した．client-aからclient-b，逆方向とも事前のneighbor warm-upと分離した各3回のpingが成功し，損失は0\%，平均RTTは5.516 ms／5.306 msだった．site-aのESP送信sequenceは8，受信sequenceは7となり，暗号化・復号通信を確認した．これらのsequenceにはwarm-upも含み，測定pingだけのpacket数ではない．終了後に両siteのXFRM state／policyとプロセスが残っていないこと，元のVPP service復帰を確認した．機能疎通1回の確認であり，GRE帯域や切替の反復性能測定ではない．鍵を除去したログを\texttt{docs/evaluation/20261010-gre/}へ保存した．
+
+\section{実リンク障害と通信品質の反復評価}
+
+2026年10月10日，Ubuntu VM，Linux 7.0.0-34，2 vCPU，VPP 26.06，strongSwan 5.9.13で5条件を各5回実行した．Immediate／簡易Gracefulの障害・復旧・Rollbackが各5回，Direct／HubのTCP帯域が各5回，VLAN／FIB分離が5回であり，合計25ケースが成功した．データ，標本統計，条件と主要グラフを\texttt{docs/evaluation/20261010/}に保存した．生ログとmonotonic時刻のJSONLは\texttt{out/paper-live-20261010-verified/}に保持する．失敗した予備試験と出力先修正前に中止した測定は集計へ混ぜていない．
+
+\subsection{実験構成と評価範囲}
+
+独立client namespace間で双方向ICMPと単一TCP接続を継続し，Directのunderlay vethを実際にdownにした．Agentがunderlay endpointの実測で連続2回Failedを報告した後，C ControllerのPath判断を呼び出し，評価用Python executorが両側のLinux XFRM routeをHubへ切り替えた．次にリンクをupにし，連続Healthy確認後にDirectへ戻した．片側Commit失敗試験では，一方のHub route変更を成功させた後，他方に存在しないinterfaceを指定して実適用を失敗させ，両側をDirectへ戻した．
+
+両PathのCHILD SAは事前確立し，VPPはLANとLinux IPsec側の接続を維持した．簡易GracefulはStandby SAの確認後に10ms待機してCommitする最小ポリシーである．常駐eventnetdの本番Adapter実行，Intentの\texttt{max\_pause\_ms}による厳密なpause上限，動的な旧SA解放，Flow Preserveを評価したものではない．故障時には旧リンクが既に使用不能なので，待機による損失低減を前提としない．
+
+\subsection{工程別時間と通信品質}
+
+ICMPは設定間隔50msで28秒送信し，終了後1秒間返信を待った．CPU／RSSは250ms間隔で記録した．すべての工程時刻は同じVMのmonotonic clockを使用する．表の値は各trialから得た値の平均$\pm$標本標準偏差，各$n=5$である．最大応答間隔は厳密な無通信時間ではなく，送信周期，RTT，scheduler jitterを含む観測値である．
+
+\begin{center}
+\small
+\begin{tabular}{lrr}
+\toprule
+指標 & Immediate & 簡易Graceful \\
+\midrule
+Agent検知 [ms] & $1090.518\pm190.292$ & $1037.881\pm208.700$ \\
+C判断・起動込み [ms] & $195.652\pm61.713$ & $194.531\pm41.889$ \\
+SA確認・Prepare [ms] & $1123.704\pm205.288$ & $1318.140\pm413.649$ \\
+両側route Commit [ms] & $505.573\pm121.244$ & $465.409\pm93.273$ \\
+検知からCommit完了 [ms] & $1873.735\pm256.916$ & $2047.123\pm537.846$ \\
+障害操作から検証完了 [ms] & $3701.142\pm520.947$ & $3733.122\pm640.364$ \\
+最大応答間隔 [ms] & $3018.967\pm399.245$ & $3156.855\pm478.429$ \\
+往路ICMP損失 [\%] & $12.336\pm0.534$ & $13.259\pm3.403$ \\
+TCP再送 [回] & $67.600\pm42.117$ & $49.600\pm31.997$ \\
+Direct復帰検知 [ms] & $1239.083\pm218.763$ & $1330.734\pm594.819$ \\
+Direct復帰Commit [ms] & $652.261\pm173.470$ & $1119.467\pm633.209$ \\
+部分失敗後Rollback [ms] & $479.898\pm118.849$ & $751.532\pm522.287$ \\
+daemon合計CPU [\%] & $49.919\pm0.900$ & $46.671\pm6.227$ \\
+daemon合計RSS [MiB] & $460.335\pm0.204$ & $460.398\pm0.233$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+TCPクライアントは再接続せず，10試験すべてで同じ接続が完了した．再送数はtrial全期間の合計であり，個々の切替工程に厳密に帰属させていない．また，\texttt{transition\_ms}はAgent検知成立からCommit完了までを意味し，障害検知時間やruntime起動全体の時間とは異なる．
+
+\subsection{帯域とVLAN／FIB分離}
+
+切替試験のTCPは10Mの上限を設けた．別枠の無制限TCPを10秒ずつ各5回測定すると，receiver側帯域はDirect $9.005\pm0.673$ Mbit/s，Hub $9.317\pm1.267$ Mbit/sだった．この試験ではslow startも含む．
+
+VLAN100／200を手動CLIで別VPP FIB tableへ設定し，重複するIPアドレスのclient間で両方向通信を確認した．FIB100のremote LAN routeだけを削除すると100は全損失，200は疎通を維持し，100のroute復元後は疎通を回復した．この操作は5回とも成功した．これはIPv4 forwarding table分離の確認であり，任意のController VLAN Intentの自動適用，全攻撃パターン，IPv6，ACL fail-closedの検証ではない．
+
+\subsection{解釈と残る評価}
+
+VM全体CPUは約99.7〜99.8\%に飽和した．daemon合計CPUは1 coreを100\%としたVPP／charonの使用率であり，Linux XFRMのkernel／softirq処理や測定プロセスは含まない．全core平均のVM全体CPUとは尺度が異なる．合計RSSには共有ページの重複計上も含む．
+
+これらの結果は，実障害，切替，復旧，部分失敗からのRollbackを通信品質と工程時刻の両面から記録できることを示す．一方，Gracefulの損失低減，Hubの性能優位，VPPの一般的な最大帯域，通信断やpauseの上限保証を示すものではない．標本数5とCPU飽和を踏まえ，実eventnetdのAdapter経路，多vCPU・CPU affinity，MTU／MSS，同一負荷の無障害control，実回線での閾値評価を追加する必要がある．グラフのerror barは標本標準偏差であり，信頼区間ではない．
+
+\subsection{8 vCPU条件での再測定}
+同日，CPU割当を8 vCPUへ増やし，メモリ割当8 GBを維持して同じ5条件を各5回実行した．オンラインCPU 8個とメモリ約7.7 GiBをSSHで確認した．同じ計測器SHA256，YAML，観測閾値，ICMP送信間隔，待機時間を用い，25ケースが成功し，切替試験10回で同じTCP接続が完了した．結果は\texttt{docs/evaluation/20261010-8cpu/}に保存し，旧2 vCPUの標本は上書きしていない．
+
+Immediateの検知時間は337.134 $\pm$ 8.907 ms，検知からCommit完了まで172.607 $\pm$ 8.748 ms，最大応答間隔570.086 $\pm$ 37.188 ms，損失2.046 $\pm$ 0.115\%だった．簡易Gracefulではそれぞれ336.165 $\pm$ 6.868 ms，222.831 $\pm$ 91.317 ms，620.205 $\pm$ 91.658 ms，2.208 $\pm$ 0.325\%だった．いずれも各条件5標本の平均と標本SDである．無損失切替やGracefulの優位を示す結果ではない．
+
+10秒間の無制限TCP受信帯域はDirect 157.889 $\pm$ 4.045 Mbit/s，Hub 89.796 $\pm$ 6.987 Mbit/sだった．全core平均のVM全体CPUは切替試験で約14.5\%，帯域試験で約13.2〜15.9\%となり，旧条件での全体CPU飽和は解消した．ただしLinuxも7.0.0-34から7.0.0-38へ更新されたため，CPU増設だけの因果効果を分離していない．CPU平均の分母変更，特定coreの負荷，仮想化・kernel処理の影響も考慮する必要がある．評価用executor，warm状態の逐次反復という制約は同じであり，本番eventnetd経路の性能や通信断上限を保証するものではない．
 
 \section{考察}
 \subsection{Tunnel抽象化の有効性}
@@ -584,16 +658,18 @@ Path変更を単なるroute更新やTunnel起動の列として扱うだけで�
 状態機械として扱う利点は，障害発生時に「どこまで進んだか」を記録できることである．たとえばPrepare中で失敗したなら，新Pathはまだ使われていないため，Active Pathを維持すればよい．切替実行中後に失敗したなら，通信が一部新Pathへ向かった可能性があるため，旧PathへのRollbackや再検証が必要になる．このように，状態名は単なる説明用のラベルではなく，復旧動作を決めるための情報である．
 
 \subsection{限界と今後の課題}
-本稿の評価は基本疎通試験中心であり，統計的な定量評価は未完了である．今後は，切替中のpacket loss数，最大通信断時間，RTT変化，TCP session continuity，packet reordering，Fallback plan生成時間の平均・中央値・最大・標準偏差，integrated runtimeの工程別時間，CPU/メモリ使用量を測定する必要がある．特に，integrated-directおよびintegrated-fallbackの時間を，YAML parse，Path Selection，plan生成，IPsec config生成，charon起動，swanctl load，CHILD SA initiate，ESP counter確認，VPP setup，route apply，ping verificationへ分解することが重要である．
+本節で参照する反復測定の数値は前節に示した．8 vCPU条件は追加確認済みだが，CPU affinity，コア別負荷，試験中のVM全体RAM最大量，実回線条件の評価は残る．
+RQ1については共通Pathから異なるruntime計画を生成できることを初期的に確認したが，Backend交換時の変更行数・再利用率の定量比較は行っていない．RQ2については部分Commit失敗からの復旧を実通信下で確認したが，単純なroute更新方式との対照実験は行っておらず，安全性や通信品質の優位を証明したとは主張しない．RQ3のDomain協調は設計段階，RQ4のExplainは実装・回帰試験の範囲であり，第三者による判断再構成の評価は残る．
+基本疎通試験に加え，2026年10月10日に評価専用executorによる実リンク障害・復旧・Rollback，TCP継続，帯域，resource，VLAN／FIB分離の反復測定を追加した．各条件5回の結果は後述する．一方，常駐eventnetdがTelemetry受信から実Adapterへの適用まで行う本番制御ループの定量評価は未完了である．SAの事前確立を含む実験と，新規SAの確立，charon起動，VPP起動まで含めたruntime全体の準備費用は区別する必要がある．
 
-また，Gracefulとruntime rollback機構の制御ロジックおよびmock試験は実装済みであるが，実strongSwan／VPP環境での切替・復旧試験は未完了である．Observed State復元の本番運用，Control Plane障害時のActive Path維持，複数管理Domain間連携も追加課題である．Flow Preserveはflow識別，flow table，timeout管理，Forwarding rule分岐を必要とするため，初期評価ではGracefulとRollbackを優先し，Flow Preserveは拡張評価として扱うのが現実的である．
+Gracefulとruntime rollback機構の制御ロジックおよびmock試験は実装済みである．実strongSwan／VPPを用いる評価専用executorでも，事前確立SAの検証後に待機する最小ポリシーと，片側route適用失敗からの復旧を反復した．これは本番Gracefulのpause上限保証，動的な旧SA解放，flow保持の完成を示すものではない．Observed State復元の本番運用，Control Plane障害時のActive Path維持，複数管理Domain間連携も追加課題である．Flow Preserveはflow識別，flow table，timeout管理，Forwarding rule分岐を必要とするため，拡張評価として扱う．
 
 \section{制約と今後の展望}
 Ibukiは，Path変更時の完全なpacket loss zeroを保証するものではない．また，異なるTunnelをまたいだ完全なpacket orderingも保証しない．これは，独自のpacket duplication，独自sequence number，受信側reordering protocolを導入しないためである．本研究はVPNプロトコルそのものを改良するのではなく，既存Tunnelをどの順序でPrepareし，検証し，切り替え，失敗時に戻すかを扱う制御基盤である．したがって，通信影響をゼロにすることではなく，通信影響を測定可能かつ説明可能にし，要求に応じたTransition Strategyを選べるようにすることを目標とする．
 
 また，Ibukiはすべてのネットワーク機器を直接制御できることを前提としない．外部APIや設定インターフェースを持たない機器では，strongSwanやVPPを動作させるSoftware Gatewayを別途配置する必要がある．IbukiはInternet全体のルーティングプロトコルを置き換えるものでもない．FRRやBGP/OSPF等のルーティングプロトコルは，必要に応じてObserved Stateやポリシー入力として利用する対象であり，Ibukiの中核はTunnelとPath Transitionの制御に置く．
 
-Gracefulの簡易版とruntime rollback機構の制御ロジックは実装済みである．次の段階では，新Pathを先に確立し，検証後に旧Pathを一定時間保持して切り替える一連の処理を実strongSwan／VPP環境で反復する．VPP route投入失敗，IPsec SA確立失敗，片側Commit成功等を注入し，最後のStable Pathへ戻るRollbackと，Stable Pathへ戻れない場合に\texttt{fallback=true}の安全側Pathへ退避するFallbackが実runtimeでも分離されることを評価する．
+Gracefulの簡易版とruntime rollback機構の制御ロジックは実装済みである．評価用executorでは事前確立SAと片側route Commit失敗からの復旧を反復した．次の段階では，本番Adapterを通して新Pathを確立し，検証後に旧Pathを一定時間保持して切り替える処理を実strongSwan／VPP環境で反復する．VPP route投入失敗，IPsec SA確立失敗，片側Commit成功等を注入し，最後のStable Pathへ戻るRollbackと，Stable Pathへ戻れない場合に\texttt{fallback=true}の安全側Pathへ退避するFallbackをさらに評価する．
 
 eventnetdの周期・socket入力、state store、複数のobserved eventとreconciliation loopは実装済みである．次に，Direct Path適用後にeventnetdを停止して通信維持を確認し，再起動時に実runtimeのObserved StateからActive Pathを再構築できるかを評価する．Controller停止中はAgentが勝手な最適化を行わずActive Pathを維持し，Active Path自体がFailedになった場合だけ事前承認されたEmergency Fallbackを実行する、という中央制御と拠点自律性の境界は本番運用試験が残っている．
 
@@ -606,7 +682,7 @@ Adapter/Capabilityに関しては，Local strongSwan Adapterを基準に，Cloud
 \section{結論}
 本稿では，標準Tunnelを共通制御リソースとして扱い，複数Tunnelから構成される経路の選択と状態遷移をイベント駆動で制御する基盤Ibukiを提案した．Ibukiは，新しいVPNプロトコルや独自Data Planeを導入せず，IPsec，strongSwan，VPP，FRR，Linux networking等の既存技術を活用する．本研究の中心的な提案は二点に限定される．第一は，Tunnel実装差をAdapterとCapability（能力情報）へ局所化し，機器やVPN実装への依存を上位制御論理から切り離すTunnel Resource抽象化である．第二は，Path変更をPrepare，Validate，Commit，Post Validation，Rollbackを持つ独立したTransitionとして扱い，通信影響と失敗時復旧を明示的に管理するExplicit Path Transition Modelである．
 
-C言語試作実装では，YAMLに基づくPath Selection，Fallback判断，Explain出力，strongSwan/VPP向けruntime plan生成，Direct/Hub統合基本疎通試験，Graceful／Rollbackの制御ロジック試験までを確認した．加えて，strongSwan/XFRMによるVPP GRE over IPsecと，VPP Native IPIP/IPsecの二方式で暗号化データパスの双方向疎通を確認した．これにより，標準TunnelをPath Resourceとして扱い，上位のPath Selection論理から異なるruntime操作へ接続できることを初期的に示した．今後は，Graceful／Rollbackの実runtime試験，VLAN／VRF実パケット試験，反復測定，工程別時間と通信影響の計測，Observed State復元，Control Plane障害試験，複数管理Domain協調を評価し，Ibukiの有効性を定量的に検証する．
+C言語試作実装では，YAMLに基づくPath Selection，Fallback判断，Explain出力，strongSwan/VPP向けruntime plan生成，Direct/Hub統合基本疎通試験，Graceful／Rollbackの制御ロジック試験までを確認した．加えて，strongSwan/XFRMによるVPP GRE over IPsecと，VPP Native IPIP/IPsecの二方式で暗号化データパスの双方向疎通を確認した．これにより，標準TunnelをPath Resourceとして扱い，上位のPath Selection論理から異なるruntime操作へ接続できることを初期的に示した．実リンク障害・復旧・Rollback，TCP，帯域，resource，VLAN／FIB分離を評価専用executorで各5回測定し，通信品質と工程時刻の記録可能性を示した．今後は，本番eventnetdのAdapter経路，Gracefulのpause上限とflow保持，多core・実回線条件，Observed State復元，Control Plane障害試験，複数管理Domain協調を評価する．
 
 \begin{thebibliography}{99}
 \bibitem{rfc4301} S. Kent and K. Seo, ``Security Architecture for the Internet Protocol,'' RFC 4301, Internet Engineering Task Force, Dec. 2005. \url{https://www.rfc-editor.org/rfc/rfc4301}

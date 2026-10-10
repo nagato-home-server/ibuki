@@ -32,6 +32,8 @@ CPU増設後の8 vCPU・メモリ8 GB条件でも各5回、計25ケースが成�
 
 ## 現行データパス
 
+2026-10-10のZ3による追加デバッグで、Evaluatedのhysteresisが除外済みActive Pathを再選択する不具合を確認し修正した。閾値モデルから生成した反例を実Cへ投入し、制約違反・無効化・候補外・waypoint不足と正常境界の10ケース、およびWSL CTest29件を確認した。これは経路選択の追加回帰検証であり、既存VM実測を修正版で再取得したものではない。C全体や固定長配列のメモリ安全性の形式証明ではない。
+
 LAN端末は独立した `client-a`／`client-b` namespace。VPP LAN gatewayは `10.10.1.1`／`10.10.2.1`、clientは `10.10.1.2`／`10.10.2.2`。VPPとcharonはsite namespaceで同居し、node別CLI socketへ計画を適用する。
 
 - VPP単体Direct／Hub: 専用VPP transit vethを使用する。

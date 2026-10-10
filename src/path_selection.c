@@ -76,6 +76,7 @@ en_error_code_t en_select_path(en_controller_t *controller, const en_intent_t *i
     if (selection->mode == EN_SELECT_EVALUATED) {
         en_path_t *best = NULL;
         en_path_health_t *best_health = NULL;
+        bool active_path_eligible = false;
         for (size_t i = 0; i < candidate_count; i++) {
             en_path_t *path = en_find_path(controller, selection->candidates[i]);
             if (path == NULL) {
@@ -90,6 +91,9 @@ en_error_code_t en_select_path(en_controller_t *controller, const en_intent_t *i
                 snprintf(result->excluded_reasons[idx], sizeof(result->excluded_reasons[idx]), "%s", reason);
                 continue;
             }
+            if (en_streq(active_path_id, path->path_id)) {
+                active_path_eligible = true;
+            }
             if (best == NULL || compare_paths(path, best, health, best_health, selection) < 0) {
                 best = path;
                 best_health = health;
@@ -98,7 +102,7 @@ en_error_code_t en_select_path(en_controller_t *controller, const en_intent_t *i
         if (best == NULL) {
             return EN_ERR_NO_CANDIDATE;
         }
-        if (active_path_exists && active_health != NULL && selection->constraints.has_hysteresis_percent &&
+        if (active_path_eligible && active_health != NULL && selection->constraints.has_hysteresis_percent &&
             !en_streq(best->path_id, active_path_id) &&
             (active_health->state == EN_HEALTH_HEALTHY || active_health->state == EN_HEALTH_DEGRADED)) {
             en_path_t *active_path = en_find_path(controller, active_path_id);

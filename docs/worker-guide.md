@@ -604,6 +604,20 @@ LONG_COUNT=10 LONG_INTERVAL_MS=1000 sh scripts/vm-evaluate.sh telemetry-long sam
 - `docs/eventnetd-service.md`
   - systemd導入時のdry-run、権限、state file、`--apply` の扱いを整理している。
 
+## Z3による経路選択デバッグ
+
+Linux/WSLでPython 3、C compiler、Z3 CLIを使用する。Pythonのz3パッケージは不要である。
+
+```sh
+python3 tests/formal/check_path_selection.py --z3 z3
+```
+
+Z3がPATHにない場合は`--z3`に実行ファイルのパスを指定する。`--cc`でcompiler、`--out-dir`で生成先を指定できる。既定出力先は`out/formal-path-selection`。runnerは`tests/formal/path_selection_probe.c`と実際の`src/path_selection.c`、`src/state.c`をコンパイルし、modelの値を実Cへ渡す。失敗、unknown、timeout、compiler失敗は成功扱いにしない。
+
+確認する不変条件は「hysteresisは候補から除外したActive Pathを復活させない」。Z3で有限整数範囲のRTT/loss反例を生成し、修正前には5条件で不正な保持を再現した。修正後は制約違反・無効化・候補外・waypoint不足の5条件と正常hysteresis境界5条件の計10ケースを再生する。候補適格性を使うBooleanモデルでは不正保持条件がunsatとなる。
+
+Booleanモデルのunsatは実Cの全実行を形式証明したものではない。Cのdouble全値、NaN、すべての比較キー、固定長配列境界、時刻オーバーフロー、Transition/adapter/daemon、実パケットは検証対象外。Z3反例による実C回帰試験として扱い、全面的なCBMC検証とは呼ばない。
+
 ## 作業環境の整理
 
 ソースは既存のsrc/include/examples/tests、生成物はout、ビルドは用途ごとのbuildディレクトリに分ける。古い生成物をソースの横へ残さず、必要な測定証拠だけを秘匿確認後にdocs/evaluationへ保存する。

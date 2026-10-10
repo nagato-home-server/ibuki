@@ -258,6 +258,8 @@ path_selection:
 
 `failure_threshold`は連続失敗回数、`recovery_threshold`は連続成功回数、`hold_down_ms`は健全なActive Pathを維持する最小時間、`hysteresis_percent`は品質改善がこの割合未満の候補への不要な切替を抑制します。値は0以上で、hysteresisは0〜100の範囲です。未指定値は無効化または既定値として扱われ、YAML loaderが負値・範囲外・数値でない値を拒否します。
 
+Evaluatedのhysteresisは、現在の候補一覧にあり、制約・管理状態の検査を通過したActive Pathだけを維持対象とします。RTT/loss上限違反、必須waypoint不足、管理上無効化、候補一覧からの削除をhysteresisで上書きしません。2026-10-10にZ3反例と実C再生で旧実装の違反を確認し、この条件を修正しました。
+
 `eventnetd --reload-config`またはLinuxの`--reload-on-sighup`を使うと、設定ファイルを再読込できます。再読込に失敗した場合は直前の正常設定を維持します。変更後の判定はstatus／Explain出力と評価manifestへ保存し、同じtelemetryに異なる閾値を適用した比較実験に利用できます。
 
 サンプルでは、`path-relay-chain-routes`、`path-asymmetric-routes`、`path-priority-backup` がこの3パターンに対応します。

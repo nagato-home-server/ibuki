@@ -1570,6 +1570,60 @@ static void test_evaluated_hysteresis_prevents_small_quality_switch(void)
     en_controller_destroy(controller);
 }
 
+static void test_evaluated_hysteresis_never_restores_excluded_path(void)
+{
+    for (size_t scenario = 0; scenario < 5; scenario++) {
+        en_vpp_mock_t vpp_mock = {0};
+        en_health_probe_mock_t health_mock = {0};
+        en_controller_t *controller = make_controller(&vpp_mock, &health_mock);
+        en_intent_t initial = base_intent(EN_SELECT_EXPLICIT);
+        snprintf(initial.path_selection.path_id, sizeof(initial.path_selection.path_id), "%s", "path-direct");
+        en_reconcile_result_t result = {0};
+        ASSERT_TRUE(en_controller_submit_intent(controller, &initial, &result) == EN_ERR_NONE);
+        en_intent_t intent = base_intent(EN_SELECT_EVALUATED);
+        intent.path_selection.candidate_count = 2;
+        snprintf(intent.path_selection.candidates[0], sizeof(intent.path_selection.candidates[0]), "%s", "path-direct");
+        snprintf(intent.path_selection.candidates[1], sizeof(intent.path_selection.candidates[1]), "%s", "path-via-relay-c");
+        intent.path_selection.comparison_count = 1;
+        intent.path_selection.comparison_order[0] = EN_COMPARE_LATENCY;
+        en_path_constraints_t *constraints = &intent.path_selection.constraints;
+        constraints->has_hysteresis_percent = true;
+        constraints->hysteresis_percent = 20.0;
+        en_path_health_t direct = {0};
+        snprintf(direct.path_id, sizeof(direct.path_id), "%s", "path-direct");
+        direct.state = EN_HEALTH_HEALTHY;
+        direct.rtt_ms = 10.0;
+        direct.packet_loss_percent = 1.0;
+        en_path_health_t relay = direct;
+        snprintf(relay.path_id, sizeof(relay.path_id), "%s", "path-via-relay-c");
+        relay.rtt_ms = 9.0;
+        relay.packet_loss_percent = 0.9;
+        if (scenario == 0) {
+            constraints->has_max_rtt_ms = true;
+            constraints->max_rtt_ms = 9.5;
+        } else if (scenario == 1) {
+            intent.path_selection.comparison_order[0] = EN_COMPARE_PACKET_LOSS;
+            constraints->has_max_packet_loss_percent = true;
+            constraints->max_packet_loss_percent = 0.95;
+        } else if (scenario == 2) {
+            en_path_t *path = (en_path_t *)en_controller_find_path(controller, "path-direct");
+            ASSERT_TRUE(path != NULL);
+            path->administrative_state = EN_ADMIN_DISABLED;
+        } else if (scenario == 3) {
+            intent.path_selection.candidate_count = 1;
+            snprintf(intent.path_selection.candidates[0], sizeof(intent.path_selection.candidates[0]), "%s", "path-via-relay-c");
+        } else {
+            constraints->required_waypoint_count = 1;
+            snprintf(constraints->required_waypoints[0], sizeof(constraints->required_waypoints[0]), "%s", "relay-c");
+        }
+        en_health_probe_mock_set(&health_mock, direct);
+        en_health_probe_mock_set(&health_mock, relay);
+        ASSERT_TRUE(en_controller_submit_intent(controller, &intent, &result) == EN_ERR_NONE);
+        ASSERT_STREQ(result.selected_path, "path-via-relay-c");
+        en_controller_destroy(controller);
+    }
+}
+
 static void test_yaml_validation_rejects_unknown_tunnel(void)
 {
     en_yaml_config_t config = {0};
@@ -2070,6 +2124,7 @@ int main(void)
     test_path_selection_thresholds_prevent_flapping();
     test_hold_down_prevents_healthy_path_switch();
     test_evaluated_hysteresis_prevents_small_quality_switch();
+    test_evaluated_hysteresis_never_restores_excluded_path();
     test_yaml_config_loads_paths_and_intents();
     test_command_adapters_can_drive_controller_dry_run();
     test_command_adapter_vlan_acl_cleanup_dry_run();

@@ -80,7 +80,7 @@ YAML / JSONL
 
 | 関数 | 役割 |
 |---|---|
-| `en_select_path` | Intentの候補を走査し、制約・健全性・ノード状態・比較順に従ってPathを選ぶ中心API。選択理由と除外理由を結果に記録する。 |
+| `en_select_path` | Intentの候補を走査し、制約・健全性・ノード状態・比較順に従ってPathを選ぶ中心API。選択理由と除外理由を結果に記録する。Evaluatedのhysteresisは候補走査で適格と判定したActive Pathにだけ適用する。 |
 | `exclusion_reason` | 候補を除外した理由を、failed、stale、制約違反、hold-down等に分類する。 |
 | `node_has_capability` | ノードが要求された能力を持つか確認する。 |
 | `path_nodes_enabled` | Path上のノードが全て有効か確認する。 |

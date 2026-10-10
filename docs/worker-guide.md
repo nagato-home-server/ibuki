@@ -618,6 +618,30 @@ Z3がPATHにない場合は`--z3`に実行ファイルのパスを指定する�
 
 Booleanモデルのunsatは実Cの全実行を形式証明したものではない。Cのdouble全値、NaN、すべての比較キー、固定長配列境界、時刻オーバーフロー、Transition/adapter/daemon、実パケットは検証対象外。Z3反例による実C回帰試験として扱い、全面的なCBMC検証とは呼ばない。
 
+## CBMCによるCコアの境界検査
+
+Linux/WSLのCBMC CLIとPython 3を使う。通常ビルドとは別の任意検証であり、CBMC未導入を合格と見なさない。[公式release](https://github.com/diffblue/cbmc/releases/tag/cbmc-6.11.0)のUbuntu 24.04 x86_64版6.11.0を使用し、配布SHA256を照合した。
+
+```sh
+python3 tests/formal/check_cbmc.py --cbmc cbmc
+```
+
+`--cbmc`で実行ファイル、`--out-dir`でログとsummary JSONの出力先、`--timeout`で1ケースの時間上限（既定300秒）、`--cases`で対象を指定する。既定出力先は`out/cbmc-core`。runnerはbounds、pointer、signed overflow、unwinding assertionを有効化する。timeout・中断・展開不足・検証失敗はすべてfailであり、成功表示と終了値0の両方を確認する。
+
+| harness | 検証条件と範囲 |
+| --- | --- |
+| `count_predicate` | 5個のcountを任意のsize_tとして、実際の容量判定とNULL拒否を確認する |
+| `reject_invalid_counts` | 各countの上限+1を入力し、選択処理がControllerを読む前に拒否することを確認する。Controllerには1 byteのcanary allocationを渡し、誤ってアクセスすればpointer検査で失敗する |
+| `candidates` | 登録Pathなし、空文字列候補、候補数0〜17の固定条件で候補/除外数の容量と上限超過拒否を確認する |
+| `comparisons` | 2個の有効Path、healthなし、path_id比較キー、比較数0〜9で選択成功/上限超過拒否を確認する。正の比較数では先頭キーで決着する |
+| `copy` | 64文字の入力と容量0〜64でcopyの書込境界と最終NULを確認する |
+
+`tests/formal/cbmc_core_harness.c`は実際の`src/path_selection.c`と`src/state.c`を対象とする。Controllerの内部状態、識別子のNUL終端、外部バッファ容量にはharnessごとの前提がある。全モデル、全Path数、全比較キー、任意の文字列、動的SA、Transition/daemonを網羅するものではない。
+
+CBMCの標準`vsnprintf`モデルは出力文字を非決定的に扱い、実libcのNUL終端保証をそのまま再現しない。`en_copy_id`では末尾NULを明示して検証可能な不変条件にした。これは実libcのsnprintfに脆弱性を発見したという意味ではない。stdioモデルの展開上限はtraffic keyバッファも含む154、通常ループは18、copyループは66とし、展開不足を無効化しない。
+
+今回の修正はC APIのIntent count検査を、状態保存とhealth観測の前に追加したもの。YAML側に検査があっても、C API呼出しが自動的に安全になるわけではない。通常Cテストでは5項目の上限+1とSIZE_MAXを拒否し、その後の有効Intentが処理できることも確認する。
+
 ## 作業環境の整理
 
 ソースは既存のsrc/include/examples/tests、生成物はout、ビルドは用途ごとのbuildディレクトリに分ける。古い生成物をソースの横へ残さず、必要な測定証拠だけを秘匿確認後にdocs/evaluationへ保存する。

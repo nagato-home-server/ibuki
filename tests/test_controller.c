@@ -1624,6 +1624,34 @@ static void test_evaluated_hysteresis_never_restores_excluded_path(void)
     }
 }
 
+static void test_c_api_rejects_oversized_intent_counts(void)
+{
+    for (size_t field = 0; field < 5; field++) {
+        for (size_t extreme = 0; extreme < 2; extreme++) {
+            en_vpp_mock_t vpp_mock = {0};
+            en_health_probe_mock_t health_mock = {0};
+            en_controller_t *controller = make_controller(&vpp_mock, &health_mock);
+            en_intent_t intent = base_intent(EN_SELECT_PRIORITY);
+            size_t limit = field == 0 ? EN_MAX_CANDIDATES :
+                field == 1 ? EN_MAX_COMPARISONS :
+                field == 4 ? EN_MAX_CAPABILITIES : EN_MAX_WAYPOINTS;
+            size_t value = extreme == 0 ? limit + 1 : (size_t)-1;
+            if (field == 0) intent.path_selection.candidate_count = value;
+            else if (field == 1) intent.path_selection.comparison_count = value;
+            else if (field == 2) intent.path_selection.constraints.forbidden_waypoint_count = value;
+            else if (field == 3) intent.path_selection.constraints.required_waypoint_count = value;
+            else intent.path_selection.constraints.required_capability_count = value;
+            en_reconcile_result_t result = {0};
+            ASSERT_TRUE(en_controller_submit_intent(controller, &intent, &result) == EN_ERR_INVALID_ARGUMENT);
+            intent = base_intent(EN_SELECT_EXPLICIT);
+            snprintf(intent.path_selection.path_id, sizeof(intent.path_selection.path_id), "%s", "path-direct");
+            ASSERT_TRUE(en_controller_submit_intent(controller, &intent, &result) == EN_ERR_NONE);
+            ASSERT_STREQ(result.selected_path, "path-direct");
+            en_controller_destroy(controller);
+        }
+    }
+}
+
 static void test_yaml_validation_rejects_unknown_tunnel(void)
 {
     en_yaml_config_t config = {0};
@@ -2125,6 +2153,7 @@ int main(void)
     test_hold_down_prevents_healthy_path_switch();
     test_evaluated_hysteresis_prevents_small_quality_switch();
     test_evaluated_hysteresis_never_restores_excluded_path();
+    test_c_api_rejects_oversized_intent_counts();
     test_yaml_config_loads_paths_and_intents();
     test_command_adapters_can_drive_controller_dry_run();
     test_command_adapter_vlan_acl_cleanup_dry_run();

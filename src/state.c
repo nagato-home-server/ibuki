@@ -35,11 +35,24 @@ void en_copy_id(char *dst, size_t dst_len, const char *src)
         return;
     }
     snprintf(dst, dst_len, "%s", src);
+    dst[dst_len - 1] = '\0';
 }
 
 bool en_streq(const char *left, const char *right)
 {
     return left != NULL && right != NULL && strcmp(left, right) == 0;
+}
+
+bool en_intent_counts_valid(const en_intent_t *intent)
+{
+    if (intent == NULL) return false;
+    const en_path_selection_t *selection = &intent->path_selection;
+    const en_path_constraints_t *constraints = &selection->constraints;
+    return selection->candidate_count <= EN_MAX_CANDIDATES &&
+        selection->comparison_count <= EN_MAX_COMPARISONS &&
+        constraints->forbidden_waypoint_count <= EN_MAX_WAYPOINTS &&
+        constraints->required_waypoint_count <= EN_MAX_WAYPOINTS &&
+        constraints->required_capability_count <= EN_MAX_CAPABILITIES;
 }
 
 size_t en_path_hop_count(const en_path_t *path)

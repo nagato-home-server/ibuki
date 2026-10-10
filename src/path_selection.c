@@ -19,6 +19,9 @@ en_error_code_t en_select_path(en_controller_t *controller, const en_intent_t *i
         return EN_ERR_INVALID_ARGUMENT;
     }
     memset(result, 0, sizeof(*result));
+    if (!en_intent_counts_valid(intent)) {
+        return EN_ERR_INVALID_ARGUMENT;
+    }
 
     const en_path_selection_t *selection = &intent->path_selection;
     char traffic_key[EN_MAX_TRAFFIC_KEY_LEN] = {0};

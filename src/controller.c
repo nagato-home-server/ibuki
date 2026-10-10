@@ -79,6 +79,9 @@ en_error_code_t en_controller_submit_intent(
     if (controller == NULL || intent == NULL || result == NULL) {
         return EN_ERR_INVALID_ARGUMENT;
     }
+    if (!en_intent_counts_valid(intent)) {
+        return EN_ERR_INVALID_ARGUMENT;
+    }
     char traffic_key[EN_MAX_TRAFFIC_KEY_LEN] = {0};
     en_make_traffic_key(&intent->traffic, traffic_key, sizeof(traffic_key));
     bool intent_updated = false;

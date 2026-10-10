@@ -57,6 +57,7 @@ YAML / JSONL
 | `en_now_ms` | なし -> `long long` | epochミリ秒のwall clock。Linuxは`gettimeofday`、WindowsはFILETIME。単調時計ではなく時刻補正の影響を受ける。 |
 | `en_copy_id` | 文字列 -> 固定長バッファ | `snprintf`で終端付きコピー。容量超過時は切り詰めるため、外部入力はYAML等の境界で先に長さを拒否する。 |
 | `en_streq` | 2文字列 -> `bool` | NULLを含む識別子比較を行う。 |
+| `en_intent_counts_valid` | Intent -> `bool` | 候補、比較項目、禁止/必須waypoint、必須capabilityの5個のcountを固定長配列の容量と照合する。NULLはfalse。C APIの状態保存・観測と内部選択に先立って使用する。 |
 | `en_path_hop_count` | Path -> hop数 | `waypoint_count + 1`を返す。実packetの測定hop数やsegment数ではない。 |
 | `en_find_path` | Controller, Path ID -> mutable Path | 内部状態を変更する処理用の検索関数。 |
 | `en_find_health` | Controller, Path ID -> health | Pathの最新測定値を検索する。 |
@@ -70,7 +71,7 @@ YAML / JSONL
 | `en_get_applied_since_ms` | Controller, traffic key -> 時刻 | 適用開始時刻を返す。 |
 | `en_set_applied_path` | Controller, traffic key, Path ID | 適用済みPathを更新し、時刻も更新する。 |
 | `en_controller_restore_applied_path` | Controller, traffic key, Path ID | 再起動復旧用に適用Pathを復元する。 |
-| `en_make_traffic_key` | Traffic selector -> バッファ | source/destination/VLAN/VRFを衝突しないキーへ変換する。 |
+| `en_make_traffic_key` | Traffic selector -> バッファ | source/destinationと、指定時はVLANをキーへ変換する。この関数はVRFをキーに含めない。 |
 | `en_controller_applied_path` | const Controller, traffic key -> Path ID | 読み取り専用の適用Path参照API。 |
 | `en_health_state_name` | health enum -> 文字列 | JSON・ログ向けの状態名を返す。 |
 | `en_transition_state_name` | transition enum -> 文字列 | 遷移状態名を返す。 |

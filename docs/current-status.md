@@ -32,6 +32,8 @@ CPU増設後の8 vCPU・メモリ8 GB条件でも各5回、計25ケースが成�
 
 ## 現行データパス
 
+2026-10-10にCBMC 6.11.0でCコアの境界検査を追加した。C APIから渡すIntentの候補数が上限を超えても拒否されない反例を確認し、候補・比較キー・必須/禁止waypoint・必須capabilityの5種類の件数を、状態保存・観測より前に検査するよう修正した。通常C試験には各上限+1とSIZE_MAXの10ケースを追加し、WSL CTest29件が成功した。最終版の5 harnessはすべてVERIFICATION SUCCESSFUL、runner終了値0を確認した。ローカル結果は`out/cbmc-core-complete/summary.json`。形式検査の前提・再実行方法は[共同作業ガイド](worker-guide.md#cbmcによるcコアの境界検査)を参照する。限定したharnessの結果であり、全プログラムの安全性やVM実パケットの再検証を意味しない。
+
 2026-10-10のZ3による追加デバッグで、Evaluatedのhysteresisが除外済みActive Pathを再選択する不具合を確認し修正した。閾値モデルから生成した反例を実Cへ投入し、制約違反・無効化・候補外・waypoint不足と正常境界の10ケース、およびWSL CTest29件を確認した。これは経路選択の追加回帰検証であり、既存VM実測を修正版で再取得したものではない。C全体や固定長配列のメモリ安全性の形式証明ではない。
 
 LAN端末は独立した `client-a`／`client-b` namespace。VPP LAN gatewayは `10.10.1.1`／`10.10.2.1`、clientは `10.10.1.2`／`10.10.2.2`。VPPとcharonはsite namespaceで同居し、node別CLI socketへ計画を適用する。

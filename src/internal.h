@@ -37,6 +37,7 @@ struct en_controller {
 long long en_now_ms(void);
 void en_copy_id(char *dst, size_t dst_len, const char *src);
 bool en_streq(const char *left, const char *right);
+bool en_intent_counts_valid(const en_intent_t *intent);
 void en_audit_append(en_controller_t *controller, const char *event_type, const char *message, const char *ref_id);
 void en_error_append(en_controller_t *controller, en_error_code_t code, const char *message);
 en_path_t *en_find_path(en_controller_t *controller, const char *path_id);

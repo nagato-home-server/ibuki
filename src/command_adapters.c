@@ -489,7 +489,7 @@ static en_error_code_t remove_xfrm_block(en_strongswan_command_ctx_t *ctx, const
     for (size_t index = 0; index < ctx->xfrm_block_count; index++) {
         if (strcmp(ctx->xfrm_block_tunnels[index], tunnel->tunnel_id) != 0) continue;
         for (size_t next = index + 1; next < ctx->xfrm_block_count; next++) {
-            snprintf(ctx->xfrm_block_tunnels[next - 1], EN_MAX_ID_LEN, "%s", ctx->xfrm_block_tunnels[next]);
+            memmove(ctx->xfrm_block_tunnels[next - 1], ctx->xfrm_block_tunnels[next], EN_MAX_ID_LEN);
         }
         ctx->xfrm_block_count--;
         break;
@@ -939,8 +939,8 @@ static void forget_active_path(en_vpp_command_ctx_t *ctx, const char *traffic_ke
     for (size_t i = 0; i < ctx->active_count; i++) {
         if (strcmp(ctx->traffic_keys[i], traffic_key) == 0 && strcmp(ctx->active_paths[i], path_id) == 0) {
             for (size_t j = i + 1; j < ctx->active_count; j++) {
-                snprintf(ctx->traffic_keys[j - 1], sizeof(ctx->traffic_keys[j - 1]), "%s", ctx->traffic_keys[j]);
-                snprintf(ctx->active_paths[j - 1], sizeof(ctx->active_paths[j - 1]), "%s", ctx->active_paths[j]);
+                memmove(ctx->traffic_keys[j - 1], ctx->traffic_keys[j], sizeof(ctx->traffic_keys[j - 1]));
+                memmove(ctx->active_paths[j - 1], ctx->active_paths[j], sizeof(ctx->active_paths[j - 1]));
                 ctx->active_path_objects[j - 1] = ctx->active_path_objects[j];
             }
             ctx->active_count--;

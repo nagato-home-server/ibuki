@@ -13,6 +13,7 @@
 #include "eventnet/yaml_config.h"
 
 #include <stdio.h>
+#include <limits.h>
 #include <stdlib.h>
 #include <string.h>
 #if !defined(_WIN32)
@@ -1652,6 +1653,159 @@ static void test_c_api_rejects_oversized_intent_counts(void)
     }
 }
 
+static void test_parser_security_boundaries(void)
+{
+    const char *timestamp_cases[] = {"9223372036854775807", "9007199254740993", "0", "42.0",
+        "9223372036854775808", "9223372036854775808.0", "-1", "0.5"};
+    const long long expected[] = {LLONG_MAX, 9007199254740993LL, 0, 42};
+    char json[512];
+    char error[256];
+    en_path_health_t health;
+    for (size_t index = 0; index < sizeof(timestamp_cases) / sizeof(timestamp_cases[0]); index++) {
+        snprintf(json, sizeof(json), "{\"schema\":\"ibuki.event.path.v1\",\"path_id\":\"p\",\"event\":\"path_failed\",\"timestamp_ms\":%s}", timestamp_cases[index]);
+        en_error_code_t result = en_telemetry_parse_json_line(json, &health, error, sizeof(error));
+        if (index < sizeof(expected) / sizeof(expected[0])) {
+            ASSERT_TRUE(result == EN_ERR_NONE);
+            ASSERT_TRUE(health.last_updated_ms == expected[index]);
+        } else ASSERT_TRUE(result == EN_ERR_INVALID_ARGUMENT);
+    }
+    for (size_t length = 63; length <= 65; length++) {
+        char identifier[66];
+        memset(identifier, 'a', length);
+        identifier[length] = '\0';
+        snprintf(json, sizeof(json), "{\"schema\":\"ibuki.event.path.v1\",\"path_id\":\"%s\",\"event\":\"path_failed\",\"timestamp_ms\":0}", identifier);
+        ASSERT_TRUE(en_telemetry_parse_json_line(json, &health, error, sizeof(error)) ==
+            (length < EN_MAX_ID_LEN ? EN_ERR_NONE : EN_ERR_INVALID_ARGUMENT));
+    }
+    ASSERT_TRUE(en_telemetry_parse_json_line("{\"schema\":\"ibuki.event.path.v1\",\"path_id\":\"p\\u0000suffix\",\"event\":\"path_failed\",\"timestamp_ms\":0}",
+        &health, error, sizeof(error)) == EN_ERR_INVALID_ARGUMENT);
+    en_strongswan_sa_observation_t sa;
+    ASSERT_TRUE(en_strongswan_parse_list_sas("t:\n  notstate: INSTALLED\n", "t", &sa, error, sizeof(error)) == EN_ERR_NOT_FOUND);
+    ASSERT_TRUE(en_strongswan_parse_list_sas("t:\r\n  state: INSTALLED\r\n", "t", &sa, error, sizeof(error)) == EN_ERR_NONE);
+    en_vpp_route_observation_t route;
+    ASSERT_TRUE(en_vpp_parse_show_ip_fib_in_table("ipv4-VRF:100garbage\n10.10.2.0/24\n  unicast via 203.0.113.9 ipsec0\n",
+        "10.10.2.0/24", 100, &route, error, sizeof(error)) == EN_ERR_INVALID_ARGUMENT);
+    ASSERT_TRUE(en_vpp_parse_show_ip_fib_in_table("ipv4-VRF:100\r\n10.10.2.0/24\r\n  unicast via 203.0.113.9 ipsec0\r\n",
+        "10.10.2.0/24", 100, &route, error, sizeof(error)) == EN_ERR_NONE);
+    ASSERT_STREQ(route.interface_name, "ipsec0");
+    char overlong[600];
+    memset(overlong, 'x', 511);
+    strcpy(overlong + 511, "10.10.2.0/24\n  unicast via 203.0.113.9 ipsec0\n");
+    ASSERT_TRUE(en_vpp_parse_show_ip_fib(overlong, "10.10.2.0/24", &route, error, sizeof(error)) == EN_ERR_INVALID_ARGUMENT);
+    strcpy(overlong, "t:\n");
+    memset(overlong + 3, ' ', 511);
+    strcpy(overlong + 514, "  state: INSTALLED\n");
+    ASSERT_TRUE(en_strongswan_parse_list_sas(overlong, "t", &sa, error, sizeof(error)) == EN_ERR_INVALID_ARGUMENT);
+}
+
+static void test_yaml_parser_rejects_malformed_contexts(void)
+{
+    const char *filename = "eventnet-test-parser-boundaries.yaml";
+    const char *malformed[] = {
+        "intents:\n  path_selection:\n    mode: priority\n",
+        "intents:\n  constraints:\n    forbidden_waypoints:\n      - n\n",
+        "intents:\n  transition:\n    strategy: immediate\n",
+        "intents:\n  fallback:\n    enabled: true\n",
+        "intents:\n  traffic:\n    source: n\n",
+        "intents:\n  - id: i\n    block_non_ipsec: tru\n",
+        "intents:\n  - id: i\n    deny_unmatched_vlan: typo\n",
+        "intents:\n  - id: i\n    fallback:\n      enabled: enabled\n"
+    };
+    en_yaml_config_t config;
+    char error[256];
+    for (size_t index = 0; index < sizeof(malformed) / sizeof(malformed[0]); index++) {
+        FILE *file = fopen(filename, "w");
+        ASSERT_TRUE(file != NULL);
+        fputs(malformed[index], file);
+        fclose(file);
+        ASSERT_TRUE(en_yaml_config_load_file(filename, &config, error, sizeof(error)) == EN_ERR_INVALID_ARGUMENT);
+    }
+    FILE *file = fopen(filename, "w");
+    ASSERT_TRUE(file != NULL);
+    fputc('#', file);
+    for (size_t index = 0; index < 510; index++) fputc('x', file);
+    fputs("    route_next_hop: 198.51.100.9\n", file);
+    fclose(file);
+    ASSERT_TRUE(en_yaml_config_load_file(filename, &config, error, sizeof(error)) == EN_ERR_INVALID_ARGUMENT);
+    file = fopen(filename, "w");
+    ASSERT_TRUE(file != NULL);
+    fputs("paths:\n  - id: p\n    source: a\n    destination: b\n    waypoints:\n      - a\n"
+        "    route_destination_prefix: 10.0.0.0/24\n    route_next_hop: 203.0.113.1\n"
+        "intents:\n  - id: i\n    path_selection:\n      mode: explicit\n      path_id: p\n"
+        "      constraints:\n        required_waypoints:\n          - a\n        max_rtt_ms: 5\n"
+        "        forbidden_waypoints:\n          - c\n        max_packet_loss_percent: 1\n", file);
+    fclose(file);
+    en_error_code_t result = en_yaml_config_load_file(filename, &config, error, sizeof(error));
+    if (result != EN_ERR_NONE) fprintf(stderr, "YAML dedentation error: %s\n", error);
+    ASSERT_TRUE(result == EN_ERR_NONE);
+    ASSERT_TRUE(config.intents[0].path_selection.constraints.has_max_rtt_ms);
+    ASSERT_TRUE(config.intents[0].path_selection.constraints.max_rtt_ms == 5.0);
+    ASSERT_TRUE(config.intents[0].path_selection.constraints.has_max_packet_loss_percent);
+    remove(filename);
+}
+
+static void test_public_model_count_guards(void)
+{
+    en_path_t demo_paths[3];
+    ASSERT_TRUE(en_initial_demo_paths(demo_paths, (size_t)-1) == 3);
+    ASSERT_TRUE(demo_paths[1].segment_count == 1);
+    en_yaml_config_t config = {0};
+    char error[128];
+    config.path_count = EN_MAX_PATHS + 1;
+    ASSERT_TRUE(en_yaml_config_validate(&config, error, sizeof(error)) == EN_ERR_INVALID_ARGUMENT);
+    config.path_count = 1;
+    config.paths[0].segment_count = EN_MAX_SEGMENTS + 1;
+    ASSERT_TRUE(en_yaml_config_validate(&config, error, sizeof(error)) == EN_ERR_INVALID_ARGUMENT);
+    en_strongswan_adapter_t swan = {0};
+    en_vpp_adapter_t vpp = {0};
+    en_health_probe_t probe = {0};
+    ASSERT_TRUE(en_controller_create(config.paths, 1, swan, vpp, probe) == NULL);
+    config.paths[0].segment_count = 0;
+    ASSERT_TRUE(en_controller_create_with_nodes_and_tunnels(NULL, 1, config.paths, 1, NULL, 0, swan, vpp, probe) == NULL);
+    ASSERT_TRUE(en_controller_create_with_tunnels(config.paths, 1, NULL, 1, swan, vpp, probe) == NULL);
+    en_apply_plan_t plan = {0};
+    plan.command_count = EN_MAX_PLAN_COMMANDS + 1;
+    ASSERT_TRUE(en_apply_plan_run(&plan, true) == EN_ERR_INVALID_ARGUMENT);
+    ASSERT_TRUE(en_apply_plan_write_shell_script(&plan, "must-not-create.sh") == EN_ERR_INVALID_ARGUMENT);
+    for (size_t field = 0; field < 5; field++) {
+        for (size_t extreme = 0; extreme < 2; extreme++) {
+            memset(&config, 0, sizeof(config));
+            size_t limit = field == 0 ? EN_MAX_NODES : field == 1 ? EN_MAX_PATHS :
+                field == 2 ? EN_MAX_TUNNELS : field == 3 ? EN_MAX_CANDIDATES : EN_MAX_VPP_EDGES;
+            size_t count = extreme == 0 ? limit + 1 : (size_t)-1;
+            if (field == 0) config.node_count = count;
+            else if (field == 1) config.path_count = count;
+            else if (field == 2) config.tunnel_count = count;
+            else if (field == 3) config.intent_count = count;
+            else config.vpp_edge_count = count;
+            ASSERT_TRUE(en_yaml_config_validate(&config, error, sizeof(error)) == EN_ERR_INVALID_ARGUMENT);
+        }
+    }
+    for (size_t field = 0; field < 3; field++) {
+        memset(&config, 0, sizeof(config));
+        config.path_count = 1;
+        if (field == 0) config.paths[0].waypoint_count = EN_MAX_WAYPOINTS + 1;
+        else if (field == 1) config.paths[0].segment_count = EN_MAX_SEGMENTS + 1;
+        else config.paths[0].route_count = EN_MAX_ROUTES + 1;
+        ASSERT_TRUE(en_controller_create(config.paths, 1, swan, vpp, probe) == NULL);
+        ASSERT_TRUE(en_yaml_config_validate(&config, error, sizeof(error)) == EN_ERR_INVALID_ARGUMENT);
+    }
+    for (size_t field = 0; field < 5; field++) {
+        en_vpp_mock_t vpp_mock = {0};
+        en_health_probe_mock_t health_mock = {0};
+        en_controller_t *controller = make_controller(&vpp_mock, &health_mock);
+        en_intent_t intent = base_intent(EN_SELECT_PRIORITY);
+        if (field == 0) intent.transition.retry_count = -1;
+        else if (field == 1) intent.transition.retry_backoff_ms = -1;
+        else if (field == 2) intent.transition.max_pause_ms = -1;
+        else if (field == 3) intent.transition.drain_timeout_ms = -1;
+        else intent.transition.timeout_ms = -1;
+        en_reconcile_result_t result;
+        ASSERT_TRUE(en_controller_submit_intent(controller, &intent, &result) == EN_ERR_INVALID_ARGUMENT);
+        en_controller_destroy(controller);
+    }
+}
+
 static void test_yaml_validation_rejects_unknown_tunnel(void)
 {
     en_yaml_config_t config = {0};
@@ -2154,6 +2308,9 @@ int main(void)
     test_evaluated_hysteresis_prevents_small_quality_switch();
     test_evaluated_hysteresis_never_restores_excluded_path();
     test_c_api_rejects_oversized_intent_counts();
+    test_parser_security_boundaries();
+    test_yaml_parser_rejects_malformed_contexts();
+    test_public_model_count_guards();
     test_yaml_config_loads_paths_and_intents();
     test_command_adapters_can_drive_controller_dry_run();
     test_command_adapter_vlan_acl_cleanup_dry_run();

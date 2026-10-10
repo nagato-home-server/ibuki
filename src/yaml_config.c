@@ -1,4 +1,5 @@
 #include "eventnet/yaml_config.h"
+#include "internal.h"
 
 #include <ctype.h>
 #include <errno.h>
@@ -40,6 +41,8 @@ typedef enum {
 typedef struct {
     yaml_top_section_t top;
     yaml_context_t context;
+    yaml_context_t list_parent;
+    int list_indent;
     en_path_t *path;
     en_node_t *node;
     en_segment_t *segment;
@@ -70,7 +73,7 @@ static en_error_code_t parse_fallback_kv(yaml_parse_state_t *state, const char *
 static en_path_selection_mode_t parse_selection_mode(const char *value, bool *ok);
 static en_transition_strategy_t parse_transition_strategy(const char *value, bool *ok);
 static en_comparison_key_t parse_comparison_key(const char *value, bool *ok);
-static bool parse_bool(const char *value);
+static bool parse_bool(const char *value, bool *output);
 static void copy_id(char *dst, size_t dst_len, const char *src);
 static void copy_address_without_cidr(char *dst, size_t dst_len, const char *src);
 static void yaml_normalize(en_yaml_config_t *config);
@@ -84,19 +87,23 @@ static const en_tunnel_t *yaml_find_tunnel(const en_yaml_config_t *config, const
 static bool valid_config_token(const char *value)
 {
     if (value == NULL || value[0] == '\0') return false;
-    for (const unsigned char *cursor = (const unsigned char *)value; *cursor != '\0'; cursor++) {
-        if (!(isalnum(*cursor) || *cursor == '/' || *cursor == '.' || *cursor == '_' || *cursor == '-' || *cursor == ':')) return false;
+    for (size_t index = 0; index < EN_MAX_ID_LEN; index++) {
+        unsigned char character = (unsigned char)value[index];
+        if (character == '\0') return true;
+        if (!(isalnum(character) || character == '/' || character == '.' || character == '_' || character == '-' || character == ':')) return false;
     }
-    return true;
+    return false;
 }
 
 static bool valid_secret(const char *value)
 {
     if (value == NULL || value[0] == '\0') return true;
-    for (const unsigned char *cursor = (const unsigned char *)value; *cursor != '\0'; cursor++) {
-        if (*cursor < 33 || *cursor > 126 || *cursor == '"' || *cursor == '\\') return false;
+    for (size_t index = 0; index < EN_MAX_ID_LEN; index++) {
+        unsigned char character = (unsigned char)value[index];
+        if (character == '\0') return true;
+        if (character < 33 || character > 126 || character == '"' || character == '\\') return false;
     }
-    return true;
+    return false;
 }
 
 static int parse_integer(const char *value)
@@ -121,6 +128,12 @@ static double parse_number(const char *value)
     return parsed;
 }
 
+static bool config_counts_valid(size_t node_count, size_t path_count, size_t tunnel_count, size_t intent_count, size_t vpp_edge_count)
+{
+    return node_count <= EN_MAX_NODES && path_count <= EN_MAX_PATHS && tunnel_count <= EN_MAX_TUNNELS &&
+        intent_count <= EN_MAX_CANDIDATES && vpp_edge_count <= EN_MAX_VPP_EDGES;
+}
+
 en_error_code_t en_yaml_config_load_file(const char *filename, en_yaml_config_t *config, char *error, size_t error_len)
 {
     if (filename == NULL || config == NULL) {
@@ -140,6 +153,12 @@ en_error_code_t en_yaml_config_load_file(const char *filename, en_yaml_config_t 
     size_t line_no = 0;
     while (fgets(line, sizeof(line), file) != NULL) {
         line_no++;
+        size_t length = strlen(line);
+        if (length == sizeof(line) - 1 && line[length - 1] != '\n') {
+            set_error(error, error_len, line_no, "YAML physical line exceeds capacity");
+            fclose(file);
+            return EN_ERR_INVALID_ARGUMENT;
+        }
         en_error_code_t err = parse_line(config, &state, line, line_no, error, error_len);
         if (err != EN_ERR_NONE) {
             fclose(file);
@@ -147,6 +166,11 @@ en_error_code_t en_yaml_config_load_file(const char *filename, en_yaml_config_t 
         }
     }
 
+    if (ferror(file)) {
+        fclose(file);
+        set_error(error, error_len, line_no, "failed to read YAML file");
+        return EN_ERR_STATE_CONFLICT;
+    }
     fclose(file);
     yaml_normalize(config);
     return en_yaml_config_validate(config, error, error_len);
@@ -157,6 +181,34 @@ en_error_code_t en_yaml_config_validate(const en_yaml_config_t *config, char *er
     if (config == NULL) {
         set_error(error, error_len, 0, "config is null");
         return EN_ERR_INVALID_ARGUMENT;
+    }
+    if (!config_counts_valid(config->node_count, config->path_count, config->tunnel_count, config->intent_count, config->vpp_edge_count)) {
+        set_error(error, error_len, 0, "config count exceeds capacity");
+        return EN_ERR_INVALID_ARGUMENT;
+    }
+    for (size_t index = 0; index < config->node_count; index++) {
+        if (config->nodes[index].endpoint_count > EN_MAX_ENDPOINTS || config->nodes[index].capability_count > EN_MAX_CAPABILITIES) {
+            set_error(error, error_len, 0, "node count exceeds capacity");
+            return EN_ERR_INVALID_ARGUMENT;
+        }
+    }
+    for (size_t index = 0; index < config->path_count; index++) {
+        if (!en_path_counts_valid(&config->paths[index])) {
+            set_error(error, error_len, 0, "path count exceeds capacity");
+            return EN_ERR_INVALID_ARGUMENT;
+        }
+    }
+    for (size_t index = 0; index < config->intent_count; index++) {
+        if (!en_intent_counts_valid(&config->intents[index])) {
+            set_error(error, error_len, 0, "intent count exceeds capacity");
+            return EN_ERR_INVALID_ARGUMENT;
+        }
+    }
+    for (size_t index = 0; index < config->vpp_edge_count; index++) {
+        if (config->vpp_edges[index].allowed_vlan_count > EN_MAX_ALLOWED_VLANS) {
+            set_error(error, error_len, 0, "VLAN count exceeds capacity");
+            return EN_ERR_INVALID_ARGUMENT;
+        }
     }
     if (config->path_count == 0) {
         set_error(error, error_len, 0, "at least one path is required");
@@ -830,6 +882,15 @@ static en_error_code_t parse_line(en_yaml_config_t *config, yaml_parse_state_t *
     }
 
     if (state->top == YAML_SECTION_INTENTS) {
+        if (state->intent == NULL) {
+            set_error(error, error_len, line_no, "intent field without intent item");
+            return EN_ERR_INVALID_ARGUMENT;
+        }
+        if ((state->context == YAML_CONTEXT_INTENT_CANDIDATES || state->context == YAML_CONTEXT_INTENT_COMPARISON_ORDER ||
+             state->context == YAML_CONTEXT_INTENT_FORBIDDEN_WAYPOINTS || state->context == YAML_CONTEXT_INTENT_REQUIRED_WAYPOINTS ||
+             state->context == YAML_CONTEXT_INTENT_REQUIRED_CAPABILITIES) && indent <= state->list_indent) {
+            state->context = state->list_parent;
+        }
         if (strcmp(key, "id") == 0 || strcmp(key, "intent_id") == 0 || strcmp(key, "block_non_ipsec") == 0 || strcmp(key, "deny_unmatched_vlan") == 0) {
             return parse_intent_kv(state, key, value, error, error_len, line_no);
         }
@@ -842,6 +903,8 @@ static en_error_code_t parse_line(en_yaml_config_t *config, yaml_parse_state_t *
             return EN_ERR_NONE;
         }
         if (strcmp(key, "candidates") == 0) {
+            state->list_parent = YAML_CONTEXT_INTENT_SELECTION;
+            state->list_indent = indent;
             state->context = YAML_CONTEXT_INTENT_CANDIDATES;
             return EN_ERR_NONE;
         }
@@ -850,6 +913,8 @@ static en_error_code_t parse_line(en_yaml_config_t *config, yaml_parse_state_t *
             return EN_ERR_NONE;
         }
         if (strcmp(key, "comparison_order") == 0) {
+            state->list_parent = YAML_CONTEXT_INTENT_SELECTION;
+            state->list_indent = indent;
             state->context = YAML_CONTEXT_INTENT_COMPARISON_ORDER;
             return EN_ERR_NONE;
         }
@@ -869,14 +934,20 @@ static en_error_code_t parse_line(en_yaml_config_t *config, yaml_parse_state_t *
         }
         if (state->context == YAML_CONTEXT_INTENT_CONSTRAINTS) {
             if (strcmp(key, "forbidden_waypoints") == 0) {
+                state->list_parent = YAML_CONTEXT_INTENT_CONSTRAINTS;
+                state->list_indent = indent;
                 state->context = YAML_CONTEXT_INTENT_FORBIDDEN_WAYPOINTS;
                 return EN_ERR_NONE;
             }
             if (strcmp(key, "required_waypoints") == 0) {
+                state->list_parent = YAML_CONTEXT_INTENT_CONSTRAINTS;
+                state->list_indent = indent;
                 state->context = YAML_CONTEXT_INTENT_REQUIRED_WAYPOINTS;
                 return EN_ERR_NONE;
             }
             if (strcmp(key, "required_capabilities") == 0 || strcmp(key, "capabilities") == 0) {
+                state->list_parent = YAML_CONTEXT_INTENT_CONSTRAINTS;
+                state->list_indent = indent;
                 state->context = YAML_CONTEXT_INTENT_REQUIRED_CAPABILITIES;
                 return EN_ERR_NONE;
             }
@@ -1109,9 +1180,9 @@ static en_error_code_t parse_intent_kv(yaml_parse_state_t *state, const char *ke
     if (strcmp(key, "id") == 0 || strcmp(key, "intent_id") == 0) {
         copy_id(state->intent->intent_id, sizeof(state->intent->intent_id), value);
     } else if (strcmp(key, "block_non_ipsec") == 0) {
-        state->intent->block_non_ipsec = parse_bool(value);
+        if (!parse_bool(value, &state->intent->block_non_ipsec)) return EN_ERR_INVALID_ARGUMENT;
     } else if (strcmp(key, "deny_unmatched_vlan") == 0) {
-        state->intent->deny_unmatched_vlan = parse_bool(value);
+        if (!parse_bool(value, &state->intent->deny_unmatched_vlan)) return EN_ERR_INVALID_ARGUMENT;
     } else if (strcmp(key, "source") == 0) {
         copy_id(state->intent->traffic.source, sizeof(state->intent->traffic.source), value);
     } else if (strcmp(key, "destination") == 0) {
@@ -1189,7 +1260,7 @@ static en_error_code_t parse_transition_kv(yaml_parse_state_t *state, const char
 static en_error_code_t parse_fallback_kv(yaml_parse_state_t *state, const char *key, const char *value)
 {
     if (strcmp(key, "enabled") == 0) {
-        state->intent->fallback.enabled = parse_bool(value);
+        if (!parse_bool(value, &state->intent->fallback.enabled)) return EN_ERR_INVALID_ARGUMENT;
     } else if (strcmp(key, "path_id") == 0) {
         copy_id(state->intent->fallback.path_id, sizeof(state->intent->fallback.path_id), value);
     }
@@ -1228,9 +1299,17 @@ static en_comparison_key_t parse_comparison_key(const char *value, bool *ok)
     return EN_COMPARE_PATH_ID;
 }
 
-static bool parse_bool(const char *value)
+static bool parse_bool(const char *value, bool *output)
 {
-    return strcmp(value, "true") == 0 || strcmp(value, "yes") == 0 || strcmp(value, "1") == 0;
+    if (strcmp(value, "true") == 0 || strcmp(value, "yes") == 0 || strcmp(value, "1") == 0) {
+        *output = true;
+        return true;
+    }
+    if (strcmp(value, "false") == 0 || strcmp(value, "no") == 0 || strcmp(value, "0") == 0) {
+        *output = false;
+        return true;
+    }
+    return false;
 }
 
 static void set_error(char *error, size_t error_len, size_t line_no, const char *message)

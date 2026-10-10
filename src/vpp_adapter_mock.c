@@ -51,8 +51,8 @@ static en_error_code_t remove_path(void *ctx, const char *traffic_key, const en_
     for (size_t i = 0; i < mock->active_count; i++) {
         if (strcmp(mock->traffic_keys[i], traffic_key) == 0 && strcmp(mock->active_paths[i], path->path_id) == 0) {
             for (size_t j = i + 1; j < mock->active_count; j++) {
-                snprintf(mock->traffic_keys[j - 1], sizeof(mock->traffic_keys[j - 1]), "%s", mock->traffic_keys[j]);
-                snprintf(mock->active_paths[j - 1], sizeof(mock->active_paths[j - 1]), "%s", mock->active_paths[j]);
+                memmove(mock->traffic_keys[j - 1], mock->traffic_keys[j], sizeof(mock->traffic_keys[j - 1]));
+                memmove(mock->active_paths[j - 1], mock->active_paths[j], sizeof(mock->active_paths[j - 1]));
             }
             mock->active_count--;
             return EN_ERR_NONE;

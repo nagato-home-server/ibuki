@@ -642,6 +642,55 @@ CBMCの標準`vsnprintf`モデルは出力文字を非決定的に扱い、実li
 
 今回の修正はC APIのIntent count検査を、状態保存とhealth観測の前に追加したもの。YAML側に検査があっても、C API呼出しが自動的に安全になるわけではない。通常Cテストでは5項目の上限+1とSIZE_MAXを拒否し、その後の有効Intentが処理できることも確認する。
 
+### 全コードへの検査拡張
+
+「全コード」はファイル単位の検査対象を漏らさないことと、すべての実行の形式証明を区別する。追加したrunnerはsrc・examples・tests・include・scriptsと同梱yyjsonを列挙し、SHA256、関数名の簡易抽出、実行した検査と未証明状態をJSONへ保存する。関数名の抽出は構文解析器による完全なcall graphではない。
+
+```sh
+python3 tests/formal/check_project.py --cbmc cbmc --vici-include ../oss/strongswan/src/libcharon/plugins/vici
+```
+
+`--cc`、`--out-dir`、`--timeout`を指定できる。`--analyzer clang --cc clang`でClang analyzer、`--files`でファイルを絞って再検査できる。指定外のファイルを検査済みにしない。`--skip-cbmc`は静的検査だけの再実行であり、形式検査の合格を意味しない。外部libvici.hは実物のヘッダーを指定し、ダミー宣言で依存を隠さない。libviciの静的コンパイルはリンク・daemon接続の成功と異なる。
+
+- C: GCC `-fanalyzer`で各translation unitを検査する。公開ヘッダーは単独includeの構文検査も行う。
+- shell/Python: `sh -n`とPython ASTで構文検査する。ネットワーク副作用やroot権限の実行を形式証明しない。
+- `review`は警告が残る状態、`incomplete`は時間切れ・ツール不足・途中のソース変更。どちらも全成功とは扱わない。
+- runnerとは別にASan/UBSan付きCMakeビルドとCTestを行う。実行した入力に対する検査であり、未実行分岐の証明ではない。
+
+CBMCはコア5条件に以下13条件を追加した。すべて実コードを対象とするが、モジュール丸ごとの証明ではない。
+
+| 条件 | 前提・確認範囲 |
+| --- | --- |
+| `audit_capacity` / `error_capacity` | 満杯とSIZE_MAXの件数で追記しない。空きがある場合の追記や時計取得は対象外 |
+| `swan_mock` | 任意のTunnel構造体でmock ensure/removeの状態とNULL拒否。実strongSwanではない |
+| `vpp_failure` | 空のmockでfail-next-updateを1回消費し、登録を変更しない。実VPPではない |
+| `command_rejection` | `x;y`というchild IDを容量0〜8で拒否。任意のコマンド全体の安全性証明ではない |
+| `transport_arguments` | 未接続・API無効ビルドで引数不足とdispatch拒否。VAPI有効分岐は対象外 |
+| `observer_empty` | 空のSA/FIB/interface出力でNOT_FOUNDを返す。非空出力全体は対象外 |
+| `path_count_predicate` | 任意のsize_tのwaypoint/segment/route件数とNULL拒否 |
+| `yaml_counts` | 実validatorが使用する外側5件数の判定関数を任意size_tで検査する。public validator全体は対象外で、入口の上限+1/SIZE_MAX拒否は通常C試験で確認 |
+| `plan_counts` | command件数上限+1、rollback件数SIZE_MAXを実行・書出し前に拒否 |
+| `yaml_context` | Intentなしのpath_selectionキーを拒否。実parse_lineを同じtranslation unitで検査 |
+| `yaml_dedent` | required_waypointsから同じ深さのforbidden_waypointsへ戻ると制約list contextを復元する。max_rtt_msの数値解釈は実Cの回帰試験で確認し、strtodを形式証明したとはしない |
+| `yaml_boolean` | truを拒否し、false/yesを正しく解釈する固定例 |
+
+YAML条件の展開上限は66、他の条件は既存値を使用する。glibcのctypeマクロは`__NO_CTYPE=1`で関数呼出しへ切り替え、CBMCの標準ctypeモデルを使用する。locale依存の全文字分類を実libcと同一とする証明ではない。展開不足・missing bodyをコードの脆弱性と混同せず、未定義関数を無条件成功のstubに置き換えない。各ケースの実行引数、ソースとヘッダーのSHA256、途中変更の有無を保存する。
+
+残る形式検証範囲はTransitionの全失敗位置、常駐daemonの長時間状態、yyjsonの全入力・割当失敗、任意の文字列とNUL契約、POSIXプロセス/ファイル/時刻、Windows固有分岐、VICI/VAPI有効分岐、外部strongSwan/VPPとkernelの実装。これらを現在のharness結果で検証済みとはしない。
+
+2026-10-10の記録は次のように区別する。`out`はローカル証拠であり、Gitには含めない。
+
+| 証拠 | 確認結果 |
+| --- | --- |
+| `out/cbmc-project-current/summary.json` | 現在の入力ソース・ヘッダーSHA256に一致する18条件が成功。14条件の一括結果とYAML4条件の再実行を集約し、途中変更の結果は除外 |
+| `out/project-static-confirmed/summary.json` | 112ファイルの台帳、104 pass・1 review・1 incomplete。後続変更は下記再検査と合わせて読む |
+| `out/project-yyjson-confirmed/summary.json` | GCCで時間切れとなったyyjsonをClang analyzerで再検査し成功 |
+| `out/project-final-rechecks-v2/summary.json` | 最後に変更したYAMLとPython runnerの再検査成功 |
+| `out/project-sanitizers-final-tests.log` | Linux Clang ASan/UBSan・leak検査付きCTest29/29成功 |
+| `out/project-windows-final-tests.log` | Windows MSVC CTest28/28成功 |
+
+Agentの子プロセスdup2周辺のGCC FD leak警告2件は未解決reviewとして保持する。警告だけで実際の漏洩と断定せず、警告を抑制して全成功にもしない。件数は通常C translation unit35、公開ヘッダー単独include16、shell構文49、Python構文6。形式harness C4個は通常C静的解析と別の検査である。C unit内に追加した多数の入力パターンと、CTest登録件数は異なる。
+
 ## 作業環境の整理
 
 ソースは既存のsrc/include/examples/tests、生成物はout、ビルドは用途ごとのbuildディレクトリに分ける。古い生成物をソースの横へ残さず、必要な測定証拠だけを秘匿確認後にdocs/evaluationへ保存する。

@@ -60,6 +60,18 @@ size_t en_path_hop_count(const en_path_t *path)
     return path == NULL ? 0 : path->waypoint_count + 1;
 }
 
+bool en_path_counts_valid(const en_path_t *path)
+{
+    return path != NULL && path->waypoint_count <= EN_MAX_WAYPOINTS &&
+        path->segment_count <= EN_MAX_SEGMENTS && path->route_count <= EN_MAX_ROUTES;
+}
+
+bool en_transition_policy_valid(const en_transition_policy_t *policy)
+{
+    return policy != NULL && policy->retry_count >= 0 && policy->retry_backoff_ms >= 0 &&
+        policy->max_pause_ms >= 0 && policy->drain_timeout_ms >= 0 && policy->timeout_ms >= 0;
+}
+
 en_path_t *en_find_path(en_controller_t *controller, const char *path_id)
 {
     if (controller == NULL || path_id == NULL) {

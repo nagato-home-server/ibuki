@@ -37,6 +37,7 @@ en_error_code_t en_transition_path(en_controller_t *controller, const en_intent_
     if (controller == NULL || intent == NULL || target_path == NULL) {
         return EN_ERR_INVALID_ARGUMENT;
     }
+    if (!en_path_counts_valid(target_path) || !en_transition_policy_valid(&intent->transition)) return EN_ERR_INVALID_ARGUMENT;
 
     char traffic_key[EN_MAX_TRAFFIC_KEY_LEN] = {0};
     en_make_traffic_key(&intent->traffic, traffic_key, sizeof(traffic_key));

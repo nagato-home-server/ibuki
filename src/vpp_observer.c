@@ -87,13 +87,23 @@ en_error_code_t en_vpp_parse_show_ip_fib_in_table(const char *output, const char
     while (*cursor != '\0') {
         size_t length = 0;
         while (cursor[length] != '\0' && cursor[length] != '\n' && length + 1 < sizeof(line)) length++;
+        if (cursor[length] != '\0' && cursor[length] != '\n') {
+            set_error(error, error_len, "VPP output line exceeds capacity");
+            return EN_ERR_INVALID_ARGUMENT;
+        }
         memcpy(line, cursor, length);
         line[length] = '\0';
+        if (length > 0 && line[length - 1] == '\r') line[length - 1] = '\0';
         const char *vrf_marker = strstr(line, "ipv4-VRF:");
         if (vrf_marker != NULL) {
             char *end = NULL;
             long parsed_table = strtol(vrf_marker + strlen("ipv4-VRF:"), &end, 10);
-            if (end != vrf_marker + strlen("ipv4-VRF:") && parsed_table >= 0 && parsed_table <= INT_MAX) current_table = (int)parsed_table;
+            if (end == vrf_marker + strlen("ipv4-VRF:") || parsed_table < 0 || parsed_table > INT_MAX ||
+                (*end != '\0' && *end != ',' && !isspace((unsigned char)*end))) {
+                set_error(error, error_len, "invalid VPP table identifier");
+                return EN_ERR_INVALID_ARGUMENT;
+            }
+            current_table = (int)parsed_table;
         }
         if (route_header(line, destination_prefix) && (table_id < 0 || current_table == table_id)) {
             inside = true;
@@ -140,8 +150,13 @@ en_error_code_t en_vpp_parse_show_interface(const char *output, const char *inte
     while (*cursor != '\0') {
         size_t length = 0;
         while (cursor[length] != '\0' && cursor[length] != '\n' && length + 1 < sizeof(line)) length++;
+        if (cursor[length] != '\0' && cursor[length] != '\n') {
+            set_error(error, error_len, "VPP output line exceeds capacity");
+            return EN_ERR_INVALID_ARGUMENT;
+        }
         memcpy(line, cursor, length);
         line[length] = '\0';
+        if (length > 0 && line[length - 1] == '\r') line[length - 1] = '\0';
         const char *first = skip_space(line);
         size_t name_len = strlen(interface_name);
         if (strncmp(first, interface_name, name_len) == 0 && (first[name_len] == ' ' || first[name_len] == '\t')) {

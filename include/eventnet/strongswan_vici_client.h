@@ -2,6 +2,7 @@
 #define EVENTNET_STRONGSWAN_VICI_CLIENT_H
 
 #include "eventnet/types.h"
+#include "eventnet/strongswan_observer.h"
 
 typedef struct en_strongswan_vici_client en_strongswan_vici_client_t;
 typedef void (*en_strongswan_vici_event_fn)(void *context, const char *event_json);

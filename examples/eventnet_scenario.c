@@ -372,7 +372,7 @@ static bool parse_health_arg(const char *text, injected_health_t *health)
             return false;
         }
     }
-    snprintf(health->path_id, sizeof(health->path_id), "%s", buf);
+    memcpy(health->path_id, buf, strlen(buf) + 1);
     health->state = EN_HEALTH_HEALTHY;
     char *cursor = equals + 1;
     while (cursor != NULL && *cursor != '\0') {

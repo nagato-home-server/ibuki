@@ -58,6 +58,8 @@ YAML / JSONL
 | `en_copy_id` | 文字列 -> 固定長バッファ | `snprintf`で終端付きコピー。容量超過時は切り詰めるため、外部入力はYAML等の境界で先に長さを拒否する。 |
 | `en_streq` | 2文字列 -> `bool` | NULLを含む識別子比較を行う。 |
 | `en_intent_counts_valid` | Intent -> `bool` | 候補、比較項目、禁止/必須waypoint、必須capabilityの5個のcountを固定長配列の容量と照合する。NULLはfalse。C APIの状態保存・観測と内部選択に先立って使用する。 |
+| `en_path_counts_valid` | Path -> `bool` | waypoint、segment、routeの件数を固定長配列の容量と照合する。Controller生成・YAML検証・計画生成・遷移の入口で使用する。 |
+| `en_transition_policy_valid` | Transition Policy -> `bool` | retry、backoff、pause、drain、timeoutの非負条件を確認する。C APIがYAML検証を経由しない場合も負値を拒否する。 |
 | `en_path_hop_count` | Path -> hop数 | `waypoint_count + 1`を返す。実packetの測定hop数やsegment数ではない。 |
 | `en_find_path` | Controller, Path ID -> mutable Path | 内部状態を変更する処理用の検索関数。 |
 | `en_find_health` | Controller, Path ID -> health | Pathの最新測定値を検索する。 |
@@ -118,7 +120,7 @@ Immediateは追加pause/drain待機なしで切替する。CのGracefulは`max_p
 | `store_health` | 最新healthをPath ID単位で保存する。 |
 | `observe_one` | 1 Pathのprobeをhealth adapterへ依頼し、結果を保存する。 |
 | `observe_candidate_health` | Intent候補のhealthを収集する。 |
-| `en_controller_create` / `en_controller_create_with_tunnels` / `en_controller_create_with_nodes_and_tunnels` | Pathだけ、Tunnel付き、Node/Tunnel付きの3形式でControllerを初期化する。 |
+| `en_controller_create` / `en_controller_create_with_tunnels` / `en_controller_create_with_nodes_and_tunnels` | Pathだけ、Tunnel付き、Node/Tunnel付きの3形式でControllerを初期化する。外側/入れ子の件数と、正の件数に対するNULL配列を拒否する。 |
 | `en_controller_submit_intent` | health観測、Path選択、必要な遷移を一連で実行するreconcile入口。 |
 | `en_controller_audit_events` / `en_controller_errors` | 監査イベントとエラー履歴を読み取り専用で取得する。 |
 
@@ -129,7 +131,7 @@ Immediateは追加pause/drain待機なしで切替する。CのGracefulは`max_p
 | 関数 | 役割 |
 |---|---|
 | `en_yaml_config_load_file` | YAMLファイルを行単位で読み込み、Path/Tunnel/Intent/Node/VPP edgeへ変換する入口。 |
-| `en_yaml_config_validate` | ID、参照関係、アドレス、selector、VLAN/VRF、遷移設定、VPP socketを検証する。 |
+| `en_yaml_config_validate` | 外側/入れ子の件数を先に検査し、ID、参照関係、アドレス、selector、VLAN/VRF、遷移設定、VPP socketを検証する。NUL終端されたC文字列を渡す契約は必要。 |
 | `parse_line` | YAMLのインデントとkey/valueを状態機械へ渡す。 |
 | `parse_*_kv` | Tunnel、Node、Path、Segment、Route、Intent、VPP edge、selection、constraints、transition、fallbackの値を各構造体へ設定する。 |
 | `copy_id` / `copy_address_without_cidr` | 固定長フィールドへコピーし、後者はCIDR suffixを除去する。内部コピーは切詰めるため、外部入力の長さ検証はYAML読込境界で行う。 |
@@ -144,7 +146,7 @@ YAMLは汎用YAML仕様全体ではなく、Ibukiが定義したサブセット�
 | 関数 | 役割 |
 |---|---|
 | `en_telemetry_open_jsonl` | JSONL入力を読み取り用に開き、Linuxでsymlink・非regular file・危険な書込権限を拒否する。出力用APIではない。 |
-| `en_telemetry_parse_json_line` | yyjsonで1行を解析し、Path healthまたはイベントへ変換する。必須項目、型、範囲、識別子を検証する。 |
+| `en_telemetry_parse_json_line` | yyjsonで1行を解析し、Path healthまたはイベントへ変換する。埋込NUL・識別子超過を拒否し、整数timestampをdouble経由にせず保持する。実数timestampは有限・非負・整数値・2^63未満のときだけ受理する。 |
 | `en_telemetry_load_jsonl` | ファイルを逐次読み込み、容量内のhealth配列へ格納する。時刻や順序の不正を処理する。 |
 | `valid_label` / `set_error` | JSONLの識別子検証とエラー記録を補助する。 |
 

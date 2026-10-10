@@ -16,7 +16,7 @@ size_t en_initial_demo_paths(en_path_t *paths, size_t capacity)
     if (paths == NULL || capacity < 3) {
         return 0;
     }
-    memset(paths, 0, sizeof(en_path_t) * capacity);
+    memset(paths, 0, sizeof(en_path_t) * 3);
 
     en_path_t *hub = &paths[0];
     snprintf(hub->path_id, sizeof(hub->path_id), "%s", "path-via-hub");

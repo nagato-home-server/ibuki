@@ -41,8 +41,15 @@ en_controller_t *en_controller_create_with_nodes_and_tunnels(
     en_health_probe_t health_probe
 )
 {
-    if (paths == NULL || path_count > EN_MAX_PATHS || node_count > EN_MAX_NODES || tunnel_count > EN_MAX_TUNNELS) {
+    if (paths == NULL || path_count > EN_MAX_PATHS || node_count > EN_MAX_NODES || tunnel_count > EN_MAX_TUNNELS ||
+        (node_count > 0 && nodes == NULL) || (tunnel_count > 0 && tunnels == NULL)) {
         return NULL;
+    }
+    for (size_t index = 0; index < path_count; index++) {
+        if (!en_path_counts_valid(&paths[index])) return NULL;
+    }
+    for (size_t index = 0; index < node_count; index++) {
+        if (nodes[index].endpoint_count > EN_MAX_ENDPOINTS || nodes[index].capability_count > EN_MAX_CAPABILITIES) return NULL;
     }
     en_controller_t *controller = calloc(1, sizeof(*controller));
     if (controller == NULL) {
@@ -79,7 +86,7 @@ en_error_code_t en_controller_submit_intent(
     if (controller == NULL || intent == NULL || result == NULL) {
         return EN_ERR_INVALID_ARGUMENT;
     }
-    if (!en_intent_counts_valid(intent)) {
+    if (!en_intent_counts_valid(intent) || !en_transition_policy_valid(&intent->transition)) {
         return EN_ERR_INVALID_ARGUMENT;
     }
     char traffic_key[EN_MAX_TRAFFIC_KEY_LEN] = {0};

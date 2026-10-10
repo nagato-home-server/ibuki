@@ -73,6 +73,18 @@ en_error_code_t en_telemetry_parse_json_line(const char *line, en_path_health_t 
         set_error(error, error_len, "telemetry record is not a complete JSON object");
         return EN_ERR_INVALID_ARGUMENT;
     }
+    size_t field_index, field_count;
+    yyjson_val *field_key, *field_value;
+    yyjson_obj_foreach(root, field_index, field_count, field_key, field_value) {
+        const char *key_string = yyjson_get_str(field_key);
+        const char *value_string = yyjson_get_str(field_value);
+        if (key_string == NULL || strlen(key_string) != yyjson_get_len(field_key) ||
+            (yyjson_is_str(field_value) && (value_string == NULL || strlen(value_string) != yyjson_get_len(field_value)))) {
+            yyjson_doc_free(document);
+            set_error(error, error_len, "telemetry strings contain embedded NUL");
+            return EN_ERR_INVALID_ARGUMENT;
+        }
+    }
     yyjson_val *schema_value = yyjson_obj_get(root, "schema");
     const char *schema = yyjson_get_str(schema_value);
     if (schema == NULL || !valid_label(schema)) {
@@ -96,7 +108,8 @@ en_error_code_t en_telemetry_parse_json_line(const char *line, en_path_health_t 
     yyjson_val *timestamp_value = yyjson_obj_get(root, "timestamp_ms");
     const char *path_id = yyjson_get_str(path_value);
     double timestamp = yyjson_get_num(timestamp_value);
-    if (path_id == NULL || !valid_label(path_id) || !yyjson_is_num(timestamp_value)) {
+    if (path_id == NULL || yyjson_get_len(path_value) >= sizeof(record->path_id) ||
+        !valid_label(path_id) || !yyjson_is_num(timestamp_value)) {
         yyjson_doc_free(document);
         set_error(error, error_len, "telemetry record has invalid fields");
         return EN_ERR_INVALID_ARGUMENT;
@@ -179,7 +192,7 @@ en_error_code_t en_telemetry_parse_json_line(const char *line, en_path_health_t 
     } else {
         yyjson_val *tunnel_value = yyjson_obj_get(root, "tunnel_id");
         const char *tunnel_id = yyjson_get_str(tunnel_value);
-        if (state == NULL || tunnel_id == NULL || !valid_label(tunnel_id)) {
+        if (state == NULL || tunnel_id == NULL || yyjson_get_len(tunnel_value) >= sizeof(record->observed_tunnel_id) || !valid_label(tunnel_id)) {
             yyjson_doc_free(document);
             set_error(error, error_len, "telemetry event has invalid fields");
             return EN_ERR_INVALID_ARGUMENT;
@@ -255,12 +268,23 @@ en_error_code_t en_telemetry_parse_json_line(const char *line, en_path_health_t 
         return EN_ERR_INVALID_ARGUMENT;
     }
     record->sequence = has_sequence ? (int)yyjson_get_sint(sequence_value) : 0;
-    if (!isfinite(timestamp) || timestamp < 0.0 || timestamp > (double)LLONG_MAX) {
+    bool valid_timestamp = true;
+    if (yyjson_is_uint(timestamp_value)) {
+        unsigned long long integer = yyjson_get_uint(timestamp_value);
+        valid_timestamp = integer <= (unsigned long long)LLONG_MAX;
+        if (valid_timestamp) record->last_updated_ms = (long long)integer;
+    } else if (yyjson_is_sint(timestamp_value)) {
+        record->last_updated_ms = yyjson_get_sint(timestamp_value);
+        valid_timestamp = record->last_updated_ms >= 0;
+    } else {
+        valid_timestamp = isfinite(timestamp) && timestamp >= 0.0 && timestamp < 0x1p63 && floor(timestamp) == timestamp;
+        if (valid_timestamp) record->last_updated_ms = (long long)timestamp;
+    }
+    if (!valid_timestamp) {
         yyjson_doc_free(document);
         set_error(error, error_len, "telemetry timestamp is outside valid range");
         return EN_ERR_INVALID_ARGUMENT;
     }
-    record->last_updated_ms = (long long)timestamp;
     if (!is_health) {
         record->consecutive_successes = record->state == EN_HEALTH_HEALTHY ? 1 : 0;
         record->consecutive_failures = record->state == EN_HEALTH_FAILED ? 1 : 0;

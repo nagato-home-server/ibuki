@@ -32,6 +32,12 @@ CPU増設後の8 vCPU・メモリ8 GB条件でも各5回、計25ケースが成�
 
 ## 現行データパス
 
+全コードへの検査拡張では、src/examples/tests/include/scriptsと同梱yyjsonをファイル単位で列挙し、C静的解析・ヘッダー単独include・shell/Python構文検査を実施するrunnerを追加した。これは全コードの形式証明ではない。CBMCは18個の限定harnessへ拡張し、ファイル/関数の未証明状態も一覧へ残す。方法と前提は[共同作業ガイド](worker-guide.md#全コードへの検査拡張)を参照する。
+
+最終確認はLinux Clang ASan/UBSan・leak検査付きCTest29/29、Windows MSVC CTest28/28、Z3の実C再生10/10が成功。CBMC18条件は入力ソース・ヘッダーのSHA256を現在のコードと照合した証拠を`out/cbmc-project-current/summary.json`へ集約した。検査台帳は112ファイル。全体静的レポートにはAgent子プロセスのFD leak警告2件がreviewとして残る。yyjsonのGCC解析は時間切れでincompleteだが、別途Clang解析は成功した。変更後のYAMLとPython runnerも再検査済み。これらは限定条件の結果であり、全コード安全性の証明でも外部daemonの実疎通再測定でもない。
+
+追加調査でYAMLのIntent未作成時のNULL参照、listから戻った後の制約読み落とし、無効boolのfalse化、長い物理行の分割解釈、Telemetryの2^63時刻変換と識別子aliasを修正した。SAのstateは行頭のキーとして照合し、VPP出力のCRLFとVRF数字末尾も検査する。公開C APIではPath/Nodeの入れ子件数、NULL配列、負の遷移時間、計画のcommand/rollback件数を処理前に拒否する。任意有効化のlibvici部分はヘッダー依存と時刻関数の宣言不足を修正した。既存VM実測の再取得や外部VPP/strongSwanの安全性証明ではない。
+
 2026-10-10にCBMC 6.11.0でCコアの境界検査を追加した。C APIから渡すIntentの候補数が上限を超えても拒否されない反例を確認し、候補・比較キー・必須/禁止waypoint・必須capabilityの5種類の件数を、状態保存・観測より前に検査するよう修正した。通常C試験には各上限+1とSIZE_MAXの10ケースを追加し、WSL CTest29件が成功した。最終版の5 harnessはすべてVERIFICATION SUCCESSFUL、runner終了値0を確認した。ローカル結果は`out/cbmc-core-complete/summary.json`。形式検査の前提・再実行方法は[共同作業ガイド](worker-guide.md#cbmcによるcコアの境界検査)を参照する。限定したharnessの結果であり、全プログラムの安全性やVM実パケットの再検証を意味しない。
 
 2026-10-10のZ3による追加デバッグで、Evaluatedのhysteresisが除外済みActive Pathを再選択する不具合を確認し修正した。閾値モデルから生成した反例を実Cへ投入し、制約違反・無効化・候補外・waypoint不足と正常境界の10ケース、およびWSL CTest29件を確認した。これは経路選択の追加回帰検証であり、既存VM実測を修正版で再取得したものではない。C全体や固定長配列のメモリ安全性の形式証明ではない。

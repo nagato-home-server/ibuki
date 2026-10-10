@@ -3,6 +3,7 @@
 #endif
 
 #include "eventnet/strongswan_vici_client.h"
+#include "internal.h"
 
 #include <errno.h>
 #include <ctype.h>
@@ -107,7 +108,10 @@ static en_error_code_t child_command(
     size_t error_len)
 {
     if (client == NULL || client->connection == NULL || command == NULL || !valid_child_id(child_id)) return EN_ERR_INVALID_ARGUMENT;
-    vici_req_t *request = vici_begin(command);
+    char request_name[EN_MAX_ID_LEN];
+    if (strlen(command) >= sizeof(request_name)) return EN_ERR_INVALID_ARGUMENT;
+    memcpy(request_name, command, strlen(command) + 1);
+    vici_req_t *request = vici_begin(request_name);
     if (request == NULL) {
         set_error(error, error_len, "unable to create VICI request");
         return EN_ERR_STATE_CONFLICT;

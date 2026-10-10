@@ -9,6 +9,7 @@
 
 #include "eventnet/apply_plan.h"
 #include "eventnet/render_commands.h"
+#include "internal.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -88,6 +89,7 @@ en_error_code_t en_apply_plan_from_config_with_file(
     if (config == NULL || intent == NULL || selected_path == NULL || swanctl_conf_filename == NULL || plan == NULL) {
         return EN_ERR_INVALID_ARGUMENT;
     }
+    if (config->tunnel_count > EN_MAX_TUNNELS || !en_path_counts_valid(selected_path)) return EN_ERR_INVALID_ARGUMENT;
 
     memset(plan, 0, sizeof(*plan));
     if (!append_conf(plan->swanctl_conf, sizeof(plan->swanctl_conf), "connections {\n")) return EN_ERR_INVALID_ARGUMENT;
@@ -307,7 +309,8 @@ en_error_code_t en_apply_plan_write_swanctl_conf(
     const char *filename
 )
 {
-    if (plan == NULL || filename == NULL) {
+    if (plan == NULL || filename == NULL || plan->command_count > EN_MAX_PLAN_COMMANDS ||
+        plan->rollback_command_count > EN_MAX_PLAN_COMMANDS) {
         return EN_ERR_INVALID_ARGUMENT;
     }
 #if defined(_WIN32)
@@ -358,7 +361,8 @@ en_error_code_t en_apply_plan_write_shell_script(
     const char *filename
 )
 {
-    if (plan == NULL || filename == NULL) {
+    if (plan == NULL || filename == NULL || plan->command_count > EN_MAX_PLAN_COMMANDS ||
+        plan->rollback_command_count > EN_MAX_PLAN_COMMANDS) {
         return EN_ERR_INVALID_ARGUMENT;
     }
     FILE *file = fopen(filename, "w");
@@ -390,7 +394,7 @@ en_error_code_t en_apply_plan_run(
     bool dry_run
 )
 {
-    if (plan == NULL) {
+    if (plan == NULL || plan->command_count > EN_MAX_PLAN_COMMANDS || plan->rollback_command_count > EN_MAX_PLAN_COMMANDS) {
         return EN_ERR_INVALID_ARGUMENT;
     }
     for (size_t i = 0; i < plan->command_count; i++) {

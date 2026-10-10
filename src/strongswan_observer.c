@@ -58,8 +58,8 @@ static bool child_header(const char *line, const char *child_id, size_t *indent)
 
 static bool state_value(const char *line, char *value, size_t value_len)
 {
-    const char *marker = strstr(line, "state:");
-    if (marker == NULL) return false;
+    const char *marker = skip_space(line);
+    if (strncmp(marker, "state:", strlen("state:")) != 0) return false;
     marker = skip_space(marker + strlen("state:"));
     size_t length = 0;
     while (marker[length] != '\0' && marker[length] != '\r' && marker[length] != '\n' && !isspace((unsigned char)marker[length])) length++;
@@ -106,8 +106,13 @@ en_error_code_t en_strongswan_parse_list_sas(const char *output, const char *chi
     while (*cursor != '\0') {
         size_t length = 0;
         while (cursor[length] != '\0' && cursor[length] != '\n' && length + 1 < sizeof(line)) length++;
+        if (cursor[length] != '\0' && cursor[length] != '\n') {
+            set_error(error, error_len, "swanctl output line exceeds capacity");
+            return EN_ERR_INVALID_ARGUMENT;
+        }
         memcpy(line, cursor, length);
         line[length] = '\0';
+        if (length > 0 && line[length - 1] == '\r') line[length - 1] = '\0';
         if (child_header(line, child_id, &child_indent)) inside = true;
         else if (inside && indentation(line) <= child_indent && skip_space(line)[0] != '\0') break;
         else if (inside) {

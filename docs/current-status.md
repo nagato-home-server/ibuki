@@ -14,6 +14,8 @@ CPU増設後の8 vCPU・メモリ8 GB条件でも各5回、計25ケースが成�
 
 ## 実装と確認範囲
 
+入力境界・経路選択修正後のコードをVM共有フォルダから再ビルドし、Direct／Hub FallbackのIPsec＋VPPとGRE over IPsecを再確認した。全構成で双方向各3/3、損失0%、暗号化とcleanup成功。Agentの旧FD漏洩警告2件の調査では、標準FDが閉じた場合のpipe番号衝突を別の実不具合として再現・修正した。40条件・1200 probeでFD数一定と子回収を確認し、Linux sanitizer CTest30/30、Windows28/28成功。Agent本体のGCC/Clang警告は解消したが、標準FDを閉じる回帰harnessにはGCCのdup2接続先警告が1件残る。[修正後の再確認とFD調査](evaluation/20261010-postfix/README.md)を参照する。今回は主要疎通の再確認であり、反復性能統計の再取得ではない。
+
 8 vCPU条件でGRE最終疎通も双方向各3ping・ESP送受信・cleanupまで成功した。[GRE証拠](evaluation/20261010-gre/README.md)と[原稿・コード・測定の照合表](paper-claim-audit-20261010.md)を参照する。原稿の設計API、Agent構想、本番制御保証を実装済みの実測と混同しないよう修正した。
 
 | 項目 | 現在の状態 | 残る確認・実装 |
@@ -34,7 +36,7 @@ CPU増設後の8 vCPU・メモリ8 GB条件でも各5回、計25ケースが成�
 
 全コードへの検査拡張では、src/examples/tests/include/scriptsと同梱yyjsonをファイル単位で列挙し、C静的解析・ヘッダー単独include・shell/Python構文検査を実施するrunnerを追加した。これは全コードの形式証明ではない。CBMCは18個の限定harnessへ拡張し、ファイル/関数の未証明状態も一覧へ残す。方法と前提は[共同作業ガイド](worker-guide.md#全コードへの検査拡張)を参照する。
 
-最終確認はLinux Clang ASan/UBSan・leak検査付きCTest29/29、Windows MSVC CTest28/28、Z3の実C再生10/10が成功。CBMC18条件は入力ソース・ヘッダーのSHA256を現在のコードと照合した証拠を`out/cbmc-project-current/summary.json`へ集約した。検査台帳は112ファイル。全体静的レポートにはAgent子プロセスのFD leak警告2件がreviewとして残る。yyjsonのGCC解析は時間切れでincompleteだが、別途Clang解析は成功した。変更後のYAMLとPython runnerも再検査済み。これらは限定条件の結果であり、全コード安全性の証明でも外部daemonの実疎通再測定でもない。
+全コード検査拡張時はLinux Clang ASan/UBSan・leak検査付きCTest29/29、Windows MSVC CTest28/28、Z3の実C再生10/10が成功。CBMC18条件は入力ソース・ヘッダーのSHA256を照合した証拠を`out/cbmc-project-current/summary.json`へ集約した。初回検査台帳は112ファイルで、Agent子プロセスのFD leak警告2件をreviewとして記録した。後続のFD調査・修正と追加回帰試験は前述の修正後再確認を参照する。yyjsonのGCC解析は時間切れでincompleteだが、別途Clang解析は成功した。変更後のYAMLとPython runnerも再検査済み。これらは限定条件の結果であり、全コード安全性の証明ではない。
 
 追加調査でYAMLのIntent未作成時のNULL参照、listから戻った後の制約読み落とし、無効boolのfalse化、長い物理行の分割解釈、Telemetryの2^63時刻変換と識別子aliasを修正した。SAのstateは行頭のキーとして照合し、VPP出力のCRLFとVRF数字末尾も検査する。公開C APIではPath/Nodeの入れ子件数、NULL配列、負の遷移時間、計画のcommand/rollback件数を処理前に拒否する。任意有効化のlibvici部分はヘッダー依存と時刻関数の宣言不足を修正した。既存VM実測の再取得や外部VPP/strongSwanの安全性証明ではない。
 

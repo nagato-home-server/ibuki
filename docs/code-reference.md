@@ -286,7 +286,7 @@ VICIの本番接続点は実装済みだが、証明書配置、鍵更新、権�
 | 実行ファイル | 主な関数 | 目的 |
 |---|---|---|
 | `eventnet_scenario` | `run_scenario`、`apply_named_step`、`append_health`、`generate_runtime` | priority/evaluated/fallback/recoveryを再現する。 |
-| `eventnet_agent` | `measure_ping`、`parse_ping_rtt`、`open_agent_output` | 候補endpointを逐次測定してJSONLへ出力する。Path全区間の測定を保証しない。 |
+| `eventnet_agent` | `measure_ping`、`redirect_ping_output`、`parse_ping_rtt`、`open_agent_output` | 候補endpointを逐次測定してJSONLへ出力する。POSIXの`redirect_ping_output`はpipe書込側をFD 3以上へ複製してからstdout/stderrを接続し、標準FDが閉じていた場合の衝突を防ぐ。Path全区間の測定を保証しない。 |
 | `strongswan_vici_controller_probe` | `monitor_event`、`find_intent` | VICI接続とevent観測を確認する。 |
 | `vpp_api_transport_probe` | `main`、`usage` | Binary API transportの接続境界を確認する。 |
 | `swanctl_observer` | `main` | strongSwan観測parserを単独確認する。 |

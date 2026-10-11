@@ -1,6 +1,7 @@
 build/
 build-*/
 out/
+archive/
 
 # TeX build artifacts may contain local absolute paths.
 *.aux

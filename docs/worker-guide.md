@@ -689,12 +689,18 @@ YAML条件の展開上限は66、他の条件は既存値を使用する。glibc
 | `out/project-sanitizers-final-tests.log` | Linux Clang ASan/UBSan・leak検査付きCTest29/29成功 |
 | `out/project-windows-final-tests.log` | Windows MSVC CTest28/28成功 |
 
-Agentの子プロセスdup2周辺のGCC FD leak警告2件は未解決reviewとして保持する。警告だけで実際の漏洩と断定せず、警告を抑制して全成功にもしない。件数は通常C translation unit35、公開ヘッダー単独include16、shell構文49、Python構文6。形式harness C4個は通常C静的解析と別の検査である。C unit内に追加した多数の入力パターンと、CTest登録件数は異なる。
+初回全体解析ではAgentの子プロセスdup2周辺のGCC FD leak警告2件をreviewとして保持した。後続調査ではexec成功時のstdout/stderrはpingが使用する意図的な引継ぎであり、失敗時は`_exit`でOSが解放することを確認した。一方、標準FDが閉じているとpipeのFDが0/1/2となり、元の書込FDをcloseすると接続したstdout/stderrを誤って閉じる実不具合があった。FD 3以上へ複製してから接続する修正を行い、Agent本体のGCC/Clang解析は警告なしとなった。
+
+Linux CMakeの`eventnet_agent_process`試験は、標準FD開閉8組合せとstdout成功・stderr成功・ping終了失敗・不正RTT・実行ファイル不在の5条件、計40ケースを各30回（1200 probe）確認する。各回の親FD数が一定で、終了した子がwait済みであることも検査する。旧コードではstdin/stdoutを閉じた条件で成功応答を取得できず、修正後は全ケース成功した。Cの`descriptor_count`は`/proc/self/fd`を数え、Python runnerは一時的なping fixtureを用意して各条件を独立したプロセスで実行する。LinuxでPythonが見つかる場合のみCTestへ登録する。
+
+GCCは標準FDを意図的に閉じる回帰harnessに対して、dup2の接続先FD 1が無効かもしれないという別の警告を出す。dup2は閉じた接続先にも複製できるため、元の漏洩警告とは区別する。回帰harnessのGCC結果はreviewのまま記録し、抑制や全成功への書換えは行わない。Clangではharnessも警告なし。証拠は`out/agent-fd-gcc/`、`out/agent-fd-clang/`、`out/agent-fd-old-reproduction.log`。Linux ASan/UBSan CTestは追加後30/30、Windowsは28/28成功した。初回台帳の件数は通常C translation unit35、公開ヘッダー単独include16、shell構文49、Python構文6であり、新たな回帰harnessは別の追加分である。C unit内の入力パターン数とCTest登録件数は異なる。
 
 ## 作業環境の整理
 
 ソースは既存のsrc/include/examples/tests、生成物はout、ビルドは用途ごとのbuildディレクトリに分ける。古い生成物をソースの横へ残さず、必要な測定証拠だけを秘匿確認後にdocs/evaluationへ保存する。
 
-2026-10-10に古いビルド17件とルート直下の生成物11件を`out/workspace-archive/20261010/`へ退避した。最新の`build-ci-wsl`、`build-linux-cc`、`build-wsl-autonomous`、測定結果、未コミット変更は保持している。TeXの既存PDFも退避先のtexに保存した。新しい標準buildは通常の手順で作成できる。
+2026-10-10の初回整理では古いビルド17件とルート直下の生成物11件を退避した。同日の追加整理により、その退避先は現在`archive/workspace-archive/20261010/`である。TeXの既存PDFも退避先のtexに保存した。新しい標準buildは通常の手順で作成できる。
+
+追加整理では、旧`build-ci-wsl`と`build-wsl-autonomous`を`archive/20261010-unused/builds/`へ、追跡中のコード・文書に出力先参照がない試験生成物55フォルダを`archive/20261010-unused/outputs/`へ移動した。現行の`build-linux-cc`、`build-verify-sanitizers`、`build-verify-windows`、測定証拠、最新CBMC・静的検査結果、ソース、OSS、文書は保持する。移動対応表は`archive/20261010-unused/manifest.json`。外部VMや手動操作の参照までは判定していないため、必要なら対応表に従い上書きせず復元する。`archive/`は秘密情報を含み得るローカル生成物としてGit対象外。
 
 退避CMake buildは元のパスをキャッシュに持つため、退避先でそのまま実行しない。復元する場合は元の同名ディレクトリが存在しないことを確認して戻す。秘密情報を含み得る設定やログの退避先はGitへ追加しない。

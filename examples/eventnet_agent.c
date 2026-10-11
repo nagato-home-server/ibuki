@@ -142,6 +142,21 @@ static long long now_ms(void)
     return (long long)timestamp.tv_sec * 1000 + timestamp.tv_nsec / 1000000;
 }
 
+#if !defined(_WIN32)
+static bool redirect_ping_output(int read_descriptor, int write_descriptor)
+{
+    int output_descriptor = fcntl(write_descriptor, F_DUPFD_CLOEXEC, STDERR_FILENO + 1);
+    close(read_descriptor);
+    close(write_descriptor);
+    if (output_descriptor < 0) return false;
+    int stdout_result = dup2(output_descriptor, STDOUT_FILENO);
+    int stderr_result = stdout_result < 0 ? -1 : dup2(output_descriptor, STDERR_FILENO);
+    close(output_descriptor);
+    if (stdout_result < 0 || stderr_result < 0) return false;
+    return true;
+}
+#endif
+
 static bool measure_ping(const char *target, double *rtt_ms, double *loss_percent)
 {
 #if defined(_WIN32)
@@ -195,9 +210,7 @@ static bool measure_ping(const char *target, double *rtt_ms, double *loss_percen
         return false;
     }
     if (child == 0) {
-        close(pipe_fds[0]);
-        if (dup2(pipe_fds[1], STDOUT_FILENO) < 0 || dup2(pipe_fds[1], STDERR_FILENO) < 0) _exit(127);
-        close(pipe_fds[1]);
+        if (!redirect_ping_output(pipe_fds[0], pipe_fds[1])) _exit(127);
         execlp("ping", "ping", "-c", "1", "-W", "1", target, (char *)NULL);
         _exit(127);
     }

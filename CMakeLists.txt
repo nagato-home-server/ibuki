@@ -137,6 +137,17 @@ add_executable(eventnet_tests tests/test_controller.c)
 target_link_libraries(eventnet_tests PRIVATE eventnet_controller)
 
 add_test(NAME eventnet_tests COMMAND eventnet_tests)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    find_package(Python3 COMPONENTS Interpreter QUIET)
+    if(Python3_Interpreter_FOUND)
+        add_executable(eventnet_agent_process_tests tests/test_agent_process.c)
+        target_link_libraries(eventnet_agent_process_tests PRIVATE eventnet_controller)
+        add_test(NAME eventnet_agent_process
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_agent_process.py
+                $<TARGET_FILE:eventnet_agent_process_tests>)
+        set_tests_properties(eventnet_agent_process PROPERTIES TIMEOUT 120)
+    endif()
+endif()
 set_tests_properties(eventnet_tests PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 add_test(NAME eventnet_scenario_direct
     COMMAND eventnet_scenario ${CMAKE_CURRENT_SOURCE_DIR}/samples/linux-vm-netns.yaml --step direct-ok)
